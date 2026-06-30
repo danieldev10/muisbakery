@@ -1,0 +1,157 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
+
+import { AuditService } from "../../audit/audit.service";
+import type { AuthenticatedUser } from "../../auth/auth.types";
+import { PrismaService } from "../../database/prisma.service";
+
+const priceSchema = z.coerce.number().nonnegative().max(99_999_999);
+
+const createSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(300).optional(),
+  unitId: z.string().trim().min(1),
+  unitPrice: priceSchema.optional(),
+});
+
+const updateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    description: z.string().trim().max(300).nullish(),
+    unitId: z.string().trim().min(1).optional(),
+    unitPrice: priceSchema.nullish(),
+    isActive: z.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "No changes provided.",
+  });
+
+const include = {
+  unit: { select: { id: true, name: true, abbreviation: true } },
+} satisfies Prisma.ProductInclude;
+
+type ProductWithUnit = Prisma.ProductGetPayload<{ include: typeof include }>;
+
+function serialize(product: ProductWithUnit) {
+  return {
+    ...product,
+    unitPrice: product.unitPrice ? product.unitPrice.toString() : null,
+  };
+}
+
+@Injectable()
+export class ProductsService {
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AuditService) private readonly audit: AuditService,
+  ) {}
+
+  async list() {
+    const products = await this.prisma.product.findMany({
+      include,
+      orderBy: { name: "asc" },
+    });
+
+    return products.map(serialize);
+  }
+
+  private async assertUnitExists(unitId: string) {
+    const unit = await this.prisma.unit.findUnique({
+      where: { id: unitId },
+      select: { id: true },
+    });
+
+    if (!unit) {
+      throw new BadRequestException("Selected unit does not exist.");
+    }
+  }
+
+  async create(input: unknown, actor: AuthenticatedUser) {
+    const parsed = createSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    await this.assertUnitExists(parsed.data.unitId);
+
+    const existing = await this.prisma.product.findUnique({
+      where: { name: parsed.data.name },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException("A product with that name exists.");
+    }
+
+    const product = await this.prisma.product.create({
+      data: parsed.data,
+      include,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_PRODUCT_CREATED",
+      entityType: "Product",
+      entityId: product.id,
+      metadata: { name: product.name },
+    });
+
+    return serialize(product);
+  }
+
+  async update(id: string, input: unknown, actor: AuthenticatedUser) {
+    const parsed = updateSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const target = await this.prisma.product.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!target) {
+      throw new NotFoundException("Product not found.");
+    }
+
+    if (parsed.data.unitId) {
+      await this.assertUnitExists(parsed.data.unitId);
+    }
+
+    if (parsed.data.name) {
+      const clash = await this.prisma.product.findFirst({
+        where: { name: parsed.data.name, NOT: { id } },
+        select: { id: true },
+      });
+
+      if (clash) {
+        throw new ConflictException("A product with that name exists.");
+      }
+    }
+
+    const product = await this.prisma.product.update({
+      where: { id },
+      data: parsed.data,
+      include,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_PRODUCT_UPDATED",
+      entityType: "Product",
+      entityId: product.id,
+      metadata: { isActive: product.isActive },
+    });
+
+    return serialize(product);
+  }
+}

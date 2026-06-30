@@ -1,0 +1,29 @@
+{
+  "name": "muisbakery",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": "22.13.0"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "npm run dev -w @muisbakery/web",
+    "dev:api": "npm run dev -w @muisbakery/api",
+    "build": "npm run build -w @muisbakery/api && npm run build -w @muisbakery/web",
+    "start:web": "npm run start -w @muisbakery/web",
+    "start:api": "npm run start -w @muisbakery/api",
+    "lint": "npm run lint -w @muisbakery/web && npm run lint -w @muisbakery/api",
+    "typecheck": "npm run typecheck -w @muisbakery/web && npm run typecheck -w @muisbakery/api",
+    "prisma:generate": "npm run prisma:generate -w @muisbakery/api",
+    "prisma:migrate": "npm run prisma:migrate -w @muisbakery/api",
+    "prisma:deploy": "npm run prisma:deploy -w @muisbakery/api",
+    "prisma:studio": "npm run prisma:studio -w @muisbakery/api",
+    "db:seed": "npm run db:seed -w @muisbakery/api"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  }
+}

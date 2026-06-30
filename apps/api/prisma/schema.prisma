@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  STORE
+  PRODUCTION
+  SALES
+  MANAGEMENT
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String?
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(STORE)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  createdById  String?
+
+  createdBy    User?      @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers User[]     @relation("UserCreatedBy")
+  auditLogs    AuditLog[] @relation("AuditActor")
+
+  @@index([role])
+  @@index([isActive])
+}
+
+// --- Phase 2: Admin master data ---
+
+model Unit {
+  id           String   @id @default(cuid())
+  name         String
+  abbreviation String   @unique
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  rawMaterials RawMaterial[]
+  products     Product[]
+  recipeItems  RecipeItem[]
+
+  @@index([isActive])
+}
+
+model Supplier {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model RawMaterial {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  baseUnitId  String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  baseUnit    Unit         @relation(fields: [baseUnitId], references: [id], onDelete: Restrict)
+  recipeItems RecipeItem[]
+
+  @@index([isActive])
+  @@index([baseUnitId])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  unitId      String
+  unitPrice   Decimal? @db.Decimal(14, 2)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  unit   Unit    @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  recipe Recipe?
+
+  @@index([isActive])
+  @@index([unitId])
+}
+
+model Recipe {
+  id            String   @id @default(cuid())
+  productId     String   @unique
+  yieldQuantity Decimal  @default(1) @db.Decimal(14, 3)
+  notes         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  items   RecipeItem[]
+}
+
+model RecipeItem {
+  id            String  @id @default(cuid())
+  recipeId      String
+  rawMaterialId String
+  quantity      Decimal @db.Decimal(14, 3)
+  unitId        String
+
+  recipe      Recipe      @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  unit        Unit        @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@unique([recipeId, rawMaterialId])
+  @@index([rawMaterialId])
+  @@index([unitId])
+}
+
+model ExpenseCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  actorId    String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
