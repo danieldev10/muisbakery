@@ -1,42 +1,40 @@
 import Link from "next/link";
 
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
   PageHeader,
   StatusBadge,
 } from "@/components/admin/layout";
-import type { Product, RawMaterial, Recipe, Unit } from "@/lib/admin/types";
+import type { Product, RawMaterial, Recipe } from "@/lib/admin/types";
 import { apiGet } from "@/lib/server-api";
 
 import { deleteRecipe } from "./actions";
 import { RecipeForm } from "./recipe-form";
 
 export default async function RecipesPage() {
-  const [recipes, products, rawMaterials, units] = await Promise.all([
+  const [recipes, products, rawMaterials] = await Promise.all([
     apiGet<Recipe[]>("/admin/recipes"),
     apiGet<Product[]>("/admin/products"),
     apiGet<RawMaterial[]>("/admin/raw-materials"),
-    apiGet<Unit[]>("/admin/units"),
   ]);
 
-  const recipeProductIds = new Set((recipes ?? []).map((r) => r.productId));
-  const productOptions = (products ?? [])
+  const recipeProductIds = new Set(recipes.map((r) => r.productId));
+  const productOptions = products
     .filter((product) => product.isActive && !recipeProductIds.has(product.id))
     .map((product) => ({ value: product.id, label: product.name }));
 
-  const materialOptions = (rawMaterials ?? [])
+  const materialOptions = rawMaterials
     .filter((material) => material.isActive)
-    .map((material) => ({ value: material.id, label: material.name }));
+    .map((material) => ({
+      value: material.id,
+      label: material.name,
+      unitId: material.baseUnit.id,
+      unitLabel: material.baseUnit.abbreviation,
+    }));
 
-  const unitOptions = (units ?? [])
-    .filter((unit) => unit.isActive)
-    .map((unit) => ({ value: unit.id, label: unit.abbreviation }));
-
-  const canBuild =
-    productOptions.length > 0 &&
-    materialOptions.length > 0 &&
-    unitOptions.length > 0;
+  const canBuild = productOptions.length > 0 && materialOptions.length > 0;
 
   return (
     <>
@@ -50,12 +48,11 @@ export default async function RecipesPage() {
           <RecipeForm
             products={productOptions}
             rawMaterials={materialOptions}
-            units={unitOptions}
           />
         ) : (
           <EmptyState>
-            You need at least one product without a recipe, one raw material,
-            and one unit first. Manage them under{" "}
+            You need at least one product without a recipe and one raw
+            material first. Manage them under{" "}
             <Link className="font-medium text-red-800 underline" href="/admin/products">
               Products
             </Link>
@@ -66,17 +63,13 @@ export default async function RecipesPage() {
             >
               Raw materials
             </Link>
-            , and{" "}
-            <Link className="font-medium text-red-800 underline" href="/admin/settings">
-              Settings
-            </Link>
             .
           </EmptyState>
         )}
       </Card>
 
-      <Card title={`Recipes (${recipes?.length ?? 0})`}>
-        {!recipes || recipes.length === 0 ? (
+      <Card title={`Recipes (${recipes.length})`}>
+        {recipes.length === 0 ? (
           <EmptyState>No recipes yet.</EmptyState>
         ) : (
           <div className="grid gap-4">
@@ -97,15 +90,13 @@ export default async function RecipesPage() {
                       Yields {recipe.yieldQuantity} per batch
                     </p>
                   </div>
-                  <form action={deleteRecipe}>
+                  <InlineActionForm
+                    action={deleteRecipe}
+                    buttonClassName="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    submitLabel="Delete"
+                  >
                     <input name="id" type="hidden" value={recipe.id} />
-                    <button
-                      className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-red-50 hover:text-red-800"
-                      type="submit"
-                    >
-                      Delete
-                    </button>
-                  </form>
+                  </InlineActionForm>
                 </div>
                 <ul className="mt-3 grid gap-1 text-sm text-stone-700">
                   {recipe.items.map((item) => (

@@ -1,5 +1,6 @@
 import { AdminForm } from "@/components/admin/admin-form";
 import { Field, TextareaField } from "@/components/admin/form-controls";
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
@@ -13,7 +14,7 @@ import { apiGet } from "@/lib/server-api";
 import { createSupplier, setSupplierActive } from "./actions";
 
 export default async function SuppliersPage() {
-  const suppliers = (await apiGet<Supplier[]>("/admin/suppliers")) ?? [];
+  const suppliers = await apiGet<Supplier[]>("/admin/suppliers");
 
   return (
     <>
@@ -69,20 +70,17 @@ export default async function SuppliersPage() {
                   <StatusBadge active={supplier.isActive} />
                 </td>
                 <td className="py-3 pr-4">
-                  <form action={setSupplierActive}>
+                  <InlineActionForm
+                    action={setSupplierActive}
+                    submitLabel={supplier.isActive ? "Deactivate" : "Activate"}
+                  >
                     <input name="id" type="hidden" value={supplier.id} />
                     <input
                       name="isActive"
                       type="hidden"
                       value={supplier.isActive ? "false" : "true"}
                     />
-                    <button
-                      className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-                      type="submit"
-                    >
-                      {supplier.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  </form>
+                  </InlineActionForm>
                 </td>
               </tr>
             ))}

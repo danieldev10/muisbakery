@@ -1,5 +1,6 @@
 import { AdminForm } from "@/components/admin/admin-form";
 import { Field, SelectField } from "@/components/admin/form-controls";
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
@@ -29,7 +30,7 @@ function formatDate(value: string | null) {
 }
 
 export default async function UsersPage() {
-  const users = (await apiGet<AdminUser[]>("/admin/users")) ?? [];
+  const users = await apiGet<AdminUser[]>("/admin/users");
 
   return (
     <>
@@ -91,9 +92,10 @@ export default async function UsersPage() {
                   <p className="text-xs text-stone-500">{user.email}</p>
                 </td>
                 <td className="py-3 pr-4">
-                  <form
+                  <InlineActionForm
                     action={setUserRole}
-                    className="flex items-center gap-2"
+                    className="flex flex-wrap items-center gap-2"
+                    submitLabel="Save"
                   >
                     <input name="id" type="hidden" value={user.id} />
                     <select
@@ -107,13 +109,7 @@ export default async function UsersPage() {
                         </option>
                       ))}
                     </select>
-                    <button
-                      className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-                      type="submit"
-                    >
-                      Save
-                    </button>
-                  </form>
+                  </InlineActionForm>
                 </td>
                 <td className="py-3 pr-4">
                   <StatusBadge active={user.isActive} />
@@ -122,20 +118,17 @@ export default async function UsersPage() {
                   {formatDate(user.lastLoginAt)}
                 </td>
                 <td className="py-3 pr-4">
-                  <form action={setUserActive}>
+                  <InlineActionForm
+                    action={setUserActive}
+                    submitLabel={user.isActive ? "Deactivate" : "Activate"}
+                  >
                     <input name="id" type="hidden" value={user.id} />
                     <input
                       name="isActive"
                       type="hidden"
                       value={user.isActive ? "false" : "true"}
                     />
-                    <button
-                      className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-                      type="submit"
-                    >
-                      {user.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  </form>
+                  </InlineActionForm>
                 </td>
               </tr>
             ))}

@@ -39,7 +39,16 @@ export async function createRecipe(
   return { ok: true, error: null, token: Date.now() };
 }
 
-export async function deleteRecipe(formData: FormData): Promise<void> {
-  await apiSend(`${PATH}/${getString(formData, "id")}`, "DELETE");
+export async function deleteRecipe(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "DELETE");
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
   revalidatePath(PATH);
+  return { ok: true, error: null, token: Date.now() };
 }

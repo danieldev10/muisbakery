@@ -92,21 +92,36 @@ export class RecipesService {
     return recipes.map(serialize);
   }
 
-  /** Confirms every referenced raw material and unit exists before writing. */
+  /** Confirms every item uses its raw material's base unit. */
   private async assertItemsValid(items: z.infer<typeof itemsSchema>) {
     const materialIds = items.map((item) => item.rawMaterialId);
-    const unitIds = [...new Set(items.map((item) => item.unitId))];
 
-    const [materialCount, unitCount] = await Promise.all([
-      this.prisma.rawMaterial.count({ where: { id: { in: materialIds } } }),
-      this.prisma.unit.count({ where: { id: { in: unitIds } } }),
-    ]);
+    const materials = await this.prisma.rawMaterial.findMany({
+      where: { id: { in: materialIds } },
+      select: {
+        id: true,
+        name: true,
+        baseUnitId: true,
+        baseUnit: { select: { abbreviation: true } },
+      },
+    });
 
-    if (materialCount !== materialIds.length) {
+    if (materials.length !== materialIds.length) {
       throw new BadRequestException("One or more raw materials do not exist.");
     }
-    if (unitCount !== unitIds.length) {
-      throw new BadRequestException("One or more units do not exist.");
+
+    const materialsById = new Map(
+      materials.map((material) => [material.id, material]),
+    );
+
+    for (const item of items) {
+      const material = materialsById.get(item.rawMaterialId);
+
+      if (material && item.unitId !== material.baseUnitId) {
+        throw new BadRequestException(
+          `${material.name} must use ${material.baseUnit.abbreviation}.`,
+        );
+      }
     }
   }
 

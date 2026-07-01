@@ -27,9 +27,18 @@ export async function createProduct(
   return { ok: true, error: null, token: Date.now() };
 }
 
-export async function setProductActive(formData: FormData): Promise<void> {
-  await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
+export async function setProductActive(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
     isActive: formData.get("isActive") === "true",
   });
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
   revalidatePath(PATH);
+  return { ok: true, error: null, token: Date.now() };
 }

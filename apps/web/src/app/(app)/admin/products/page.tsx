@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AdminForm } from "@/components/admin/admin-form";
 import { Field, SelectField } from "@/components/admin/form-controls";
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
@@ -30,7 +31,7 @@ export default async function ProductsPage() {
     apiGet<Unit[]>("/admin/units"),
   ]);
 
-  const unitOptions = (units ?? [])
+  const unitOptions = units
     .filter((unit) => unit.isActive)
     .map((unit) => ({
       value: unit.id,
@@ -87,8 +88,8 @@ export default async function ProductsPage() {
         )}
       </Card>
 
-      <Card title={`All products (${products?.length ?? 0})`}>
-        {!products || products.length === 0 ? (
+      <Card title={`All products (${products.length})`}>
+        {products.length === 0 ? (
           <EmptyState>No products yet.</EmptyState>
         ) : (
           <TableShell
@@ -122,20 +123,17 @@ export default async function ProductsPage() {
                   <StatusBadge active={product.isActive} />
                 </td>
                 <td className="py-3 pr-4">
-                  <form action={setProductActive}>
+                  <InlineActionForm
+                    action={setProductActive}
+                    submitLabel={product.isActive ? "Deactivate" : "Activate"}
+                  >
                     <input name="id" type="hidden" value={product.id} />
                     <input
                       name="isActive"
                       type="hidden"
                       value={product.isActive ? "false" : "true"}
                     />
-                    <button
-                      className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-                      type="submit"
-                    >
-                      {product.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  </form>
+                  </InlineActionForm>
                 </td>
               </tr>
             ))}

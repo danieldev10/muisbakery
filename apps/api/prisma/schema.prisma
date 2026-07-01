@@ -14,6 +14,52 @@ enum Role {
   MANAGEMENT
 }
 
+enum MaterialRequestStatus {
+  PENDING
+  PARTIALLY_ISSUED
+  FULFILLED
+  CANCELLED
+}
+
+enum RawMaterialStockMovementType {
+  RECEIVE
+  ISSUE
+  ADJUSTMENT
+}
+
+enum FinishedProductStockMovementType {
+  RECEIVE_FROM_PRODUCTION
+  SALE
+  RETURN
+  ADJUSTMENT
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  POS
+  CREDIT
+}
+
+enum SalesReturnDisposition {
+  RETURN_TO_STOCK
+  DAMAGED
+}
+
+enum PosSessionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum ProductionMaterialStockMovementType {
+  RECEIVE_FROM_STORE
+  CONSUME
+  WASTE
+  ADJUSTMENT
+}
+
 model User {
   id           String    @id @default(cuid())
   name         String?
@@ -26,9 +72,25 @@ model User {
   updatedAt    DateTime  @updatedAt
   createdById  String?
 
-  createdBy    User?      @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdUsers User[]     @relation("UserCreatedBy")
-  auditLogs    AuditLog[] @relation("AuditActor")
+  createdBy                   User?                             @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers                User[]                            @relation("UserCreatedBy")
+  auditLogs                   AuditLog[]                        @relation("AuditActor")
+  createdMaterialBatches      RawMaterialBatch[]                @relation("RawMaterialBatchCreatedBy")
+  createdMaterialReceipts     RawMaterialReceipt[]              @relation("RawMaterialReceiptCreatedBy")
+  materialRequests            MaterialRequest[]                 @relation("MaterialRequestRequestedBy")
+  issuedMaterialRequests      MaterialRequest[]                 @relation("MaterialRequestIssuedBy")
+  materialRequestIssues       MaterialRequestIssue[]            @relation("MaterialRequestIssueIssuedBy")
+  stockMovements              RawMaterialStockMovement[]        @relation("StockMovementActor")
+  productionRuns              ProductionRun[]                   @relation("ProductionRunCreatedBy")
+  productionWaste             ProductionWaste[]                 @relation("ProductionWasteCreatedBy")
+  productionMaterialBatches   ProductionMaterialStockBatch[]    @relation("ProductionMaterialBatchCreatedBy")
+  productionMaterialMovements ProductionMaterialStockMovement[] @relation("ProductionMaterialMovementActor")
+  salesProductBatches         SalesProductBatch[]               @relation("SalesProductBatchCreatedBy")
+  salesProductMovements       SalesProductStockMovement[]       @relation("SalesProductMovementActor")
+  sales                       Sale[]                            @relation("SaleCreatedBy")
+  salesReturns                SalesProductReturn[]              @relation("SalesReturnCreatedBy")
+  posSessions                 PosSession[]                      @relation("PosSessionCreatedBy")
+  posTerminals                PosTerminal[]                     @relation("PosTerminalCreatedBy")
 
   @@index([role])
   @@index([isActive])
@@ -63,6 +125,9 @@ model Supplier {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  batches  RawMaterialBatch[]
+  receipts RawMaterialReceipt[]
+
   @@index([isActive])
 }
 
@@ -75,8 +140,15 @@ model RawMaterial {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  baseUnit    Unit         @relation(fields: [baseUnitId], references: [id], onDelete: Restrict)
-  recipeItems RecipeItem[]
+  baseUnit            Unit                              @relation(fields: [baseUnitId], references: [id], onDelete: Restrict)
+  recipeItems         RecipeItem[]
+  batches             RawMaterialBatch[]
+  receipts            RawMaterialReceipt[]
+  stockMovements      RawMaterialStockMovement[]
+  materialRequests    MaterialRequest[]
+  productionBatches   ProductionMaterialStockBatch[]
+  productionMovements ProductionMaterialStockMovement[]
+  productionRunUsages ProductionRunMaterialUsage[]
 
   @@index([isActive])
   @@index([baseUnitId])
@@ -92,8 +164,15 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  unit   Unit    @relation(fields: [unitId], references: [id], onDelete: Restrict)
-  recipe Recipe?
+  unit                Unit                        @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  recipe              Recipe?
+  productionRuns      ProductionRun[]
+  productionWaste     ProductionWaste[]
+  salesBatches        SalesProductBatch[]
+  salesStockMovements SalesProductStockMovement[]
+  saleItems           SaleItem[]
+  salesReturns        SalesProductReturn[]
+  posSessionItems     PosSessionItem[]
 
   @@index([isActive])
   @@index([unitId])
@@ -143,6 +222,447 @@ model Setting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+// --- Phase 3: Store inventory and production requests ---
+
+model RawMaterialBatch {
+  id                String   @id @default(cuid())
+  rawMaterialId     String
+  supplierId        String?
+  batchNumber       Int
+  batchDate         DateTime @db.Date
+  quantityReceived  Decimal  @db.Decimal(14, 3)
+  quantityRemaining Decimal  @db.Decimal(14, 3)
+  unitCost          Decimal? @db.Decimal(14, 2)
+  receivedAt        DateTime
+  reference         String?
+  notes             String?
+  createdAt         DateTime @default(now())
+  createdById       String?
+
+  rawMaterial       RawMaterial                    @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  supplier          Supplier?                      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  createdBy         User?                          @relation("RawMaterialBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  receipts          RawMaterialReceipt[]
+  movements         RawMaterialStockMovement[]
+  issues            MaterialRequestIssue[]
+  productionBatches ProductionMaterialStockBatch[] @relation("ProductionStockSourceStoreBatch")
+
+  @@unique([rawMaterialId, batchNumber])
+  @@unique([rawMaterialId, batchDate])
+  @@index([batchDate])
+  @@index([rawMaterialId, receivedAt])
+  @@index([supplierId])
+  @@index([quantityRemaining])
+}
+
+model RawMaterialReceipt {
+  id            String   @id @default(cuid())
+  rawMaterialId String
+  batchId       String
+  supplierId    String?
+  quantity      Decimal  @db.Decimal(14, 3)
+  unitCost      Decimal? @db.Decimal(14, 2)
+  receivedAt    DateTime
+  reference     String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  createdById   String?
+
+  rawMaterial RawMaterial                @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  batch       RawMaterialBatch           @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  supplier    Supplier?                  @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  createdBy   User?                      @relation("RawMaterialReceiptCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movements   RawMaterialStockMovement[]
+
+  @@index([rawMaterialId, receivedAt])
+  @@index([batchId])
+  @@index([supplierId])
+  @@index([createdById])
+}
+
+model RawMaterialStockMovement {
+  id            String                       @id @default(cuid())
+  rawMaterialId String
+  batchId       String
+  receiptId     String?
+  type          RawMaterialStockMovementType
+  quantity      Decimal                      @db.Decimal(14, 3)
+  balanceAfter  Decimal                      @db.Decimal(14, 3)
+  occurredAt    DateTime                     @default(now())
+  note          String?
+  actorId       String?
+
+  rawMaterial RawMaterial         @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  batch       RawMaterialBatch    @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  receipt     RawMaterialReceipt? @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  actor       User?               @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([rawMaterialId, occurredAt])
+  @@index([batchId])
+  @@index([receiptId])
+  @@index([type])
+  @@index([actorId])
+}
+
+model MaterialRequest {
+  id                String                @id @default(cuid())
+  rawMaterialId     String
+  requestedQuantity Decimal               @db.Decimal(14, 3)
+  issuedQuantity    Decimal               @default(0) @db.Decimal(14, 3)
+  status            MaterialRequestStatus @default(PENDING)
+  neededBy          DateTime?
+  notes             String?
+  responseNotes     String?
+  requestedById     String
+  issuedById        String?
+  fulfilledAt       DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  rawMaterial               RawMaterial                    @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  requestedBy               User                           @relation("MaterialRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  issuedBy                  User?                          @relation("MaterialRequestIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  issues                    MaterialRequestIssue[]
+  productionRuns            ProductionRunMaterialRequest[]
+  productionMaterialBatches ProductionMaterialStockBatch[]
+
+  @@index([rawMaterialId])
+  @@index([requestedById])
+  @@index([issuedById])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model MaterialRequestIssue {
+  id         String   @id @default(cuid())
+  requestId  String
+  batchId    String
+  quantity   Decimal  @db.Decimal(14, 3)
+  issuedById String?
+  createdAt  DateTime @default(now())
+
+  request         MaterialRequest               @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  batch           RawMaterialBatch              @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  issuedBy        User?                         @relation("MaterialRequestIssueIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  productionBatch ProductionMaterialStockBatch?
+
+  @@index([requestId])
+  @@index([batchId])
+  @@index([issuedById])
+}
+
+// --- Phase 4: Production output and Sales finished-goods inventory ---
+
+model ProductionRun {
+  id                  String   @id @default(cuid())
+  productId           String
+  quantityProduced    Decimal  @db.Decimal(14, 3)
+  quantityTransferred Decimal  @default(0) @db.Decimal(14, 3)
+  wasteQuantity       Decimal  @default(0) @db.Decimal(14, 3)
+  producedAt          DateTime
+  notes               String?
+  createdAt           DateTime @default(now())
+  createdById         String?
+
+  product                     Product                           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdBy                   User?                             @relation("ProductionRunCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  materialRequests            ProductionRunMaterialRequest[]
+  materialUsages              ProductionRunMaterialUsage[]
+  productionMaterialMovements ProductionMaterialStockMovement[]
+  waste                       ProductionWaste[]
+  salesBatches                SalesProductBatch[]
+
+  @@index([productId, producedAt])
+  @@index([createdById])
+  @@index([producedAt])
+}
+
+model ProductionRunMaterialRequest {
+  productionRunId   String
+  materialRequestId String
+  createdAt         DateTime @default(now())
+
+  productionRun   ProductionRun   @relation(fields: [productionRunId], references: [id], onDelete: Cascade)
+  materialRequest MaterialRequest @relation(fields: [materialRequestId], references: [id], onDelete: Restrict)
+
+  @@id([productionRunId, materialRequestId])
+  @@index([materialRequestId])
+}
+
+model ProductionMaterialStockBatch {
+  id                     String   @id @default(cuid())
+  rawMaterialId          String
+  materialRequestId      String?
+  materialRequestIssueId String?  @unique
+  storeBatchId           String?
+  quantityReceived       Decimal  @db.Decimal(14, 3)
+  quantityRemaining      Decimal  @db.Decimal(14, 3)
+  receivedAt             DateTime
+  createdAt              DateTime @default(now())
+  createdById            String?
+
+  rawMaterial          RawMaterial                       @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  materialRequest      MaterialRequest?                  @relation(fields: [materialRequestId], references: [id], onDelete: SetNull)
+  materialRequestIssue MaterialRequestIssue?             @relation(fields: [materialRequestIssueId], references: [id], onDelete: SetNull)
+  storeBatch           RawMaterialBatch?                 @relation("ProductionStockSourceStoreBatch", fields: [storeBatchId], references: [id], onDelete: SetNull)
+  createdBy            User?                             @relation("ProductionMaterialBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movements            ProductionMaterialStockMovement[]
+
+  @@index([rawMaterialId, receivedAt])
+  @@index([materialRequestId])
+  @@index([storeBatchId])
+  @@index([quantityRemaining])
+  @@index([createdById])
+}
+
+model ProductionRunMaterialUsage {
+  id               String   @id @default(cuid())
+  productionRunId  String
+  rawMaterialId    String
+  expectedQuantity Decimal? @db.Decimal(14, 3)
+  actualQuantity   Decimal  @db.Decimal(14, 3)
+  createdAt        DateTime @default(now())
+
+  productionRun ProductionRun @relation(fields: [productionRunId], references: [id], onDelete: Cascade)
+  rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+
+  @@unique([productionRunId, rawMaterialId])
+  @@index([rawMaterialId])
+}
+
+model ProductionMaterialStockMovement {
+  id                String                              @id @default(cuid())
+  rawMaterialId     String
+  productionBatchId String
+  productionRunId   String?
+  type              ProductionMaterialStockMovementType
+  quantity          Decimal                             @db.Decimal(14, 3)
+  balanceAfter      Decimal                             @db.Decimal(14, 3)
+  occurredAt        DateTime                            @default(now())
+  note              String?
+  actorId           String?
+
+  rawMaterial     RawMaterial                  @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  productionBatch ProductionMaterialStockBatch @relation(fields: [productionBatchId], references: [id], onDelete: Restrict)
+  productionRun   ProductionRun?               @relation(fields: [productionRunId], references: [id], onDelete: SetNull)
+  actor           User?                        @relation("ProductionMaterialMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([rawMaterialId, occurredAt])
+  @@index([productionBatchId])
+  @@index([productionRunId])
+  @@index([type])
+  @@index([actorId])
+}
+
+model ProductionWaste {
+  id              String   @id @default(cuid())
+  productionRunId String?
+  productId       String
+  quantity        Decimal  @db.Decimal(14, 3)
+  reason          String?
+  recordedAt      DateTime
+  createdAt       DateTime @default(now())
+  createdById     String?
+
+  productionRun ProductionRun? @relation(fields: [productionRunId], references: [id], onDelete: SetNull)
+  product       Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdBy     User?          @relation("ProductionWasteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([productionRunId])
+  @@index([productId, recordedAt])
+  @@index([createdById])
+}
+
+model SalesProductBatch {
+  id                String   @id @default(cuid())
+  productId         String
+  productionRunId   String?
+  batchNumber       Int
+  batchDate         DateTime @db.Date
+  quantityReceived  Decimal  @db.Decimal(14, 3)
+  quantityRemaining Decimal  @db.Decimal(14, 3)
+  receivedAt        DateTime
+  notes             String?
+  createdAt         DateTime @default(now())
+  createdById       String?
+
+  product         Product                     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productionRun   ProductionRun?              @relation(fields: [productionRunId], references: [id], onDelete: SetNull)
+  createdBy       User?                       @relation("SalesProductBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movements       SalesProductStockMovement[]
+  saleItemBatches SaleItemBatch[]
+  returns         SalesProductReturn[]
+
+  @@unique([productId, batchNumber])
+  @@index([productId, batchDate])
+  @@index([productionRunId])
+  @@index([quantityRemaining])
+  @@index([createdById])
+}
+
+model SalesProductStockMovement {
+  id           String                           @id @default(cuid())
+  productId    String
+  batchId      String
+  type         FinishedProductStockMovementType
+  quantity     Decimal                          @db.Decimal(14, 3)
+  balanceAfter Decimal                          @db.Decimal(14, 3)
+  occurredAt   DateTime                         @default(now())
+  note         String?
+  actorId      String?
+
+  product Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch   SalesProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  actor   User?             @relation("SalesProductMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([productId, occurredAt])
+  @@index([batchId])
+  @@index([type])
+  @@index([actorId])
+}
+
+model Sale {
+  id            String        @id @default(cuid())
+  saleNumber    Int           @unique @default(autoincrement())
+  paymentMethod PaymentMethod
+  customerName  String?
+  soldAt        DateTime
+  subtotal      Decimal       @db.Decimal(14, 2)
+  discount      Decimal       @default(0) @db.Decimal(14, 2)
+  totalAmount   Decimal       @db.Decimal(14, 2)
+  amountPaid    Decimal       @db.Decimal(14, 2)
+  balanceDue    Decimal       @default(0) @db.Decimal(14, 2)
+  notes         String?
+  createdAt     DateTime      @default(now())
+  createdById   String?
+
+  createdBy  User?       @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  items      SaleItem[]
+  posSession PosSession?
+
+  @@index([soldAt])
+  @@index([paymentMethod])
+  @@index([createdById])
+}
+
+model PosSession {
+  id              String           @id @default(cuid())
+  displayToken    String           @unique
+  terminalId      String?
+  status          PosSessionStatus @default(ACTIVE)
+  customerName    String?
+  paymentMethod   PaymentMethod    @default(CASH)
+  discount        Decimal          @default(0) @db.Decimal(14, 2)
+  amountPaid      Decimal?
+  notes           String?
+  expiresAt       DateTime?
+  completedAt     DateTime?
+  completedSaleId String?          @unique
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  createdById     String?
+
+  terminal           PosTerminal?     @relation("PosTerminalSessions", fields: [terminalId], references: [id], onDelete: SetNull)
+  currentForTerminal PosTerminal?     @relation("PosTerminalCurrentSession")
+  createdBy          User?            @relation("PosSessionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  completedSale      Sale?            @relation(fields: [completedSaleId], references: [id], onDelete: SetNull)
+  items              PosSessionItem[]
+
+  @@index([status])
+  @@index([terminalId])
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+model PosTerminal {
+  id               String   @id @default(cuid())
+  name             String?
+  displayToken     String   @unique
+  currentSessionId String?  @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  createdById      String?
+
+  createdBy      User?        @relation("PosTerminalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  currentSession PosSession?  @relation("PosTerminalCurrentSession", fields: [currentSessionId], references: [id], onDelete: SetNull)
+  sessions       PosSession[] @relation("PosTerminalSessions")
+
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+model PosSessionItem {
+  id        String   @id @default(cuid())
+  sessionId String
+  productId String
+  quantity  Decimal  @db.Decimal(14, 3)
+  unitPrice Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session PosSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, productId])
+  @@index([productId])
+}
+
+model SaleItem {
+  id        String   @id @default(cuid())
+  saleId    String
+  productId String
+  quantity  Decimal  @db.Decimal(14, 3)
+  unitPrice Decimal  @db.Decimal(14, 2)
+  lineTotal Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+
+  sale        Sale                 @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batchIssues SaleItemBatch[]
+  returns     SalesProductReturn[]
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+model SaleItemBatch {
+  id         String   @id @default(cuid())
+  saleItemId String
+  batchId    String
+  quantity   Decimal  @db.Decimal(14, 3)
+  createdAt  DateTime @default(now())
+
+  saleItem SaleItem          @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  batch    SalesProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([saleItemId])
+  @@index([batchId])
+}
+
+model SalesProductReturn {
+  id          String                 @id @default(cuid())
+  saleItemId  String?
+  productId   String
+  batchId     String?
+  disposition SalesReturnDisposition
+  quantity    Decimal                @db.Decimal(14, 3)
+  reason      String?
+  recordedAt  DateTime
+  createdAt   DateTime               @default(now())
+  createdById String?
+
+  saleItem  SaleItem?          @relation(fields: [saleItemId], references: [id], onDelete: SetNull)
+  product   Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch     SalesProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  createdBy User?              @relation("SalesReturnCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([saleItemId])
+  @@index([productId, recordedAt])
+  @@index([batchId])
+  @@index([disposition])
+  @@index([createdById])
 }
 
 model AuditLog {

@@ -25,11 +25,24 @@ export async function createUnit(
   return { ok: true, error: null, token: Date.now() };
 }
 
-export async function setUnitActive(formData: FormData): Promise<void> {
-  await apiSend(`/admin/units/${getString(formData, "id")}`, "PATCH", {
-    isActive: formData.get("isActive") === "true",
-  });
+export async function setUnitActive(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = await apiSend(
+    `/admin/units/${getString(formData, "id")}`,
+    "PATCH",
+    {
+      isActive: formData.get("isActive") === "true",
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
   revalidatePath(PATH);
+  return { ok: true, error: null, token: Date.now() };
 }
 
 export async function createExpenseCategory(
@@ -50,14 +63,23 @@ export async function createExpenseCategory(
 }
 
 export async function setExpenseCategoryActive(
+  _state: FormState,
   formData: FormData,
-): Promise<void> {
-  await apiSend(
+): Promise<FormState> {
+  const result = await apiSend(
     `/admin/expense-categories/${getString(formData, "id")}`,
     "PATCH",
-    { isActive: formData.get("isActive") === "true" },
+    {
+      isActive: formData.get("isActive") === "true",
+    },
   );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
   revalidatePath(PATH);
+  return { ok: true, error: null, token: Date.now() };
 }
 
 export async function updateApprovalSettings(

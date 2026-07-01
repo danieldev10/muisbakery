@@ -4,34 +4,40 @@ import { Plus, Trash2 } from "lucide-react";
 import { useActionState, useState } from "react";
 
 import { FormFeedback, SubmitButton } from "@/components/admin/form-controls";
-import { type FormState, initialFormState } from "@/lib/admin/types";
+import {
+  type FormState,
+  initialFormState,
+  type RawMaterialRecipeOption,
+} from "@/lib/admin/types";
 
 import { createRecipe } from "./actions";
 
 type Option = { value: string; label: string };
 
-type Row = { key: number; rawMaterialId: string; quantity: string; unitId: string };
+type Row = { key: number; rawMaterialId: string; quantity: string };
 
 const fieldClass =
   "h-10 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100";
 
 let nextKey = 1;
 function emptyRow(): Row {
-  return { key: nextKey++, rawMaterialId: "", quantity: "", unitId: "" };
+  return { key: nextKey++, rawMaterialId: "", quantity: "" };
 }
 
 type FieldsProps = {
   products: Option[];
-  rawMaterials: Option[];
-  units: Option[];
+  rawMaterials: RawMaterialRecipeOption[];
 };
 
 /**
  * Holds the editable fields. The parent gives it a fresh `key` after a
  * successful submit so it remounts with empty inputs and a single blank row.
  */
-function RecipeFields({ products, rawMaterials, units }: FieldsProps) {
+function RecipeFields({ products, rawMaterials }: FieldsProps) {
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
+  const materialsById = new Map(
+    rawMaterials.map((material) => [material.value, material]),
+  );
 
   function updateRow(key: number, patch: Partial<Row>) {
     setRows((current) =>
@@ -43,7 +49,10 @@ function RecipeFields({ products, rawMaterials, units }: FieldsProps) {
     <>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
-          <label className="text-sm font-medium text-stone-700" htmlFor="productId">
+          <label
+            className="text-sm font-medium text-stone-700"
+            htmlFor="productId"
+          >
             Product <span className="text-red-700">*</span>
           </label>
           <select
@@ -90,72 +99,67 @@ function RecipeFields({ products, rawMaterials, units }: FieldsProps) {
           Ingredients <span className="text-red-700">*</span>
         </p>
         <div className="grid gap-2">
-          {rows.map((row) => (
-            <div
-              className="grid grid-cols-[1fr_110px_120px_auto] items-center gap-2"
-              key={row.key}
-            >
-              <select
-                className={fieldClass}
-                name="rawMaterialId"
-                onChange={(event) =>
-                  updateRow(row.key, { rawMaterialId: event.target.value })
-                }
-                value={row.rawMaterialId}
+          {rows.map((row) => {
+            const material = materialsById.get(row.rawMaterialId);
+
+            return (
+              <div
+                className="grid grid-cols-[1fr_110px_120px_auto] items-center gap-2"
+                key={row.key}
               >
-                <option disabled value="">
-                  Raw material
-                </option>
-                {rawMaterials.map((material) => (
-                  <option key={material.value} value={material.value}>
-                    {material.label}
+                <select
+                  className={fieldClass}
+                  name="rawMaterialId"
+                  onChange={(event) =>
+                    updateRow(row.key, { rawMaterialId: event.target.value })
+                  }
+                  value={row.rawMaterialId}
+                >
+                  <option disabled value="">
+                    Raw material
                   </option>
-                ))}
-              </select>
-              <input
-                className={fieldClass}
-                min="0"
-                name="quantity"
-                onChange={(event) =>
-                  updateRow(row.key, { quantity: event.target.value })
-                }
-                placeholder="Qty"
-                step="0.001"
-                type="number"
-                value={row.quantity}
-              />
-              <select
-                className={fieldClass}
-                name="unitId"
-                onChange={(event) =>
-                  updateRow(row.key, { unitId: event.target.value })
-                }
-                value={row.unitId}
-              >
-                <option disabled value="">
-                  Unit
-                </option>
-                {units.map((unit) => (
-                  <option key={unit.value} value={unit.value}>
-                    {unit.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                aria-label="Remove ingredient"
-                className="grid size-10 place-items-center rounded-md border border-stone-300 text-stone-500 transition hover:bg-stone-100 disabled:opacity-40"
-                disabled={rows.length === 1}
-                onClick={() =>
-                  setRows((current) =>
-                    current.filter((item) => item.key !== row.key),
-                  )
-                }
-                type="button"
-              >
-                <Trash2 className="size-4" />
-              </button>
-            </div>
-          ))}
+                  {rawMaterials.map((material) => (
+                    <option key={material.value} value={material.value}>
+                      {material.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className={fieldClass}
+                  min="0"
+                  name="quantity"
+                  onChange={(event) =>
+                    updateRow(row.key, { quantity: event.target.value })
+                  }
+                  placeholder="Qty"
+                  step="0.001"
+                  type="number"
+                  value={row.quantity}
+                />
+                <input
+                  name="unitId"
+                  type="hidden"
+                  value={material?.unitId ?? ""}
+                />
+                <span className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">
+                  {material?.unitLabel ?? "Unit"}
+                </span>
+                <button
+                  aria-label="Remove ingredient"
+                  className="grid size-10 place-items-center rounded-md border border-stone-300 text-stone-500 transition hover:bg-stone-100 disabled:opacity-40"
+                  disabled={rows.length === 1}
+                  onClick={() =>
+                    setRows((current) =>
+                      current.filter((item) => item.key !== row.key),
+                    )
+                  }
+                  type="button"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
+            );
+          })}
         </div>
         <div>
           <button

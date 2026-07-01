@@ -26,9 +26,18 @@ export async function createRawMaterial(
   return { ok: true, error: null, token: Date.now() };
 }
 
-export async function setRawMaterialActive(formData: FormData): Promise<void> {
-  await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
+export async function setRawMaterialActive(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
     isActive: formData.get("isActive") === "true",
   });
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
   revalidatePath(PATH);
+  return { ok: true, error: null, token: Date.now() };
 }

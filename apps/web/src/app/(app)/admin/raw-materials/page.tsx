@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AdminForm } from "@/components/admin/admin-form";
 import { Field, SelectField } from "@/components/admin/form-controls";
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
@@ -20,7 +21,7 @@ export default async function RawMaterialsPage() {
     apiGet<Unit[]>("/admin/units"),
   ]);
 
-  const unitOptions = (units ?? [])
+  const unitOptions = units
     .filter((unit) => unit.isActive)
     .map((unit) => ({
       value: unit.id,
@@ -64,8 +65,8 @@ export default async function RawMaterialsPage() {
         )}
       </Card>
 
-      <Card title={`All raw materials (${materials?.length ?? 0})`}>
-        {!materials || materials.length === 0 ? (
+      <Card title={`All raw materials (${materials.length})`}>
+        {materials.length === 0 ? (
           <EmptyState>No raw materials yet.</EmptyState>
         ) : (
           <TableShell
@@ -95,20 +96,17 @@ export default async function RawMaterialsPage() {
                   <StatusBadge active={material.isActive} />
                 </td>
                 <td className="py-3 pr-4">
-                  <form action={setRawMaterialActive}>
+                  <InlineActionForm
+                    action={setRawMaterialActive}
+                    submitLabel={material.isActive ? "Deactivate" : "Activate"}
+                  >
                     <input name="id" type="hidden" value={material.id} />
                     <input
                       name="isActive"
                       type="hidden"
                       value={material.isActive ? "false" : "true"}
                     />
-                    <button
-                      className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-                      type="submit"
-                    >
-                      {material.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  </form>
+                  </InlineActionForm>
                 </td>
               </tr>
             ))}

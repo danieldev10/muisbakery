@@ -22,8 +22,8 @@ export function AppShell({ children, user }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-stone-100 text-stone-950">
-      <header className="border-b border-stone-200 bg-white">
-        <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+      <header className="sticky top-0 z-30 border-b border-stone-200 bg-white">
+        <div className="flex min-h-16 w-full items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
           <Link className="flex items-center gap-3" href="/dashboard">
             <Image
               alt="Muis Bakery"
@@ -53,12 +53,12 @@ export function AppShell({ children, user }: AppShellProps) {
         </div>
       </header>
 
-      <div className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[240px_1fr] lg:px-8">
-        <aside className="h-fit rounded-md border border-stone-200 bg-white p-3">
-          <SideNav items={navItems} />
-        </aside>
+      <div className="flex min-h-[calc(100vh-4rem)] w-full items-start">
+        <SideNav items={navItems} />
 
-        <main>{children}</main>
+        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
+          {children}
+        </main>
       </div>
     </div>
   );

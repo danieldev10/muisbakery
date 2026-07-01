@@ -39,6 +39,13 @@ export type RawMaterial = {
   isActive: boolean;
 };
 
+export type RawMaterialRecipeOption = {
+  value: string;
+  label: string;
+  unitId: string;
+  unitLabel: string;
+};
+
 export type Product = {
   id: string;
   name: string;

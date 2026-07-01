@@ -1,5 +1,6 @@
 import { AdminForm } from "@/components/admin/admin-form";
 import { Field } from "@/components/admin/form-controls";
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
@@ -61,7 +62,7 @@ export default async function SettingsPage() {
         </AdminForm>
 
         <div className="mt-5">
-          {!units || units.length === 0 ? (
+          {units.length === 0 ? (
             <EmptyState>No units yet.</EmptyState>
           ) : (
             <TableShell
@@ -86,20 +87,17 @@ export default async function SettingsPage() {
                     <StatusBadge active={unit.isActive} />
                   </td>
                   <td className="py-3 pr-4">
-                    <form action={setUnitActive}>
+                    <InlineActionForm
+                      action={setUnitActive}
+                      submitLabel={unit.isActive ? "Deactivate" : "Activate"}
+                    >
                       <input name="id" type="hidden" value={unit.id} />
                       <input
                         name="isActive"
                         type="hidden"
                         value={unit.isActive ? "false" : "true"}
                       />
-                      <button
-                        className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-                        type="submit"
-                      >
-                        {unit.isActive ? "Deactivate" : "Activate"}
-                      </button>
-                    </form>
+                    </InlineActionForm>
                   </td>
                 </tr>
               ))}
@@ -128,7 +126,7 @@ export default async function SettingsPage() {
         </AdminForm>
 
         <div className="mt-5">
-          {!categories || categories.length === 0 ? (
+          {categories.length === 0 ? (
             <EmptyState>No expense categories yet.</EmptyState>
           ) : (
             <TableShell
@@ -153,20 +151,19 @@ export default async function SettingsPage() {
                     <StatusBadge active={category.isActive} />
                   </td>
                   <td className="py-3 pr-4">
-                    <form action={setExpenseCategoryActive}>
+                    <InlineActionForm
+                      action={setExpenseCategoryActive}
+                      submitLabel={
+                        category.isActive ? "Deactivate" : "Activate"
+                      }
+                    >
                       <input name="id" type="hidden" value={category.id} />
                       <input
                         name="isActive"
                         type="hidden"
                         value={category.isActive ? "false" : "true"}
                       />
-                      <button
-                        className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
-                        type="submit"
-                      >
-                        {category.isActive ? "Deactivate" : "Activate"}
-                      </button>
-                    </form>
+                    </InlineActionForm>
                   </td>
                 </tr>
               ))}
