@@ -283,6 +283,10 @@ function serializeProduct(product: ProductWithUnitPrice) {
   };
 }
 
+function productLabel(product: ReturnType<typeof serializeProduct>) {
+  return product.size ? `${product.name} - ${product.size}` : product.name;
+}
+
 function serializeRawMaterial(rawMaterial: RawMaterialWithUnit) {
   return {
     id: rawMaterial.id,
@@ -424,14 +428,33 @@ export class ManagementService {
   ) {}
 
   async dashboard(month?: string) {
-    const [profitLoss, inventory, production, sales, auditLog] =
-      await Promise.all([
-        this.profitLoss(month),
-        this.inventory(),
-        this.production(month),
-        this.sales(month),
-        this.auditLog(),
-      ]);
+    const [profitLoss, inventory, production, sales] = await Promise.all([
+      this.profitLoss(month),
+      this.inventory(),
+      this.production(month),
+      this.sales(month),
+    ]);
+
+    const productionOutput = [...production.outputByProduct]
+      .sort(
+        (left, right) =>
+          Number(right.quantityProduced) - Number(left.quantityProduced),
+      )
+      .slice(0, 5)
+      .map((entry) => ({
+        label: productLabel(entry.product),
+        value: entry.quantityProduced,
+        detail: `${entry.runsCount} runs`,
+      }));
+
+    const salesRevenue = [...sales.productSummary]
+      .sort((left, right) => Number(right.revenue) - Number(left.revenue))
+      .slice(0, 5)
+      .map((entry) => ({
+        label: productLabel(entry.product),
+        value: entry.revenue,
+        detail: `${entry.quantitySold} sold`,
+      }));
 
     return {
       month: profitLoss.month,
@@ -447,8 +470,39 @@ export class ManagementService {
           inventory.lowStock.rawMaterials.length +
           inventory.lowStock.finishedProducts.length,
       },
-      lowStock: inventory.lowStock,
-      latestActivity: auditLog.entries.slice(0, 8),
+      charts: {
+        profitability: [
+          {
+            label: "Revenue",
+            value: profitLoss.revenue.totalRevenue,
+            detail: `${profitLoss.revenue.salesCount} sales`,
+          },
+          {
+            label: "Material cost",
+            value: profitLoss.costs.materialIssuedCost,
+            detail: "Issued to production",
+          },
+          {
+            label: "Gross profit",
+            value: profitLoss.profit.estimatedGrossProfit,
+            detail: `${profitLoss.profit.grossMarginPercent}% margin`,
+          },
+        ],
+        stockValue: [
+          {
+            label: "Raw materials",
+            value: inventory.valuation.rawMaterials,
+            detail: `${inventory.rawMaterials.length} materials`,
+          },
+          {
+            label: "Finished goods",
+            value: inventory.valuation.finishedGoods,
+            detail: `${inventory.finishedProducts.length} products`,
+          },
+        ],
+        productionOutput,
+        salesRevenue,
+      },
     };
   }
 

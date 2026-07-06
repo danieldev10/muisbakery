@@ -226,6 +226,12 @@ export type ManagementAuditReport = {
   entries: ManagementAuditEntry[];
 };
 
+export type ManagementChartDatum = {
+  label: string;
+  value: string;
+  detail: string;
+};
+
 export type ManagementDashboardReport = {
   month: ManagementMonth;
   summary: {
@@ -238,6 +244,10 @@ export type ManagementDashboardReport = {
     productsSold: string;
     lowStockAlerts: number;
   };
-  lowStock: ManagementInventoryReport["lowStock"];
-  latestActivity: ManagementAuditEntry[];
+  charts: {
+    profitability: ManagementChartDatum[];
+    stockValue: ManagementChartDatum[];
+    productionOutput: ManagementChartDatum[];
+    salesRevenue: ManagementChartDatum[];
+  };
 };

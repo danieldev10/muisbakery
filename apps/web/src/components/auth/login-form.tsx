@@ -4,9 +4,19 @@ import { LogIn } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
+import { getRoleHome } from "@/lib/roles";
+
 type LoginFormProps = {
-  callbackUrl: string;
+  callbackUrl?: string;
 };
+
+type LoginResponse = {
+  role?: unknown;
+};
+
+function isInternalPath(value: string | undefined): value is string {
+  return Boolean(value?.startsWith("/") && !value.startsWith("//"));
+}
 
 export function LoginForm({ callbackUrl }: LoginFormProps) {
   const router = useRouter();
@@ -38,7 +48,12 @@ export function LoginForm({ callbackUrl }: LoginFormProps) {
       return;
     }
 
-    router.push(callbackUrl);
+    const data = (await response.json().catch(() => ({}))) as LoginResponse;
+    const target = isInternalPath(callbackUrl)
+      ? callbackUrl
+      : getRoleHome(data.role);
+
+    router.push(target);
     router.refresh();
   }
 

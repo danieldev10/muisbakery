@@ -41,7 +41,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             </div>
           </div>
 
-          <LoginForm callbackUrl={params.callbackUrl ?? "/dashboard"} />
+          <LoginForm callbackUrl={params.callbackUrl} />
         </section>
       </div>
     </main>
