@@ -83,9 +83,9 @@ function RecipeFields({ products, rawMaterials }: FieldsProps) {
             className={fieldClass}
             defaultValue="1"
             id="yieldQuantity"
-            min="0"
+            min="1"
             name="yieldQuantity"
-            step="0.001"
+            step="1"
             type="number"
           />
           <p className="text-xs text-stone-500">

@@ -88,7 +88,7 @@ export default async function SalesReturnsPage() {
                   min="0"
                   name="quantity"
                   required
-                  step="0.001"
+                  step="1"
                   type="number"
                 />
                 <Field
@@ -140,7 +140,7 @@ export default async function SalesReturnsPage() {
                   min="0"
                   name="quantity"
                   required
-                  step="0.001"
+                  step="1"
                   type="number"
                 />
                 <Field

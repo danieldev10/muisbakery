@@ -32,14 +32,24 @@ const quantitySchema = z.coerce
   .positive("Quantity must be greater than zero.")
   .max(99_999_999);
 
-const optionalQuantity = z.preprocess(
-  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-  quantitySchema.optional(),
-);
+const productCountSchema = z.coerce
+  .number()
+  .positive("Quantity must be greater than zero.")
+  .max(99_999_999)
+  .refine(Number.isInteger, {
+    message: "Quantity must be a whole number.",
+  });
 
-const optionalNonnegativeQuantity = z.preprocess(
+const optionalNonnegativeCount = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-  z.coerce.number().nonnegative("Quantity cannot be negative.").max(99_999_999).optional(),
+  z.coerce
+    .number()
+    .nonnegative("Quantity cannot be negative.")
+    .max(99_999_999)
+    .refine(Number.isInteger, {
+      message: "Quantity must be a whole number.",
+    })
+    .optional(),
 );
 
 const createRequestSchema = z.object({
@@ -57,9 +67,9 @@ const materialUsageSchema = z.object({
 const createRunSchema = z
   .object({
     productId: z.string().trim().min(1),
-    quantityProduced: quantitySchema,
-    quantityTransferred: optionalNonnegativeQuantity,
-    wasteQuantity: optionalNonnegativeQuantity,
+    quantityProduced: productCountSchema,
+    quantityTransferred: optionalNonnegativeCount,
+    wasteQuantity: optionalNonnegativeCount,
     wasteReason: optionalText(300),
     producedAt: optionalDate,
     notes: optionalText(500),

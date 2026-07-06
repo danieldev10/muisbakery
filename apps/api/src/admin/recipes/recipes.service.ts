@@ -18,6 +18,14 @@ const itemSchema = z.object({
   unitId: z.string().trim().min(1),
 });
 
+const yieldQuantitySchema = z.coerce
+  .number()
+  .positive()
+  .max(99_999_999)
+  .refine(Number.isInteger, {
+    message: "Yield quantity must be a whole number.",
+  });
+
 const itemsSchema = z
   .array(itemSchema)
   .min(1, "Add at least one ingredient.")
@@ -37,14 +45,14 @@ const itemsSchema = z
 
 const createSchema = z.object({
   productId: z.string().trim().min(1),
-  yieldQuantity: z.coerce.number().positive().max(99_999_999).optional(),
+  yieldQuantity: yieldQuantitySchema.optional(),
   notes: z.string().trim().max(500).optional(),
   items: itemsSchema,
 });
 
 const updateSchema = z
   .object({
-    yieldQuantity: z.coerce.number().positive().max(99_999_999).optional(),
+    yieldQuantity: yieldQuantitySchema.optional(),
     notes: z.string().trim().max(500).nullish(),
     isActive: z.boolean().optional(),
     items: itemsSchema.optional(),

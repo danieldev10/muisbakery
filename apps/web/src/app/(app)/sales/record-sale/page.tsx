@@ -149,7 +149,7 @@ export default async function RecordSalePage() {
                           max={item.totalRemaining}
                           min="0"
                           name={`quantity:${item.product.id}`}
-                          step="0.001"
+                          step="1"
                           type="number"
                         />
                       </td>

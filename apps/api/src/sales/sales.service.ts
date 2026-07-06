@@ -41,7 +41,10 @@ const optionalDate = z.preprocess(
 const quantitySchema = z.coerce
   .number()
   .positive("Quantity must be greater than zero.")
-  .max(99_999_999);
+  .max(99_999_999)
+  .refine(Number.isInteger, {
+    message: "Quantity must be a whole number.",
+  });
 
 const moneySchema = z.coerce
   .number()
@@ -51,7 +54,10 @@ const moneySchema = z.coerce
 const nonnegativeQuantitySchema = z.coerce
   .number()
   .nonnegative("Quantity cannot be negative.")
-  .max(99_999_999);
+  .max(99_999_999)
+  .refine(Number.isInteger, {
+    message: "Quantity must be a whole number.",
+  });
 
 const optionalMoneySchema = z.preprocess(
   (value) =>

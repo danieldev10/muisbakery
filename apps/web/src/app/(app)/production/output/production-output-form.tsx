@@ -104,12 +104,12 @@ export function ProductionOutputForm({
           <input
             className={fieldClass}
             id="quantityProduced"
-            min="0"
+            min="1"
             name="quantityProduced"
             onChange={(event) => setQuantityProduced(event.target.value)}
-            placeholder="0.000"
+            placeholder="0"
             required
-            step="0.001"
+            step="1"
             type="number"
             value={quantityProduced}
           />
@@ -125,7 +125,7 @@ export function ProductionOutputForm({
             min="0"
             name="quantityTransferred"
             placeholder="All"
-            step="0.001"
+            step="1"
             type="number"
           />
         </div>
@@ -139,7 +139,7 @@ export function ProductionOutputForm({
             id="wasteQuantity"
             min="0"
             name="wasteQuantity"
-            step="0.001"
+            step="1"
             type="number"
           />
         </div>

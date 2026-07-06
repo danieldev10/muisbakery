@@ -79,11 +79,11 @@ async function apiJson<T>(path: string, init?: RequestInit) {
 }
 
 function productAvailable(item: SalesInventoryItem) {
-  return Number(item.totalRemaining);
+  return Math.floor(Number(item.totalRemaining));
 }
 
-function roundQuantity(value: number) {
-  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+function roundCount(value: number) {
+  return Math.floor(Math.max(0, value));
 }
 
 function roundMoney(value: number) {
@@ -91,7 +91,7 @@ function roundMoney(value: number) {
 }
 
 function quantityString(value: number) {
-  return roundQuantity(value).toFixed(3);
+  return String(roundCount(value));
 }
 
 function moneyString(value: number) {
@@ -146,7 +146,7 @@ function updateSessionProductQuantity(
     (entry) => entry.product.id === productId,
   );
   const unitPrice = item.product.unitPrice ?? existing?.unitPrice ?? "0";
-  const nextQuantity = roundQuantity(Math.max(0, quantity));
+  const nextQuantity = roundCount(quantity);
   const nextItems = session.items.filter(
     (entry) => entry.product.id !== productId,
   );
@@ -542,7 +542,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     }
 
     const available = productAvailable(item);
-    const nextQuantity = roundQuantity(Math.max(0, Math.min(quantity, available)));
+    const nextQuantity = roundCount(Math.min(quantity, available));
 
     if (quantity > available) {
       setError(
