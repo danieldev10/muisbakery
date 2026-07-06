@@ -108,11 +108,11 @@ export default async function ProductionRequestsPage() {
               />
               <Field
                 label="Quantity"
-                min="0"
+                min="1"
                 name="requestedQuantity"
-                placeholder="0.000"
+                placeholder="0"
                 required
-                step="0.001"
+                step="1"
                 type="number"
               />
               <Field

@@ -73,11 +73,11 @@ export default async function StoreReceivingPage() {
               />
               <Field
                 label="Quantity"
-                min="0"
+                min="1"
                 name="quantity"
-                placeholder="0.000"
+                placeholder="0"
                 required
-                step="0.001"
+                step="1"
                 type="number"
               />
               <Field

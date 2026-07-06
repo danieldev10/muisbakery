@@ -18,13 +18,13 @@ const selectClass =
   "h-10 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100";
 const labelClass = "text-sm font-medium text-stone-700";
 
-function roundQuantity(value: number) {
-  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+function wholeQuantity(value: number) {
+  return Math.max(1, Math.ceil(value - Number.EPSILON));
 }
 
 function formatQuantity(value: number | string, unit: string) {
   return `${Number(value).toLocaleString("en", {
-    maximumFractionDigits: 3,
+    maximumFractionDigits: 0,
   })} ${unit}`;
 }
 
@@ -67,7 +67,7 @@ export function ProductionOutputForm({
     return recipe.items.map((item) => ({
       rawMaterial: item.rawMaterial,
       unit: item.unit,
-      quantity: roundQuantity((Number(item.quantity) * produced) / yieldQuantity),
+      quantity: wholeQuantity((Number(item.quantity) * produced) / yieldQuantity),
     }));
   }, [quantityProduced, selectedProduct]);
 
@@ -201,11 +201,11 @@ export function ProductionOutputForm({
                     <td className="p-3">
                       <input
                         className={fieldClass}
-                        defaultValue={item.quantity.toFixed(3)}
+                        defaultValue={String(item.quantity)}
                         key={`${productId}:${quantityProduced}:${item.rawMaterial.id}`}
-                        min="0"
+                        min="1"
                         name={`usage:${item.rawMaterial.id}`}
-                        step="0.001"
+                        step="1"
                         type="number"
                       />
                     </td>

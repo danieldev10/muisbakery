@@ -126,13 +126,13 @@ function RecipeFields({ products, rawMaterials }: FieldsProps) {
                 </select>
                 <input
                   className={fieldClass}
-                  min="0"
+                  min="1"
                   name="quantity"
                   onChange={(event) =>
                     updateRow(row.key, { quantity: event.target.value })
                   }
                   placeholder="Qty"
-                  step="0.001"
+                  step="1"
                   type="number"
                   value={row.quantity}
                 />

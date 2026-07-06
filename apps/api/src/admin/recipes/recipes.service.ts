@@ -14,7 +14,13 @@ import { PrismaService } from "../../database/prisma.service";
 
 const itemSchema = z.object({
   rawMaterialId: z.string().trim().min(1),
-  quantity: z.coerce.number().positive().max(99_999_999),
+  quantity: z.coerce
+    .number()
+    .positive()
+    .max(99_999_999)
+    .refine(Number.isInteger, {
+      message: "Ingredient quantity must be a whole number.",
+    }),
   unitId: z.string().trim().min(1),
 });
 

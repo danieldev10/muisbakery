@@ -35,7 +35,10 @@ const optionalDate = z.preprocess(
 const quantitySchema = z.coerce
   .number()
   .positive("Quantity must be greater than zero.")
-  .max(99_999_999);
+  .max(99_999_999)
+  .refine(Number.isInteger, {
+    message: "Quantity must be a whole number.",
+  });
 
 const optionalQuantity = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),

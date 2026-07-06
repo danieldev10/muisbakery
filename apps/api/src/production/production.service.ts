@@ -30,7 +30,10 @@ const optionalDate = z.preprocess(
 const quantitySchema = z.coerce
   .number()
   .positive("Quantity must be greater than zero.")
-  .max(99_999_999);
+  .max(99_999_999)
+  .refine(Number.isInteger, {
+    message: "Quantity must be a whole number.",
+  });
 
 const productCountSchema = z.coerce
   .number()
@@ -244,6 +247,10 @@ function roundQuantity(value: number) {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
 }
 
+function wholeQuantity(value: number) {
+  return Math.max(1, Math.ceil(value - Number.EPSILON));
+}
+
 function productLabel(product: { name: string; size: string }) {
   return product.size ? `${product.name} - ${product.size}` : product.name;
 }
@@ -422,7 +429,7 @@ function expectedUsagesForProduct(product: ProductOption, quantityProduced: numb
   return product.recipe.items
     .map((item) => ({
       rawMaterialId: item.rawMaterialId,
-      expectedQuantity: roundQuantity(
+      expectedQuantity: wholeQuantity(
         (decimalToNumber(item.quantity) * quantityProduced) / yieldQuantity,
       ),
     }))

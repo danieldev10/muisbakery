@@ -144,10 +144,10 @@ export default async function StoreRequestsPage() {
                         <input
                           className={inputClass}
                           max={request.remainingQuantity}
-                          min="0"
+                          min="1"
                           name="quantity"
                           placeholder={request.remainingQuantity}
-                          step="0.001"
+                          step="1"
                           type="number"
                         />
                         <textarea
