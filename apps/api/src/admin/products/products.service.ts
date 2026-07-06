@@ -16,6 +16,7 @@ const priceSchema = z.coerce.number().nonnegative().max(99_999_999);
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
+  size: z.string().trim().max(80).optional(),
   description: z.string().trim().max(300).optional(),
   unitId: z.string().trim().min(1),
   unitPrice: priceSchema.optional(),
@@ -24,6 +25,7 @@ const createSchema = z.object({
 const updateSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
+    size: z.string().trim().max(80).optional(),
     description: z.string().trim().max(300).nullish(),
     unitId: z.string().trim().min(1).optional(),
     unitPrice: priceSchema.nullish(),
@@ -82,17 +84,18 @@ export class ProductsService {
 
     await this.assertUnitExists(parsed.data.unitId);
 
+    const size = parsed.data.size ?? "";
     const existing = await this.prisma.product.findUnique({
-      where: { name: parsed.data.name },
+      where: { name_size: { name: parsed.data.name, size } },
       select: { id: true },
     });
 
     if (existing) {
-      throw new ConflictException("A product with that name exists.");
+      throw new ConflictException("A product with that name and size exists.");
     }
 
     const product = await this.prisma.product.create({
-      data: parsed.data,
+      data: { ...parsed.data, size },
       include,
     });
 
@@ -127,14 +130,20 @@ export class ProductsService {
       await this.assertUnitExists(parsed.data.unitId);
     }
 
-    if (parsed.data.name) {
+    if (parsed.data.name || parsed.data.size !== undefined) {
+      const current = await this.prisma.product.findUniqueOrThrow({
+        where: { id },
+        select: { name: true, size: true },
+      });
+      const nextName = parsed.data.name ?? current.name;
+      const nextSize = parsed.data.size ?? current.size;
       const clash = await this.prisma.product.findFirst({
-        where: { name: parsed.data.name, NOT: { id } },
+        where: { name: nextName, size: nextSize, NOT: { id } },
         select: { id: true },
       });
 
       if (clash) {
-        throw new ConflictException("A product with that name exists.");
+        throw new ConflictException("A product with that name and size exists.");
       }
     }
 

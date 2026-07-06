@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { PaymentMethod, SalesSummary } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -168,7 +169,7 @@ export default async function SalesDailySummaryPage({
               {summary.productSummary.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
-                    {entry.product.name}
+                    {formatProductName(entry.product)}
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {formatQuantity(
@@ -210,7 +211,7 @@ export default async function SalesDailySummaryPage({
                   <ul className="grid gap-1">
                     {sale.items.map((item) => (
                       <li key={item.id}>
-                        {item.product.name}:{" "}
+                        {formatProductName(item.product)}:{" "}
                         {formatQuantity(
                           item.quantity,
                           item.product.unit.abbreviation,

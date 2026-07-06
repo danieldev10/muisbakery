@@ -24,6 +24,7 @@ export type RawMaterialRef = {
 export type ProductRef = {
   id: string;
   name: string;
+  size: string;
   unit: UnitRef;
 };
 

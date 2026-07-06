@@ -72,6 +72,7 @@ const rawMaterialSelect = {
 const productSelect = {
   id: true,
   name: true,
+  size: true,
   unitPrice: true,
   unit: { select: unitSelect },
 } satisfies Prisma.ProductSelect;
@@ -106,6 +107,10 @@ function formatQuantity(value: number, unit?: string) {
   });
 
   return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function productLabel(product: { name: string; size: string }) {
+  return product.size ? `${product.name} - ${product.size}` : product.name;
 }
 
 function formatDate(value: Date) {
@@ -641,7 +646,7 @@ export class DashboardController {
           emptyText: "No production runs have been recorded yet.",
           items: recentRuns.map((run) => ({
             id: run.id,
-            title: run.product.name,
+            title: productLabel(run.product),
             detail: `${formatQuantity(
               decimalToNumber(run.quantityTransferred),
               run.product.unit.abbreviation,
@@ -750,7 +755,7 @@ export class DashboardController {
 
       return {
         id: product.id,
-        name: product.name,
+        name: productLabel(product),
         unit: product.unit.abbreviation,
         totalRemaining,
         retailValue: totalRemaining * decimalToNumber(product.unitPrice),
@@ -850,7 +855,7 @@ export class DashboardController {
           emptyText: "No returns or damaged goods recorded today.",
           items: returnsToday.map((entry) => ({
             id: entry.id,
-            title: entry.product.name,
+              title: productLabel(entry.product),
             detail: entry.disposition.replaceAll("_", " ").toLowerCase(),
             meta: formatDateTime(entry.recordedAt),
             value: formatQuantity(
@@ -979,7 +984,7 @@ export class DashboardController {
           emptyText: "No production runs this month.",
           items: productionRuns.map((run) => ({
             id: run.id,
-            title: run.product.name,
+            title: productLabel(run.product),
             detail: `${formatQuantity(
               decimalToNumber(run.quantityTransferred),
               run.product.unit.abbreviation,
@@ -1102,7 +1107,7 @@ export class DashboardController {
 
         return {
           id: product.id,
-          title: product.name,
+          title: productLabel(product),
           detail: "Finished goods remaining",
           value: formatQuantity(totalRemaining, product.unit.abbreviation),
           tone: "warning" as const,

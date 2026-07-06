@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { ManagementProductionReport } from "@/lib/management/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import {
@@ -72,7 +73,7 @@ export default async function ManagementProductionPage({
               {report.outputByProduct.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
-                    {entry.product.name}
+                    {formatProductName(entry.product)}
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {entry.runsCount}
@@ -118,7 +119,7 @@ export default async function ManagementProductionPage({
               {report.wasteByProduct.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
-                    {entry.product.name}
+                    {formatProductName(entry.product)}
                   </td>
                   <td className="py-3 pr-4 text-stone-600">{entry.count}</td>
                   <td className="py-3 pr-4 text-stone-600">
@@ -192,7 +193,7 @@ export default async function ManagementProductionPage({
             {report.runs.map((run) => (
               <tr className="align-top" key={run.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
-                  {run.product.name}
+                  {formatProductName(run.product)}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatQuantity(

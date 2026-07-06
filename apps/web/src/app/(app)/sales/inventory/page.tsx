@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { SalesInventoryItem } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 function formatDate(value: string) {
@@ -43,7 +44,7 @@ export default async function SalesInventoryPage() {
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <h2 className="font-semibold text-stone-950">
-                      {item.product.name}
+                      {formatProductName(item.product)}
                     </h2>
                     <p className="text-xs text-stone-500">
                       Available stock received from Production.

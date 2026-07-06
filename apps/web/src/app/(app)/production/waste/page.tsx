@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { ProductionWaste } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 function formatDate(value: string) {
@@ -48,7 +49,7 @@ export default async function ProductionWastePage() {
             {waste.map((record) => (
               <tr className="align-top" key={record.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
-                  {record.product.name}
+                  {formatProductName(record.product)}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatQuantity(

@@ -13,7 +13,10 @@ import {
 import type { Product, Unit } from "@/lib/admin/types";
 import { apiGet } from "@/lib/server-api";
 
-import { createProduct, setProductActive } from "./actions";
+import { createProduct, setProductActive, updateProductDetails } from "./actions";
+
+const inlineInputClass =
+  "h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100";
 
 function formatPrice(value: string | null) {
   if (!value) {
@@ -63,6 +66,11 @@ export default async function ProductsPage() {
                 placeholder="e.g. Full loaf bread"
                 required
               />
+              <Field
+                label="Size"
+                name="size"
+                placeholder="e.g. Small, 500g, Family"
+              />
               <SelectField
                 label="Unit"
                 name="unitId"
@@ -96,8 +104,10 @@ export default async function ProductsPage() {
             head={
               <>
                 <th className="py-2 pr-4">Name</th>
+                <th className="py-2 pr-4">Size</th>
                 <th className="py-2 pr-4">Unit</th>
                 <th className="py-2 pr-4">Price</th>
+                <th className="py-2 pr-4">Details</th>
                 <th className="py-2 pr-4">Status</th>
                 <th className="py-2 pr-4">Actions</th>
               </>
@@ -114,10 +124,46 @@ export default async function ProductsPage() {
                   ) : null}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
+                  {product.size || "-"}
+                </td>
+                <td className="py-3 pr-4 text-stone-600">
                   {product.unit.name} ({product.unit.abbreviation})
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatPrice(product.unitPrice)}
+                </td>
+                <td className="py-3 pr-4">
+                  <InlineActionForm
+                    action={updateProductDetails}
+                    className="grid gap-1 sm:grid-cols-[7rem_7rem_auto] sm:items-start"
+                    submitLabel="Save"
+                    successMessage="Saved."
+                  >
+                    <input name="id" type="hidden" value={product.id} />
+                    <label className="sr-only" htmlFor={`size-${product.id}`}>
+                      Size for {product.name}
+                    </label>
+                    <input
+                      className={inlineInputClass}
+                      defaultValue={product.size}
+                      id={`size-${product.id}`}
+                      name="size"
+                      placeholder="Size"
+                    />
+                    <label className="sr-only" htmlFor={`price-${product.id}`}>
+                      Price for {product.name}
+                    </label>
+                    <input
+                      className={inlineInputClass}
+                      defaultValue={product.unitPrice ?? ""}
+                      id={`price-${product.id}`}
+                      min="0"
+                      name="unitPrice"
+                      placeholder="Price"
+                      step="0.01"
+                      type="number"
+                    />
+                  </InlineActionForm>
                 </td>
                 <td className="py-3 pr-4">
                   <StatusBadge active={product.isActive} />

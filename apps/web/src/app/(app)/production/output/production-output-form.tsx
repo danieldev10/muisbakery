@@ -8,6 +8,7 @@ import type {
   ProductionMaterialInventoryItem,
   ProductionProductOption,
 } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 
 import { createProductionRun } from "./actions";
 
@@ -91,7 +92,7 @@ export function ProductionOutputForm({
           >
             {products.map((product) => (
               <option key={product.id} value={product.id}>
-                {product.name} ({product.unit.abbreviation})
+                {formatProductName(product)} ({product.unit.abbreviation})
               </option>
             ))}
           </select>
@@ -152,8 +153,7 @@ export function ProductionOutputForm({
             className={fieldClass}
             id="producedAt"
             name="producedAt"
-            placeholder="2026-06-30T14:00"
-            type="text"
+            type="datetime-local"
           />
         </div>
 

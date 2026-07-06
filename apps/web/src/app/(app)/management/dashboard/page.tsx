@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { ManagementDashboardReport } from "@/lib/management/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import {
@@ -115,7 +116,7 @@ export default async function ManagementDashboardPage({
               {report.lowStock.finishedProducts.map((item) => (
                 <tr key={item.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
-                    {item.product.name}
+                    {formatProductName(item.product)}
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {formatQuantity(

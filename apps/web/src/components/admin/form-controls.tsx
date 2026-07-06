@@ -30,7 +30,14 @@ export function Field({
   step,
   min,
 }: BaseFieldProps & {
-  type?: "text" | "email" | "password" | "number" | "tel";
+  type?:
+    | "date"
+    | "datetime-local"
+    | "email"
+    | "number"
+    | "password"
+    | "tel"
+    | "text";
   step?: string;
   min?: string;
 }) {

@@ -118,8 +118,7 @@ export default async function ProductionRequestsPage() {
               <Field
                 label="Needed by"
                 name="neededBy"
-                placeholder="2026-06-30T12:00"
-                type="text"
+                type="datetime-local"
               />
             </div>
             <TextareaField

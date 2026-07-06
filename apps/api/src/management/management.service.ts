@@ -12,6 +12,16 @@ import type { AuthenticatedUser } from "../auth/auth.types";
 import { PrismaService } from "../database/prisma.service";
 
 const LOW_STOCK_THRESHOLD = 10;
+const WORKFLOW_AUDIT_ACTIONS = [
+  "STORE_RAW_MATERIAL_RECEIVED",
+  "STORE_MATERIAL_REQUEST_ISSUED",
+  "PRODUCTION_MATERIAL_REQUEST_CREATED",
+  "PRODUCTION_MATERIAL_REQUEST_CANCELLED",
+  "PRODUCTION_RUN_CREATED",
+  "SALE_RECORDED",
+  "SALES_RETURN_OR_DAMAGE_RECORDED",
+  "MANAGEMENT_RAW_MATERIAL_UNIT_COST_UPDATED",
+];
 
 const unitSelect = {
   id: true,
@@ -29,6 +39,7 @@ const rawMaterialSelect = {
 const productSelect = {
   id: true,
   name: true,
+  size: true,
   unitPrice: true,
   unit: { select: unitSelect },
 } satisfies Prisma.ProductSelect;
@@ -144,6 +155,7 @@ type UnitRef = {
 type ProductWithUnitPrice = {
   id: string;
   name: string;
+  size: string;
   unitPrice: Prisma.Decimal | null;
   unit: UnitRef;
 };
@@ -204,6 +216,10 @@ function quantityString(value: number) {
   return roundQuantity(value).toFixed(3);
 }
 
+function countString(value: number) {
+  return String(Math.round(value));
+}
+
 function percentString(value: number) {
   return roundMoney(value).toFixed(2);
 }
@@ -261,6 +277,7 @@ function serializeProduct(product: ProductWithUnitPrice) {
   return {
     id: product.id,
     name: product.name,
+    size: product.size,
     unitPrice: product.unitPrice?.toString() ?? null,
     unit: product.unit,
   };
@@ -575,11 +592,11 @@ export class ManagementService {
         materialIssuedCost: moneyString(materialIssuedCost),
       },
       losses: {
-        productionWasteQuantity: quantityString(productionWasteQuantity),
+        productionWasteQuantity: countString(productionWasteQuantity),
         productionWasteEstimatedValue: moneyString(
           productionWasteEstimatedValue,
         ),
-        damagedReturnsQuantity: quantityString(damagedReturnsQuantity),
+        damagedReturnsQuantity: countString(damagedReturnsQuantity),
         damagedReturnsEstimatedValue: moneyString(damagedReturnsEstimatedValue),
         totalEstimatedLoss: moneyString(totalEstimatedLoss),
       },
@@ -800,16 +817,16 @@ export class ManagementService {
       },
       summary: {
         runsCount: runs.length,
-        quantityProduced: quantityString(totalProduced),
-        quantityTransferred: quantityString(totalTransferred),
-        wasteQuantity: quantityString(totalWaste),
+        quantityProduced: countString(totalProduced),
+        quantityTransferred: countString(totalTransferred),
+        wasteQuantity: countString(totalWaste),
       },
       outputByProduct: Array.from(outputByProduct.values()).map((entry) => ({
         product: entry.product,
         runsCount: entry.runsCount,
-        quantityProduced: quantityString(entry.quantityProduced),
-        quantityTransferred: quantityString(entry.quantityTransferred),
-        wasteQuantity: quantityString(entry.wasteQuantity),
+        quantityProduced: countString(entry.quantityProduced),
+        quantityTransferred: countString(entry.quantityTransferred),
+        wasteQuantity: countString(entry.wasteQuantity),
       })),
       materialUsage: Array.from(materialUsage.values()).map((entry) => ({
         rawMaterial: entry.rawMaterial,
@@ -819,7 +836,7 @@ export class ManagementService {
       wasteByProduct: Array.from(wasteByProduct.values()).map((entry) => ({
         product: entry.product,
         count: entry.count,
-        quantity: quantityString(entry.quantity),
+        quantity: countString(entry.quantity),
         estimatedRetailValue: moneyString(entry.estimatedRetailValue),
       })),
       runs: runs.map(serializeRun),
@@ -913,9 +930,9 @@ export class ManagementService {
         totalRevenue: moneyString(totalRevenue),
         amountPaid: moneyString(amountPaid),
         balanceDue: moneyString(balanceDue),
-        quantitySold: quantityString(quantitySold),
-        damagedQuantity: quantityString(damagedQuantity),
-        returnedToStockQuantity: quantityString(returnedToStockQuantity),
+        quantitySold: countString(quantitySold),
+        damagedQuantity: countString(damagedQuantity),
+        returnedToStockQuantity: countString(returnedToStockQuantity),
       },
       paymentSummary: Array.from(paymentTotals.values()).map((entry) => ({
         method: entry.method,
@@ -924,7 +941,7 @@ export class ManagementService {
       })),
       productSummary: Array.from(productSummary.values()).map((entry) => ({
         product: entry.product,
-        quantitySold: quantityString(entry.quantitySold),
+        quantitySold: countString(entry.quantitySold),
         revenue: moneyString(entry.revenue),
       })),
       sales: sales.map(serializeSale),
@@ -936,6 +953,7 @@ export class ManagementService {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const [entries, recentEntries] = await Promise.all([
       this.prisma.auditLog.findMany({
+        where: { action: { in: WORKFLOW_AUDIT_ACTIONS } },
         include: {
           actor: { select: userSelect },
         },
@@ -944,6 +962,7 @@ export class ManagementService {
       }),
       this.prisma.auditLog.findMany({
         where: {
+          action: { in: WORKFLOW_AUDIT_ACTIONS },
           createdAt: {
             gte: since,
           },
@@ -1047,7 +1066,7 @@ export class ManagementService {
 
     return {
       product: serializeProduct(product),
-      totalRemaining: quantityString(totalRemaining),
+      totalRemaining: countString(totalRemaining),
       estimatedRetailValue: moneyString(estimatedRetailValue),
       batches: product.salesBatches.map((batch) => ({
         id: batch.id,

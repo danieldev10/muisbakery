@@ -15,6 +15,7 @@ import type {
   SalesReturn,
   SalesReturnDisposition,
 } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import { recordCustomerReturn, recordDamagedStock } from "./actions";
@@ -51,12 +52,18 @@ export default async function SalesReturnsPage() {
     .filter((item) => Number(item.totalRemaining) > 0)
     .map((item) => ({
       value: item.product.id,
-      label: `${item.product.name} (${item.totalRemaining} ${item.product.unit.abbreviation})`,
+      label: `${formatProductName(item.product)} (${formatQuantity(
+        item.totalRemaining,
+        item.product.unit.abbreviation,
+      )})`,
     }));
 
   const saleItemOptions = options.saleItems.map((item) => ({
     value: item.id,
-    label: `#${item.sale.saleNumber} - ${item.product.name} (${item.returnableQuantity} ${item.product.unit.abbreviation})`,
+    label: `#${item.sale.saleNumber} - ${formatProductName(item.product)} (${formatQuantity(
+      item.returnableQuantity,
+      item.product.unit.abbreviation,
+    )})`,
   }));
 
   return (
@@ -94,8 +101,7 @@ export default async function SalesReturnsPage() {
                 <Field
                   label="Recorded at"
                   name="recordedAt"
-                  placeholder="2026-06-30T14:00"
-                  type="text"
+                  type="datetime-local"
                 />
               </div>
               <TextareaField
@@ -146,8 +152,7 @@ export default async function SalesReturnsPage() {
                 <Field
                   label="Recorded at"
                   name="recordedAt"
-                  placeholder="2026-06-30T14:00"
-                  type="text"
+                  type="datetime-local"
                 />
               </div>
               <TextareaField
@@ -179,7 +184,7 @@ export default async function SalesReturnsPage() {
               <tr className="align-top" key={entry.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">
-                    {entry.product.name}
+                    {formatProductName(entry.product)}
                   </p>
                   {entry.reason ? (
                     <p className="mt-1 max-w-56 text-xs text-stone-500">

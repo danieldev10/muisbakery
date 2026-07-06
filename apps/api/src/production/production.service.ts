@@ -116,6 +116,7 @@ const supplierSelect = {
 const productSelect = {
   id: true,
   name: true,
+  size: true,
   unit: { select: baseUnitSelect },
 } satisfies Prisma.ProductSelect;
 
@@ -243,6 +244,10 @@ function roundQuantity(value: number) {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
 }
 
+function productLabel(product: { name: string; size: string }) {
+  return product.size ? `${product.name} - ${product.size}` : product.name;
+}
+
 function toBatchDate(value: Date) {
   return new Date(
     Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()),
@@ -312,6 +317,7 @@ function serializeProductOption(product: ProductOption) {
   return {
     id: product.id,
     name: product.name,
+    size: product.size,
     unit: product.unit,
     recipe:
       product.recipe && product.recipe.isActive
@@ -750,7 +756,7 @@ export class ProductionService {
                 quantity: quantityFromBatch,
                 balanceAfter,
                 actorId: actor.id,
-                note: `Consumed for ${product.name}`,
+                note: `Consumed for ${productLabel(product)}`,
               },
             });
 

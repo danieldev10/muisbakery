@@ -50,6 +50,7 @@ export type RawMaterialRecipeOption = {
 export type Product = {
   id: string;
   name: string;
+  size: string;
   description: string | null;
   unitId: string;
   unit: UnitRef;
@@ -69,7 +70,7 @@ export type RecipeItem = {
 export type Recipe = {
   id: string;
   productId: string;
-  product: { id: string; name: string };
+  product: { id: string; name: string; size: string };
   yieldQuantity: string;
   notes: string | null;
   isActive: boolean;

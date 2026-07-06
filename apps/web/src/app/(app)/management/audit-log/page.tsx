@@ -28,7 +28,7 @@ export default async function ManagementAuditLogPage() {
     <>
       <PageHeader
         title="Audit log"
-        description="Recent department activity and system events."
+        description="Recent workflow activity across Store, Production, Sales, and Management."
       />
 
       <div className="grid gap-4 lg:grid-cols-2">

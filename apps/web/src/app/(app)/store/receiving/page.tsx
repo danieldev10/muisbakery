@@ -83,9 +83,8 @@ export default async function StoreReceivingPage() {
               <Field
                 label="Received at"
                 name="receivedAt"
-                type="text"
+                type="datetime-local"
                 hint="Optional. Leave blank to use the current date and time."
-                placeholder="2026-06-30T09:00"
               />
               <Field
                 label="Reference"

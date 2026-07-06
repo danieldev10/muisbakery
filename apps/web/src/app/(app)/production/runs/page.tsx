@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { ProductionRun } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 function formatDate(value: string) {
@@ -50,7 +51,7 @@ export default async function ProductionRunsPage() {
               <tr className="align-top" key={run.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">
-                    {run.product.name}
+                    {formatProductName(run.product)}
                   </p>
                   {run.notes ? (
                     <p className="mt-1 max-w-56 text-xs text-stone-500">

@@ -454,9 +454,10 @@ async function seedDemoCatalogue() {
 
   for (const demoProduct of DEMO_PRODUCTS) {
     const product = await prisma.product.upsert({
-      where: { name: demoProduct.name },
+      where: { name_size: { name: demoProduct.name, size: "" } },
       create: {
         name: demoProduct.name,
+        size: "",
         description: `Seeded ${demoProduct.name.toLowerCase()} for testing.`,
         unitId: loafUnit.id,
         unitPrice: demoProduct.unitPrice,
@@ -1038,7 +1039,7 @@ async function seedProductionWorkflowForTesting(productionUserId: string) {
 
   for (const demoRun of DEMO_PRODUCTION_RUNS) {
     const product = await prisma.product.findUniqueOrThrow({
-      where: { name: demoRun.productName },
+      where: { name_size: { name: demoRun.productName, size: "" } },
       include: seedProductInclude,
     });
     const existingRun = await prisma.productionRun.findFirst({
@@ -1088,7 +1089,7 @@ async function createSaleForSeed(
 
   for (const [productName, quantity] of demoSale.items) {
     const product = await tx.product.findUniqueOrThrow({
-      where: { name: productName },
+      where: { name_size: { name: productName, size: "" } },
       include: { unit: true },
     });
     const unitPrice = decimalToNumber(product.unitPrice ?? 0);
@@ -1352,7 +1353,7 @@ async function seedDamagedSalesStockForTesting(salesUserId: string) {
   }
 
   const product = await prisma.product.findUniqueOrThrow({
-    where: { name: "Sliced Bread" },
+    where: { name_size: { name: "Sliced Bread", size: "" } },
     include: { unit: true },
   });
 

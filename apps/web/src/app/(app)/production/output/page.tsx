@@ -9,6 +9,7 @@ import type {
   ProductionOptions,
   ProductionRun,
 } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import { ProductionOutputForm } from "./production-output-form";
@@ -76,7 +77,7 @@ export default async function ProductionOutputPage() {
             {runs.slice(0, 10).map((run) => (
               <tr className="align-top" key={run.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
-                  {run.product.name}
+                  {formatProductName(run.product)}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatQuantity(

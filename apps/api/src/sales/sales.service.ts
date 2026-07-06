@@ -171,6 +171,7 @@ const unitSelect = {
 const productSelect = {
   id: true,
   name: true,
+  size: true,
   unitPrice: true,
   unit: { select: unitSelect },
 } satisfies Prisma.ProductSelect;
@@ -349,7 +350,11 @@ function roundMoney(value: number) {
 }
 
 function formatQuantity(value: number) {
-  return roundQuantity(value).toFixed(3);
+  return String(Math.round(value));
+}
+
+function productLabel(product: { name: string; size: string }) {
+  return product.size ? `${product.name} - ${product.size}` : product.name;
 }
 
 function toDayRange(dateInput?: string) {
@@ -395,6 +400,7 @@ function serializeInventoryItem(product: ProductInventory) {
     product: {
       id: product.id,
       name: product.name,
+      size: product.size,
       unit: product.unit,
       unitPrice: product.unitPrice?.toString() ?? null,
     },
@@ -451,7 +457,7 @@ function serializeSaleItemOption(item: SaleItemOption) {
   return {
     id: item.id,
     quantity: item.quantity.toString(),
-    returnableQuantity: returnableQuantity.toFixed(3),
+    returnableQuantity: formatQuantity(returnableQuantity),
     unitPrice: item.unitPrice.toString(),
     lineTotal: item.lineTotal.toString(),
     sale: {
@@ -792,7 +798,7 @@ export class SalesService {
 
     if (parsed.data.quantity > 0 && unitPrice <= 0) {
       throw new BadRequestException(
-        `Enter a unit price for ${product.name} before adding it to the sale.`,
+        `Enter a unit price for ${productLabel(product)} before adding it to the sale.`,
       );
     }
 
@@ -801,7 +807,7 @@ export class SalesService {
 
       if (available < parsed.data.quantity) {
         throw new BadRequestException(
-          `Only ${formatQuantity(available)} ${product.unit.abbreviation} of ${product.name} is available for sale.`,
+          `Only ${formatQuantity(available)} ${product.unit.abbreviation} of ${productLabel(product)} is available for sale.`,
         );
       }
     }
@@ -999,7 +1005,7 @@ export class SalesService {
 
       if (unitPrice <= 0) {
         throw new BadRequestException(
-          `Enter a unit price for ${product.name} before recording the sale.`,
+          `Enter a unit price for ${productLabel(product)} before recording the sale.`,
         );
       }
 
@@ -1076,7 +1082,7 @@ export class SalesService {
 
           if (availableQuantity < item.quantity) {
             throw new BadRequestException(
-              `Only ${formatQuantity(availableQuantity)} ${item.product.unit.abbreviation} of ${item.product.name} is available for sale.`,
+              `Only ${formatQuantity(availableQuantity)} ${item.product.unit.abbreviation} of ${productLabel(item.product)} is available for sale.`,
             );
           }
 
@@ -1478,7 +1484,7 @@ export class SalesService {
 
     if (availableQuantity < input.quantity) {
       throw new BadRequestException(
-        `Only ${formatQuantity(availableQuantity)} ${product.unit.abbreviation} of ${product.name} is available in Sales stock.`,
+        `Only ${formatQuantity(availableQuantity)} ${product.unit.abbreviation} of ${productLabel(product)} is available in Sales stock.`,
       );
     }
 

@@ -8,6 +8,7 @@ import {
   StatusBadge,
 } from "@/components/admin/layout";
 import type { Product, RawMaterial, Recipe } from "@/lib/admin/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import { deleteRecipe } from "./actions";
@@ -23,7 +24,10 @@ export default async function RecipesPage() {
   const recipeProductIds = new Set(recipes.map((r) => r.productId));
   const productOptions = products
     .filter((product) => product.isActive && !recipeProductIds.has(product.id))
-    .map((product) => ({ value: product.id, label: product.name }));
+    .map((product) => ({
+      value: product.id,
+      label: formatProductName(product),
+    }));
 
   const materialOptions = rawMaterials
     .filter((material) => material.isActive)
@@ -82,7 +86,7 @@ export default async function RecipesPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-stone-900">
-                        {recipe.product.name}
+                        {formatProductName(recipe.product)}
                       </h3>
                       <StatusBadge active={recipe.isActive} />
                     </div>

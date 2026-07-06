@@ -15,6 +15,13 @@ import {
   MonthFilter,
 } from "../_components";
 
+function gainLossTone(value: string) {
+  return Number(value) < 0 ? "warning" : "positive";
+}
+
+const gainClass = "font-semibold text-emerald-700";
+const lossClass = "font-semibold text-red-800";
+
 export default async function ManagementProfitLossPage({
   searchParams,
 }: {
@@ -38,23 +45,25 @@ export default async function ManagementProfitLossPage({
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Revenue"
+          tone="positive"
           value={formatMoney(report.revenue.totalRevenue)}
           detail={`${report.revenue.salesCount} sales`}
         />
         <MetricCard
           label="Material cost"
+          tone="warning"
           value={formatMoney(report.costs.materialIssuedCost)}
           detail={`Purchased ${formatMoney(report.costs.materialPurchasedCost)}`}
         />
         <MetricCard
           label="Gross profit"
-          tone="positive"
+          tone={gainLossTone(report.profit.estimatedGrossProfit)}
           value={formatMoney(report.profit.estimatedGrossProfit)}
           detail={`${formatPercent(report.profit.grossMarginPercent)} gross margin`}
         />
         <MetricCard
           label="Net after losses"
-          tone="positive"
+          tone={gainLossTone(report.profit.estimatedNetAfterRecordedLosses)}
           value={formatMoney(report.profit.estimatedNetAfterRecordedLosses)}
           detail={`Recorded losses ${formatMoney(report.losses.totalEstimatedLoss)}`}
         />
@@ -74,7 +83,7 @@ export default async function ManagementProfitLossPage({
               <td className="py-3 pr-4 font-medium text-stone-900">
                 Subtotal
               </td>
-              <td className="py-3 pr-4 text-stone-600">
+              <td className={`py-3 pr-4 ${gainClass}`}>
                 {formatMoney(report.revenue.subtotal)}
               </td>
             </tr>
@@ -82,7 +91,7 @@ export default async function ManagementProfitLossPage({
               <td className="py-3 pr-4 font-medium text-stone-900">
                 Discount
               </td>
-              <td className="py-3 pr-4 text-stone-600">
+              <td className={`py-3 pr-4 ${lossClass}`}>
                 {formatMoney(report.revenue.discount)}
               </td>
             </tr>
@@ -90,7 +99,7 @@ export default async function ManagementProfitLossPage({
               <td className="py-3 pr-4 font-medium text-stone-900">
                 Amount paid
               </td>
-              <td className="py-3 pr-4 text-stone-600">
+              <td className={`py-3 pr-4 ${gainClass}`}>
                 {formatMoney(report.revenue.amountPaid)}
               </td>
             </tr>
@@ -98,7 +107,7 @@ export default async function ManagementProfitLossPage({
               <td className="py-3 pr-4 font-medium text-stone-900">
                 Balance due
               </td>
-              <td className="py-3 pr-4 text-stone-600">
+              <td className={`py-3 pr-4 ${lossClass}`}>
                 {formatMoney(report.revenue.balanceDue)}
               </td>
             </tr>
@@ -122,7 +131,7 @@ export default async function ManagementProfitLossPage({
               <td className="py-3 pr-4 text-stone-600">
                 {formatQuantity(report.losses.productionWasteQuantity)}
               </td>
-              <td className="py-3 pr-4 text-stone-600">
+              <td className={`py-3 pr-4 ${lossClass}`}>
                 {formatMoney(report.losses.productionWasteEstimatedValue)}
               </td>
             </tr>
@@ -133,7 +142,7 @@ export default async function ManagementProfitLossPage({
               <td className="py-3 pr-4 text-stone-600">
                 {formatQuantity(report.losses.damagedReturnsQuantity)}
               </td>
-              <td className="py-3 pr-4 text-stone-600">
+              <td className={`py-3 pr-4 ${lossClass}`}>
                 {formatMoney(report.losses.damagedReturnsEstimatedValue)}
               </td>
             </tr>

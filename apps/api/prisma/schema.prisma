@@ -157,7 +157,8 @@ model RawMaterial {
 
 model Product {
   id          String   @id @default(cuid())
-  name        String   @unique
+  name        String
+  size        String   @default("")
   description String?
   unitId      String
   unitPrice   Decimal? @db.Decimal(14, 2)
@@ -175,6 +176,7 @@ model Product {
   salesReturns        SalesProductReturn[]
   posSessionItems     PosSessionItem[]
 
+  @@unique([name, size])
   @@index([isActive])
   @@index([unitId])
 }
@@ -182,7 +184,7 @@ model Product {
 model Recipe {
   id            String   @id @default(cuid())
   productId     String   @unique
-  yieldQuantity Decimal  @default(1) @db.Decimal(14, 3)
+  yieldQuantity Int      @default(1)
   notes         String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
@@ -359,9 +361,9 @@ model MaterialRequestIssue {
 model ProductionRun {
   id                  String   @id @default(cuid())
   productId           String
-  quantityProduced    Decimal  @db.Decimal(14, 3)
-  quantityTransferred Decimal  @default(0) @db.Decimal(14, 3)
-  wasteQuantity       Decimal  @default(0) @db.Decimal(14, 3)
+  quantityProduced    Int
+  quantityTransferred Int      @default(0)
+  wasteQuantity       Int      @default(0)
   producedAt          DateTime
   notes               String?
   createdAt           DateTime @default(now())
@@ -461,7 +463,7 @@ model ProductionWaste {
   id              String   @id @default(cuid())
   productionRunId String?
   productId       String
-  quantity        Decimal  @db.Decimal(14, 3)
+  quantity        Int
   reason          String?
   recordedAt      DateTime
   createdAt       DateTime @default(now())
@@ -482,8 +484,8 @@ model SalesProductBatch {
   productionRunId   String?
   batchNumber       Int
   batchDate         DateTime @db.Date
-  quantityReceived  Decimal  @db.Decimal(14, 3)
-  quantityRemaining Decimal  @db.Decimal(14, 3)
+  quantityReceived  Int
+  quantityRemaining Int
   receivedAt        DateTime
   notes             String?
   createdAt         DateTime @default(now())
@@ -508,8 +510,8 @@ model SalesProductStockMovement {
   productId    String
   batchId      String
   type         FinishedProductStockMovementType
-  quantity     Decimal                          @db.Decimal(14, 3)
-  balanceAfter Decimal                          @db.Decimal(14, 3)
+  quantity     Int
+  balanceAfter Int
   occurredAt   DateTime                         @default(now())
   note         String?
   actorId      String?
@@ -598,7 +600,7 @@ model PosSessionItem {
   id        String   @id @default(cuid())
   sessionId String
   productId String
-  quantity  Decimal  @db.Decimal(14, 3)
+  quantity  Int
   unitPrice Decimal  @db.Decimal(14, 2)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -614,7 +616,7 @@ model SaleItem {
   id        String   @id @default(cuid())
   saleId    String
   productId String
-  quantity  Decimal  @db.Decimal(14, 3)
+  quantity  Int
   unitPrice Decimal  @db.Decimal(14, 2)
   lineTotal Decimal  @db.Decimal(14, 2)
   createdAt DateTime @default(now())
@@ -632,7 +634,7 @@ model SaleItemBatch {
   id         String   @id @default(cuid())
   saleItemId String
   batchId    String
-  quantity   Decimal  @db.Decimal(14, 3)
+  quantity   Int
   createdAt  DateTime @default(now())
 
   saleItem SaleItem          @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
@@ -648,7 +650,7 @@ model SalesProductReturn {
   productId   String
   batchId     String?
   disposition SalesReturnDisposition
-  quantity    Decimal                @db.Decimal(14, 3)
+  quantity    Int
   reason      String?
   recordedAt  DateTime
   createdAt   DateTime               @default(now())

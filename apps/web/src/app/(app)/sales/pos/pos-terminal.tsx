@@ -22,6 +22,7 @@ import type {
   SalesInventoryItem,
   SalesOptions,
 } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { getPosDisplaySocketUrl } from "@/lib/pos-display-socket";
 
 const CART_SYNC_DELAY_MS = 250;
@@ -352,7 +353,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       if (!search) {
         return true;
       }
-      return item.product.name.toLowerCase().includes(search);
+      return formatProductName(item.product).toLowerCase().includes(search);
     });
   }, [options.products, query]);
 
@@ -549,7 +550,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         `Only ${formatQuantity(
           available,
           item.product.unit.abbreviation,
-        )} of ${item.product.name} is available.`,
+        )} of ${formatProductName(item.product)} is available.`,
       );
       return;
     }
@@ -675,11 +676,11 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                   type="button"
                 >
                   <span className="block font-semibold text-stone-950">
-                    {item.product.name}
+                    {formatProductName(item.product)}
                   </span>
                   <span className="mt-1 block text-sm text-stone-500">
                     {formatQuantity(
-                      item.totalRemaining,
+                      productAvailable(item),
                       item.product.unit.abbreviation,
                     )}
                   </span>
@@ -803,7 +804,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-medium text-stone-950">
-                            {item.product.name}
+                            {formatProductName(item.product)}
                           </p>
                           <p className="text-sm text-stone-500">
                             {formatMoney(item.unitPrice)} each

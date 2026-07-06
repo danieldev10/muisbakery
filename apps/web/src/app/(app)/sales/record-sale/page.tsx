@@ -7,6 +7,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { PaymentMethod, Sale, SalesOptions } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import { createSale } from "./actions";
@@ -96,8 +97,7 @@ export default async function RecordSalePage() {
               <Field
                 label="Sold at"
                 name="soldAt"
-                placeholder="2026-06-30T14:00"
-                type="text"
+                type="datetime-local"
               />
               <Field
                 label="Discount"
@@ -130,7 +130,7 @@ export default async function RecordSalePage() {
                     <tr key={item.product.id}>
                       <td className="p-3">
                         <p className="font-medium text-stone-900">
-                          {item.product.name}
+                          {formatProductName(item.product)}
                         </p>
                         <p className="text-xs text-stone-500">
                           {item.batches.length} batch
@@ -146,7 +146,7 @@ export default async function RecordSalePage() {
                       <td className="p-3">
                         <input
                           className={inputClass}
-                          max={item.totalRemaining}
+                          max={String(Math.floor(Number(item.totalRemaining)))}
                           min="0"
                           name={`quantity:${item.product.id}`}
                           step="1"
@@ -206,7 +206,7 @@ export default async function RecordSalePage() {
                   <ul className="grid gap-1">
                     {sale.items.map((item) => (
                       <li key={item.id}>
-                        {item.product.name}:{" "}
+                        {formatProductName(item.product)}:{" "}
                         {formatQuantity(
                           item.quantity,
                           item.product.unit.abbreviation,

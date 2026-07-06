@@ -62,7 +62,7 @@ const updateSchema = z
   });
 
 const include = {
-  product: { select: { id: true, name: true } },
+  product: { select: { id: true, name: true, size: true } },
   items: {
     include: {
       rawMaterial: { select: { id: true, name: true } },

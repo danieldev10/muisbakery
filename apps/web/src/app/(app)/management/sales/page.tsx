@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { ManagementSalesReport } from "@/lib/management/types";
+import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import {
@@ -106,7 +107,7 @@ export default async function ManagementSalesPage({
               {report.productSummary.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
-                    {entry.product.name}
+                    {formatProductName(entry.product)}
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {formatQuantity(
@@ -149,7 +150,7 @@ export default async function ManagementSalesPage({
                   <ul className="grid gap-1">
                     {sale.items.map((item) => (
                       <li key={item.id}>
-                        {item.product.name}:{" "}
+                        {formatProductName(item.product)}:{" "}
                         {formatQuantity(
                           item.quantity,
                           item.product.unit.abbreviation,
@@ -194,7 +195,7 @@ export default async function ManagementSalesPage({
             {report.returns.map((returnEntry) => (
               <tr key={returnEntry.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
-                  {returnEntry.product.name}
+                  {formatProductName(returnEntry.product)}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {returnLabels[returnEntry.disposition]}

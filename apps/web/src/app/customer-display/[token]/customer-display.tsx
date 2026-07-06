@@ -6,6 +6,7 @@ import { io } from "socket.io-client";
 
 import type { PosSession, PosTerminal } from "@/lib/operations/types";
 import { getPosDisplaySocketUrl } from "@/lib/pos-display-socket";
+import { formatProductName } from "@/lib/product-label";
 
 type DisplayEvent =
   | {
@@ -246,7 +247,7 @@ export function CustomerDisplay({
                     >
                       <div>
                         <p className="text-2xl font-semibold">
-                          {item.product.name}
+                          {formatProductName(item.product)}
                         </p>
                         <p className="mt-1 text-stone-400">
                           {formatMoney(item.unitPrice)} each
