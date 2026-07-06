@@ -42,16 +42,10 @@ const optionalQuantity = z.preprocess(
   quantitySchema.optional(),
 );
 
-const optionalMoney = z.preprocess(
-  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-  z.coerce.number().nonnegative("Unit cost cannot be negative.").max(99_999_999).optional(),
-);
-
 const receiveSchema = z.object({
   rawMaterialId: z.string().trim().min(1),
   supplierId: optionalId,
   quantity: quantitySchema,
-  unitCost: optionalMoney,
   receivedAt: optionalDate,
   reference: optionalText(120),
   notes: optionalText(500),
@@ -347,11 +341,17 @@ export class StoreService {
 
         const material = await tx.rawMaterial.findUnique({
           where: { id: parsed.data.rawMaterialId },
-          select: { id: true, name: true, isActive: true },
+          select: { id: true, name: true, isActive: true, unitCost: true },
         });
 
         if (!material?.isActive) {
           throw new BadRequestException("Selected raw material is not active.");
+        }
+
+        if (!material.unitCost) {
+          throw new BadRequestException(
+            "Management must set this material's unit cost before Store can receive it.",
+          );
         }
 
         if (parsed.data.supplierId) {
@@ -389,7 +389,7 @@ export class StoreService {
                     ? receivedAt
                     : existingBatch.receivedAt,
                 supplierId: existingBatch.supplierId ?? parsed.data.supplierId,
-                unitCost: existingBatch.unitCost ?? parsed.data.unitCost,
+                unitCost: existingBatch.unitCost ?? material.unitCost,
                 reference: existingBatch.reference ?? parsed.data.reference,
                 notes: existingBatch.notes ?? parsed.data.notes,
               },
@@ -408,7 +408,7 @@ export class StoreService {
                 batchDate,
                 quantityReceived: parsed.data.quantity,
                 quantityRemaining: parsed.data.quantity,
-                unitCost: parsed.data.unitCost,
+                unitCost: material.unitCost,
                 receivedAt,
                 reference: parsed.data.reference,
                 notes: parsed.data.notes,
@@ -423,7 +423,7 @@ export class StoreService {
             batchId: batch.id,
             supplierId: parsed.data.supplierId ?? null,
             quantity: parsed.data.quantity,
-            unitCost: parsed.data.unitCost,
+            unitCost: material.unitCost,
             receivedAt,
             reference: parsed.data.reference,
             notes: parsed.data.notes,

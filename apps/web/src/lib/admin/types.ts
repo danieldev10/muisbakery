@@ -35,6 +35,7 @@ export type RawMaterial = {
   name: string;
   description: string | null;
   baseUnitId: string;
+  unitCost: string | null;
   baseUnit: UnitRef;
   isActive: boolean;
 };

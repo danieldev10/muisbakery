@@ -17,6 +17,7 @@ export type ManagementUserRef = {
 export type ManagementRawMaterialRef = {
   id: string;
   name: string;
+  unitCost: string | null;
   baseUnit: ManagementUnitRef;
 };
 

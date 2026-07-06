@@ -28,17 +28,6 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-function formatMoney(value: string | null) {
-  if (!value) {
-    return "-";
-  }
-
-  return `₦${Number(value).toLocaleString("en", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
 export default async function StoreReceivingPage() {
   const [options, receipts] = await Promise.all([
     apiGet<StoreOptions>("/store/options"),
@@ -92,13 +81,6 @@ export default async function StoreReceivingPage() {
                 type="number"
               />
               <Field
-                label="Unit cost"
-                min="0"
-                name="unitCost"
-                step="0.01"
-                type="number"
-              />
-              <Field
                 label="Received at"
                 name="receivedAt"
                 type="text"
@@ -128,7 +110,6 @@ export default async function StoreReceivingPage() {
                 <th className="py-2 pr-4">Received</th>
                 <th className="py-2 pr-4">Quantity</th>
                 <th className="py-2 pr-4">Supplier</th>
-                <th className="py-2 pr-4">Unit cost</th>
               </>
             }
           >
@@ -151,9 +132,6 @@ export default async function StoreReceivingPage() {
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {receipt.supplier?.name ?? "-"}
-                </td>
-                <td className="py-3 pr-4 text-stone-600">
-                  {formatMoney(receipt.unitCost)}
                 </td>
               </tr>
             ))}

@@ -1,6 +1,14 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PaymentMethod, Prisma, SalesReturnDisposition } from "@prisma/client";
+import { z } from "zod";
 
+import { AuditService } from "../audit/audit.service";
+import type { AuthenticatedUser } from "../auth/auth.types";
 import { PrismaService } from "../database/prisma.service";
 
 const LOW_STOCK_THRESHOLD = 10;
@@ -14,6 +22,7 @@ const unitSelect = {
 const rawMaterialSelect = {
   id: true,
   name: true,
+  unitCost: true,
   baseUnit: { select: unitSelect },
 } satisfies Prisma.RawMaterialSelect;
 
@@ -142,6 +151,7 @@ type ProductWithUnitPrice = {
 type RawMaterialWithUnit = {
   id: string;
   name: string;
+  unitCost: Prisma.Decimal | null;
   baseUnit: UnitRef;
 };
 
@@ -198,6 +208,19 @@ function percentString(value: number) {
   return roundMoney(value).toFixed(2);
 }
 
+const unitCostSchema = z.object({
+  unitCost: z.preprocess(
+    (value) =>
+      value === null || (typeof value === "string" && value.trim() === "")
+        ? undefined
+        : value,
+    z.coerce
+      .number({ message: "Unit cost is required." })
+      .nonnegative("Unit cost cannot be negative.")
+      .max(99_999_999),
+  ),
+});
+
 function getMonthRange(month?: string): MonthRange {
   const target = month?.trim();
   let year: number;
@@ -247,6 +270,7 @@ function serializeRawMaterial(rawMaterial: RawMaterialWithUnit) {
   return {
     id: rawMaterial.id,
     name: rawMaterial.name,
+    unitCost: rawMaterial.unitCost?.toString() ?? null,
     baseUnit: rawMaterial.baseUnit,
   };
 }
@@ -378,6 +402,8 @@ export class ManagementService {
   constructor(
     @Inject(PrismaService)
     private readonly prisma: PrismaService,
+    @Inject(AuditService)
+    private readonly audit: AuditService,
   ) {}
 
   async dashboard(month?: string) {
@@ -617,6 +643,51 @@ export class ManagementService {
       rawMaterials: rawMaterialInventory,
       finishedProducts,
     };
+  }
+
+  async updateRawMaterialUnitCost(
+    rawMaterialId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = unitCostSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const existing = await this.prisma.rawMaterial.findUnique({
+      where: { id: rawMaterialId },
+      select: {
+        id: true,
+        name: true,
+        unitCost: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("Raw material not found.");
+    }
+
+    const updated = await this.prisma.rawMaterial.update({
+      where: { id: rawMaterialId },
+      data: { unitCost: parsed.data.unitCost },
+      select: rawMaterialSelect,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "MANAGEMENT_RAW_MATERIAL_UNIT_COST_UPDATED",
+      entityType: "RawMaterial",
+      entityId: updated.id,
+      metadata: {
+        rawMaterialName: updated.name,
+        previousUnitCost: existing.unitCost?.toString() ?? null,
+        unitCost: updated.unitCost?.toString() ?? null,
+      },
+    });
+
+    return serializeRawMaterial(updated);
   }
 
   async production(month?: string) {
@@ -940,6 +1011,7 @@ export class ManagementService {
       rawMaterial: serializeRawMaterial({
         id: material.id,
         name: material.name,
+        unitCost: material.unitCost,
         baseUnit: material.baseUnit,
       }),
       totalRemaining: quantityString(totalRemaining),

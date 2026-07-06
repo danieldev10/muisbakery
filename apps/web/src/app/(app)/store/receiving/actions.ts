@@ -14,7 +14,6 @@ export async function receiveRawMaterial(
     rawMaterialId: getString(formData, "rawMaterialId"),
     supplierId: getOptionalString(formData, "supplierId"),
     quantity: getString(formData, "quantity"),
-    unitCost: getOptionalString(formData, "unitCost"),
     receivedAt: getOptionalString(formData, "receivedAt"),
     reference: getOptionalString(formData, "reference"),
     notes: getOptionalString(formData, "notes"),

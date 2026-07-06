@@ -4,10 +4,12 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import type { ManagementInventoryReport } from "@/lib/management/types";
 import { apiGet } from "@/lib/server-api";
 
 import { formatDate, formatMoney, formatQuantity, MetricCard } from "../_components";
+import { updateRawMaterialUnitCost } from "./actions";
 
 export default async function ManagementInventoryPage() {
   const report = await apiGet<ManagementInventoryReport>("/management/inventory");
@@ -81,6 +83,66 @@ export default async function ManagementInventoryPage() {
                 </tr>
               );
             })}
+          </TableShell>
+        )}
+      </Card>
+
+      <Card title="Managed raw material costs">
+        {report.rawMaterials.length === 0 ? (
+          <EmptyState>No raw materials have been created yet.</EmptyState>
+        ) : (
+          <TableShell
+            head={
+              <>
+                <th className="py-2 pr-4">Material</th>
+                <th className="py-2 pr-4">Base unit</th>
+                <th className="py-2 pr-4">Current unit cost</th>
+                <th className="py-2 pr-4">Update</th>
+              </>
+            }
+          >
+            {report.rawMaterials.map((item) => (
+              <tr className="align-top" key={item.rawMaterial.id}>
+                <td className="py-3 pr-4 font-medium text-stone-900">
+                  {item.rawMaterial.name}
+                </td>
+                <td className="py-3 pr-4 text-stone-600">
+                  {item.rawMaterial.baseUnit.abbreviation}
+                </td>
+                <td className="py-3 pr-4 text-stone-600">
+                  {item.rawMaterial.unitCost
+                    ? formatMoney(item.rawMaterial.unitCost)
+                    : "-"}
+                </td>
+                <td className="py-3 pr-4">
+                  <InlineActionForm
+                    action={updateRawMaterialUnitCost}
+                    className="grid gap-1 sm:grid-cols-[8rem_auto] sm:items-start"
+                    submitLabel="Save"
+                    successMessage="Saved."
+                  >
+                    <input name="id" type="hidden" value={item.rawMaterial.id} />
+                    <label
+                      className="sr-only"
+                      htmlFor={`unitCost-${item.rawMaterial.id}`}
+                    >
+                      Unit cost for {item.rawMaterial.name}
+                    </label>
+                    <input
+                      className="h-9 w-32 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+                      defaultValue={item.rawMaterial.unitCost ?? ""}
+                      id={`unitCost-${item.rawMaterial.id}`}
+                      min="0"
+                      name="unitCost"
+                      placeholder="0.00"
+                      required
+                      step="0.01"
+                      type="number"
+                    />
+                  </InlineActionForm>
+                </td>
+              </tr>
+            ))}
           </TableShell>
         )}
       </Card>

@@ -136,6 +136,7 @@ model RawMaterial {
   name        String   @unique
   description String?
   baseUnitId  String
+  unitCost    Decimal? @db.Decimal(14, 2)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

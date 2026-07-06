@@ -433,10 +433,12 @@ async function seedDemoCatalogue() {
         name: material.name,
         description: `Seeded ${material.name.toLowerCase()} for workflow testing.`,
         baseUnitId: unit.id,
+        unitCost: material.unitCost,
         isActive: true,
       },
       update: {
         baseUnitId: unit.id,
+        unitCost: material.unitCost,
         isActive: true,
       },
     });
@@ -528,6 +530,7 @@ async function topUpStoreStock(adminId: string) {
       where: { name: material.name },
       include: { baseUnit: true },
     });
+    const unitCost = rawMaterial.unitCost ?? material.unitCost;
 
     const batches = await prisma.rawMaterialBatch.findMany({
       where: { rawMaterialId: rawMaterial.id },
@@ -563,7 +566,7 @@ async function topUpStoreStock(adminId: string) {
                 quantityReceived: { increment: quantityToAdd },
                 quantityRemaining: { increment: quantityToAdd },
                 supplierId: existingBatch.supplierId ?? supplier.id,
-                unitCost: existingBatch.unitCost ?? material.unitCost,
+                unitCost: existingBatch.unitCost ?? unitCost,
                 reference: existingBatch.reference ?? "DEMO-SEED",
                 notes: existingBatch.notes ?? "Demo stock top-up",
               },
@@ -581,7 +584,7 @@ async function topUpStoreStock(adminId: string) {
                 batchDate,
                 quantityReceived: quantityToAdd,
                 quantityRemaining: quantityToAdd,
-                unitCost: material.unitCost,
+                unitCost,
                 receivedAt,
                 reference: "DEMO-SEED",
                 notes: "Demo stock top-up",
@@ -595,7 +598,7 @@ async function topUpStoreStock(adminId: string) {
             batchId: activeBatch.id,
             supplierId: supplier.id,
             quantity: quantityToAdd,
-            unitCost: material.unitCost,
+            unitCost,
             receivedAt,
             reference: "DEMO-SEED",
             notes: `Seeded ${quantityToAdd} ${rawMaterial.baseUnit.abbreviation} for workflow testing.`,

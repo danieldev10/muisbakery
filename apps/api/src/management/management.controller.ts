@@ -1,5 +1,17 @@
-import { Controller, Get, Inject, Query, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Patch,
+  Query,
+  Req,
+  UseGuards,
+} from "@nestjs/common";
+import type { Request } from "express";
 
+import { getRequestUser } from "../auth/auth.types";
 import { ManagementGuard } from "../auth/management.guard";
 import { ManagementService } from "./management.service";
 
@@ -24,6 +36,19 @@ export class ManagementController {
   @Get("inventory")
   inventory() {
     return this.management.inventory();
+  }
+
+  @Patch("raw-materials/:id/unit-cost")
+  updateRawMaterialUnitCost(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.management.updateRawMaterialUnitCost(
+      id,
+      body,
+      getRequestUser(request),
+    );
   }
 
   @Get("production")
