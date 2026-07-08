@@ -4,7 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { PaymentMethod, Prisma, SalesReturnDisposition } from "@prisma/client";
+import {
+  PaymentMethod,
+  Prisma,
+  ProductionWasteType,
+  SalesReturnDisposition,
+} from "@prisma/client";
 import { z } from "zod";
 
 import { AuditService } from "../audit/audit.service";
@@ -15,6 +20,7 @@ const LOW_STOCK_THRESHOLD = 10;
 const WORKFLOW_AUDIT_ACTIONS = [
   "STORE_RAW_MATERIAL_RECEIVED",
   "STORE_MATERIAL_REQUEST_ISSUED",
+  "STORE_MATERIAL_REQUEST_REJECTED",
   "PRODUCTION_MATERIAL_REQUEST_CREATED",
   "PRODUCTION_MATERIAL_REQUEST_CANCELLED",
   "PRODUCTION_RUN_CREATED",
@@ -365,9 +371,16 @@ function serializeReturn(returnEntry: SalesReturnWithIncludes) {
 }
 
 function serializeRun(run: ProductionRunWithIncludes) {
+  const shortfall =
+    run.expectedQuantity !== null && run.quantityProduced < run.expectedQuantity
+      ? run.expectedQuantity - run.quantityProduced
+      : 0;
+
   return {
     id: run.id,
     quantityProduced: run.quantityProduced.toString(),
+    expectedQuantity: run.expectedQuantity?.toString() ?? null,
+    shortfallQuantity: shortfall > 0 ? String(shortfall) : null,
     quantityTransferred: run.quantityTransferred.toString(),
     wasteQuantity: run.wasteQuantity.toString(),
     producedAt: run.producedAt.toISOString(),
@@ -383,6 +396,7 @@ function serializeRun(run: ProductionRunWithIncludes) {
     })),
     waste: run.waste.map((waste) => ({
       id: waste.id,
+      type: waste.type,
       quantity: waste.quantity.toString(),
       reason: waste.reason,
       recordedAt: waste.recordedAt.toISOString(),
@@ -592,17 +606,25 @@ export class ManagementService {
           decimalToNumber(issue.batch.unitCost),
       0,
     );
-    const productionWasteQuantity = productionWaste.reduce(
+    // Only damaged waste is a real loss; waste returned to production is
+    // reused in later runs and is reported separately without a loss value.
+    const damagedProductionWaste = productionWaste.filter(
+      (waste) => waste.type === ProductionWasteType.DAMAGED,
+    );
+    const productionWasteQuantity = damagedProductionWaste.reduce(
       (sum, waste) => sum + decimalToNumber(waste.quantity),
       0,
     );
-    const productionWasteEstimatedValue = productionWaste.reduce(
+    const productionWasteEstimatedValue = damagedProductionWaste.reduce(
       (sum, waste) =>
         sum +
         decimalToNumber(waste.quantity) *
           decimalToNumber(waste.product.unitPrice),
       0,
     );
+    const wasteReturnedToProductionQuantity = productionWaste
+      .filter((waste) => waste.type === ProductionWasteType.RETURNED_TO_PRODUCTION)
+      .reduce((sum, waste) => sum + decimalToNumber(waste.quantity), 0);
     const damagedReturns = returns.filter(
       (returnEntry) =>
         returnEntry.disposition === SalesReturnDisposition.DAMAGED,
@@ -650,6 +672,9 @@ export class ManagementService {
         productionWasteEstimatedValue: moneyString(
           productionWasteEstimatedValue,
         ),
+        wasteReturnedToProductionQuantity: countString(
+          wasteReturnedToProductionQuantity,
+        ),
         damagedReturnsQuantity: countString(damagedReturnsQuantity),
         damagedReturnsEstimatedValue: moneyString(damagedReturnsEstimatedValue),
         totalEstimatedLoss: moneyString(totalEstimatedLoss),
@@ -664,6 +689,7 @@ export class ManagementService {
       notes: [
         "Material costs are estimated from issued raw material batches with unit costs.",
         "Waste and damaged-return losses use product selling price as estimated retail value.",
+        "Waste returned to production is reused in later runs and is not counted as a loss.",
         "Overheads, salaries, rent, utilities, and other operating expenses are not modeled yet.",
       ],
     };
@@ -841,9 +867,13 @@ export class ManagementService {
         };
 
         wasteSummary.quantity += decimalToNumber(waste.quantity);
-        wasteSummary.estimatedRetailValue +=
-          decimalToNumber(waste.quantity) *
-          decimalToNumber(waste.product.unitPrice);
+        // Waste returned to production is reusable, so only damaged waste
+        // carries an estimated loss value.
+        if (waste.type === ProductionWasteType.DAMAGED) {
+          wasteSummary.estimatedRetailValue +=
+            decimalToNumber(waste.quantity) *
+            decimalToNumber(waste.product.unitPrice);
+        }
         wasteSummary.count += 1;
         wasteByProduct.set(waste.product.id, wasteSummary);
       }
@@ -861,6 +891,11 @@ export class ManagementService {
       (sum, run) => sum + decimalToNumber(run.wasteQuantity),
       0,
     );
+    const undercutRuns = runs.filter(
+      (run) =>
+        run.expectedQuantity !== null &&
+        run.quantityProduced < run.expectedQuantity,
+    ).length;
 
     return {
       month: {
@@ -874,6 +909,7 @@ export class ManagementService {
         quantityProduced: countString(totalProduced),
         quantityTransferred: countString(totalTransferred),
         wasteQuantity: countString(totalWaste),
+        undercutRuns,
       },
       outputByProduct: Array.from(outputByProduct.values()).map((entry) => ({
         product: entry.product,

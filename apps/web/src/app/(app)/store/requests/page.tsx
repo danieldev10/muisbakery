@@ -11,7 +11,7 @@ import type {
 } from "@/lib/operations/types";
 import { apiGet } from "@/lib/server-api";
 
-import { issueMaterialRequest } from "./actions";
+import { issueMaterialRequest, rejectMaterialRequest } from "./actions";
 
 const inputClass =
   "h-9 w-28 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100";
@@ -52,6 +52,9 @@ function statusClass(status: MaterialRequestStatus) {
   }
   if (status === "CANCELLED") {
     return "bg-stone-100 text-stone-500";
+  }
+  if (status === "REJECTED") {
+    return "bg-red-800 text-red-50";
   }
   return "bg-red-50 text-red-800";
 }
@@ -124,6 +127,11 @@ export default async function StoreRequestsPage() {
                   </td>
                   <td className="py-3 pr-4">
                     <RequestStatusBadge status={request.status} />
+                    {request.status === "REJECTED" && request.responseNotes ? (
+                      <p className="mt-1 max-w-48 text-xs text-stone-500">
+                        {request.responseNotes}
+                      </p>
+                    ) : null}
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {formatDate(request.neededBy)}
@@ -133,29 +141,48 @@ export default async function StoreRequestsPage() {
                   </td>
                   <td className="py-3 pr-4">
                     {canIssue ? (
-                      <InlineActionForm
-                        action={issueMaterialRequest}
-                        className="grid gap-2"
-                        pendingLabel="Issuing"
-                        submitLabel="Issue"
-                        successMessage="Issued."
-                      >
-                        <input name="id" type="hidden" value={request.id} />
-                        <input
-                          className={inputClass}
-                          max={request.remainingQuantity}
-                          min="1"
-                          name="quantity"
-                          placeholder={request.remainingQuantity}
-                          step="1"
-                          type="number"
-                        />
-                        <textarea
-                          className={noteClass}
-                          name="notes"
-                          placeholder="Notes"
-                        />
-                      </InlineActionForm>
+                      <div className="grid gap-3">
+                        <InlineActionForm
+                          action={issueMaterialRequest}
+                          className="grid gap-2"
+                          pendingLabel="Issuing"
+                          submitLabel="Issue"
+                          successMessage="Issued."
+                        >
+                          <input name="id" type="hidden" value={request.id} />
+                          <input
+                            className={inputClass}
+                            max={request.remainingQuantity}
+                            min="1"
+                            name="quantity"
+                            placeholder={request.remainingQuantity}
+                            step="1"
+                            type="number"
+                          />
+                          <textarea
+                            className={noteClass}
+                            name="notes"
+                            placeholder="Notes"
+                          />
+                        </InlineActionForm>
+                        {request.status === "PENDING" ? (
+                          <InlineActionForm
+                            action={rejectMaterialRequest}
+                            buttonClassName="rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-800 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="grid gap-2"
+                            pendingLabel="Rejecting"
+                            submitLabel="Reject"
+                            successMessage="Rejected."
+                          >
+                            <input name="id" type="hidden" value={request.id} />
+                            <textarea
+                              className={noteClass}
+                              name="notes"
+                              placeholder="Reason for rejection"
+                            />
+                          </InlineActionForm>
+                        ) : null}
+                      </div>
                     ) : (
                       <span className="text-sm text-stone-500">-</span>
                     )}

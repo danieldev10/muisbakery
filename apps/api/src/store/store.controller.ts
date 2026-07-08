@@ -60,4 +60,13 @@ export class StoreController {
   ) {
     return this.store.issueMaterialRequest(id, body, getRequestUser(request));
   }
+
+  @Post("material-requests/:id/reject")
+  rejectMaterialRequest(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.store.rejectMaterialRequest(id, body, getRequestUser(request));
+  }
 }

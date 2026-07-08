@@ -37,7 +37,7 @@ export default async function ManagementProductionPage({
 
       <MonthFilter month={report.month.value} />
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <MetricCard label="Runs" value={report.summary.runsCount} />
         <MetricCard
           label="Produced"
@@ -51,6 +51,12 @@ export default async function ManagementProductionPage({
           label="Waste"
           tone={Number(report.summary.wasteQuantity) > 0 ? "warning" : "default"}
           value={formatQuantity(report.summary.wasteQuantity)}
+        />
+        <MetricCard
+          label="Undercut runs"
+          tone={report.summary.undercutRuns > 0 ? "warning" : "positive"}
+          value={report.summary.undercutRuns}
+          detail="Runs below expected output"
         />
       </div>
 
@@ -191,15 +197,46 @@ export default async function ManagementProductionPage({
             }
           >
             {report.runs.map((run) => (
-              <tr className="align-top" key={run.id}>
+              <tr
+                className={`align-top ${
+                  run.shortfallQuantity ? "border-l-4 border-l-red-700" : ""
+                }`}
+                key={run.id}
+              >
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {formatProductName(run.product)}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
-                  {formatQuantity(
-                    run.quantityProduced,
-                    run.product.unit.abbreviation,
-                  )}
+                  <p
+                    className={
+                      run.shortfallQuantity
+                        ? "font-semibold text-red-800"
+                        : undefined
+                    }
+                  >
+                    {formatQuantity(
+                      run.quantityProduced,
+                      run.product.unit.abbreviation,
+                    )}
+                  </p>
+                  {run.expectedQuantity ? (
+                    <p
+                      className={`text-xs ${
+                        run.shortfallQuantity
+                          ? "font-medium text-red-700"
+                          : "text-stone-500"
+                      }`}
+                    >
+                      expected ≥{" "}
+                      {formatQuantity(
+                        run.expectedQuantity,
+                        run.product.unit.abbreviation,
+                      )}
+                      {run.shortfallQuantity
+                        ? ` (${run.shortfallQuantity} short)`
+                        : ""}
+                    </p>
+                  ) : null}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatQuantity(

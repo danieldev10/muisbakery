@@ -59,6 +59,10 @@ const issueSchema = z.object({
   notes: optionalText(500),
 });
 
+const rejectSchema = z.object({
+  notes: optionalText(500),
+});
+
 const baseUnitSelect = {
   id: true,
   name: true,
@@ -163,6 +167,8 @@ function toBatchDate(receivedAt: Date) {
   );
 }
 
+// Costs are deliberately omitted from Store responses: unit costs are only
+// visible to Management/Admin via the management endpoints.
 function serializeBatch(batch: BatchWithIncludes) {
   return {
     id: batch.id,
@@ -171,7 +177,6 @@ function serializeBatch(batch: BatchWithIncludes) {
     batchDate: batch.batchDate.toISOString(),
     quantityReceived: batch.quantityReceived.toString(),
     quantityRemaining: batch.quantityRemaining.toString(),
-    unitCost: batch.unitCost?.toString() ?? null,
     receivedAt: batch.receivedAt.toISOString(),
     reference: batch.reference,
     notes: batch.notes,
@@ -186,7 +191,6 @@ function serializeReceipt(receipt: ReceiptWithIncludes) {
   return {
     id: receipt.id,
     quantity: receipt.quantity.toString(),
-    unitCost: receipt.unitCost?.toString() ?? null,
     receivedAt: receipt.receivedAt.toISOString(),
     reference: receipt.reference,
     notes: receipt.notes,
@@ -225,7 +229,6 @@ function serializeInventoryItem(material: InventoryMaterial) {
       batchDate: batch.batchDate.toISOString(),
       quantityReceived: batch.quantityReceived.toString(),
       quantityRemaining: batch.quantityRemaining.toString(),
-      unitCost: batch.unitCost?.toString() ?? null,
       receivedAt: batch.receivedAt.toISOString(),
       reference: batch.reference,
       notes: batch.notes,
@@ -513,6 +516,10 @@ export class StoreService {
           throw new BadRequestException("This request has been cancelled.");
         }
 
+        if (request.status === MaterialRequestStatus.REJECTED) {
+          throw new BadRequestException("This request has been rejected.");
+        }
+
         if (request.status === MaterialRequestStatus.FULFILLED) {
           throw new BadRequestException("This request has already been fulfilled.");
         }
@@ -665,5 +672,65 @@ export class StoreService {
     });
 
     return serializeRequest(updatedRequest);
+  }
+
+  async rejectMaterialRequest(
+    requestId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = rejectSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const existing = await this.prisma.materialRequest.findUnique({
+      where: { id: requestId },
+      select: { id: true, status: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("Material request not found.");
+    }
+
+    if (existing.status !== MaterialRequestStatus.PENDING) {
+      throw new BadRequestException("Only pending requests can be rejected.");
+    }
+
+    // Conditional update so a concurrent issue/reject cannot both win.
+    const rejected = await this.prisma.materialRequest.updateMany({
+      where: { id: requestId, status: MaterialRequestStatus.PENDING },
+      data: {
+        status: MaterialRequestStatus.REJECTED,
+        issuedById: actor.id,
+        responseNotes: parsed.data.notes ?? null,
+      },
+    });
+
+    if (rejected.count === 0) {
+      throw new BadRequestException(
+        "This request was updated by someone else. Refresh and try again.",
+      );
+    }
+
+    const request = await this.prisma.materialRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      include: requestInclude,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "STORE_MATERIAL_REQUEST_REJECTED",
+      entityType: "MaterialRequest",
+      entityId: request.id,
+      metadata: {
+        rawMaterialId: request.rawMaterialId,
+        requestedQuantity: request.requestedQuantity.toString(),
+        notes: parsed.data.notes ?? null,
+      },
+    });
+
+    return serializeRequest(request);
   }
 }

@@ -48,7 +48,12 @@ export default async function ProductionRunsPage() {
             }
           >
             {runs.map((run) => (
-              <tr className="align-top" key={run.id}>
+              <tr
+                className={`align-top ${
+                  run.shortfallQuantity ? "border-l-4 border-l-red-700" : ""
+                }`}
+                key={run.id}
+              >
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">
                     {formatProductName(run.product)}
@@ -60,10 +65,30 @@ export default async function ProductionRunsPage() {
                   ) : null}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
-                  {formatQuantity(
-                    run.quantityProduced,
-                    run.product.unit.abbreviation,
-                  )}
+                  <p className={run.shortfallQuantity ? "font-semibold text-red-800" : undefined}>
+                    {formatQuantity(
+                      run.quantityProduced,
+                      run.product.unit.abbreviation,
+                    )}
+                  </p>
+                  {run.expectedQuantity ? (
+                    <p
+                      className={`text-xs ${
+                        run.shortfallQuantity
+                          ? "font-medium text-red-700"
+                          : "text-stone-500"
+                      }`}
+                    >
+                      expected ≥{" "}
+                      {formatQuantity(
+                        run.expectedQuantity,
+                        run.product.unit.abbreviation,
+                      )}
+                      {run.shortfallQuantity
+                        ? ` (${run.shortfallQuantity} short)`
+                        : ""}
+                    </p>
+                  ) : null}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatQuantity(

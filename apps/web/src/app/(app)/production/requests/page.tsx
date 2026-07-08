@@ -54,6 +54,9 @@ function statusClass(status: MaterialRequestStatus) {
   if (status === "CANCELLED") {
     return "bg-stone-100 text-stone-500";
   }
+  if (status === "REJECTED") {
+    return "bg-red-800 text-red-50";
+  }
   return "bg-red-50 text-red-800";
 }
 
@@ -173,6 +176,11 @@ export default async function ProductionRequestsPage() {
                   </td>
                   <td className="py-3 pr-4">
                     <RequestStatusBadge status={request.status} />
+                    {request.responseNotes ? (
+                      <p className="mt-1 max-w-48 text-xs text-stone-500">
+                        Store: {request.responseNotes}
+                      </p>
+                    ) : null}
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {formatDate(request.neededBy)}

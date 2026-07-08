@@ -146,6 +146,19 @@ export default async function ManagementProfitLossPage({
                 {formatMoney(report.losses.damagedReturnsEstimatedValue)}
               </td>
             </tr>
+            <tr>
+              <td className="py-3 pr-4 font-medium text-stone-900">
+                Waste returned to production
+              </td>
+              <td className="py-3 pr-4 text-stone-600">
+                {formatQuantity(
+                  report.losses.wasteReturnedToProductionQuantity,
+                )}
+              </td>
+              <td className={`py-3 pr-4 ${gainClass}`}>
+                Reused — no loss
+              </td>
+            </tr>
           </TableShell>
         </Card>
       </div>

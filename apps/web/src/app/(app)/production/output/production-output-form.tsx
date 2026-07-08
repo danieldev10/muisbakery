@@ -37,6 +37,9 @@ export function ProductionOutputForm({
 }) {
   const [productId, setProductId] = useState(products[0]?.id ?? "");
   const [quantityProduced, setQuantityProduced] = useState("");
+  const [usageOverrides, setUsageOverrides] = useState<Record<string, string>>(
+    {},
+  );
   const selectedProduct = products.find((product) => product.id === productId);
 
   const inventoryByMaterial = useMemo(
@@ -71,6 +74,66 @@ export function ProductionOutputForm({
     }));
   }, [quantityProduced, selectedProduct]);
 
+  // Lower-bound output implied by the recipe and the actual quantities typed
+  // in: the limiting ingredient determines how many recipe batches the
+  // materials could have produced.
+  const expectedOutput = useMemo(() => {
+    const recipe = selectedProduct?.recipe;
+
+    if (!recipe || expectedUsages.length === 0) {
+      return null;
+    }
+
+    const yieldQuantity = Number(recipe.yieldQuantity);
+
+    if (!Number.isFinite(yieldQuantity) || yieldQuantity <= 0) {
+      return null;
+    }
+
+    let limitingBatches: number | null = null;
+
+    for (const item of recipe.items) {
+      const perBatch = Number(item.quantity);
+
+      if (!Number.isFinite(perBatch) || perBatch <= 0) {
+        continue;
+      }
+
+      const fallback = expectedUsages.find(
+        (usage) => usage.rawMaterial.id === item.rawMaterial.id,
+      );
+      const raw = usageOverrides[item.rawMaterial.id];
+      const used =
+        raw !== undefined && raw.trim() !== ""
+          ? Number(raw)
+          : (fallback?.quantity ?? 0);
+
+      if (!Number.isFinite(used)) {
+        continue;
+      }
+
+      const batches = used / perBatch;
+      limitingBatches =
+        limitingBatches === null ? batches : Math.min(limitingBatches, batches);
+    }
+
+    if (limitingBatches === null) {
+      return null;
+    }
+
+    return Math.floor(limitingBatches * yieldQuantity + 1e-9);
+  }, [expectedUsages, selectedProduct, usageOverrides]);
+
+  const produced = Number(quantityProduced);
+  const shortfall =
+    expectedOutput !== null && Number.isFinite(produced) && produced > 0
+      ? expectedOutput - produced
+      : 0;
+
+  function resetUsages() {
+    setUsageOverrides({});
+  }
+
   return (
     <AdminForm
       action={createProductionRun}
@@ -86,7 +149,10 @@ export function ProductionOutputForm({
             className={selectClass}
             id="productId"
             name="productId"
-            onChange={(event) => setProductId(event.target.value)}
+            onChange={(event) => {
+              setProductId(event.target.value);
+              resetUsages();
+            }}
             required
             value={productId}
           >
@@ -107,7 +173,10 @@ export function ProductionOutputForm({
             id="quantityProduced"
             min="1"
             name="quantityProduced"
-            onChange={(event) => setQuantityProduced(event.target.value)}
+            onChange={(event) => {
+              setQuantityProduced(event.target.value);
+              resetUsages();
+            }}
             placeholder="0"
             required
             step="1"
@@ -146,15 +215,15 @@ export function ProductionOutputForm({
         </div>
 
         <div className="grid gap-1.5">
-          <label className={labelClass} htmlFor="producedAt">
-            Produced at
+          <label className={labelClass} htmlFor="wasteType">
+            Waste type
           </label>
-          <input
-            className={fieldClass}
-            id="producedAt"
-            name="producedAt"
-            type="datetime-local"
-          />
+          <select className={selectClass} id="wasteType" name="wasteType">
+            <option value="DAMAGED">Damaged (loss)</option>
+            <option value="RETURNED_TO_PRODUCTION">
+              Back to production (reusable)
+            </option>
+          </select>
         </div>
 
         <div className="grid gap-1.5">
@@ -167,6 +236,18 @@ export function ProductionOutputForm({
             name="wasteReason"
             placeholder="Burnt, damaged, underweight"
             type="text"
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <label className={labelClass} htmlFor="producedAt">
+            Produced at
+          </label>
+          <input
+            className={fieldClass}
+            id="producedAt"
+            name="producedAt"
+            type="datetime-local"
           />
         </div>
       </div>
@@ -201,12 +282,20 @@ export function ProductionOutputForm({
                     <td className="p-3">
                       <input
                         className={fieldClass}
-                        defaultValue={String(item.quantity)}
-                        key={`${productId}:${quantityProduced}:${item.rawMaterial.id}`}
                         min="1"
                         name={`usage:${item.rawMaterial.id}`}
+                        onChange={(event) =>
+                          setUsageOverrides((overrides) => ({
+                            ...overrides,
+                            [item.rawMaterial.id]: event.target.value,
+                          }))
+                        }
                         step="1"
                         type="number"
+                        value={
+                          usageOverrides[item.rawMaterial.id] ??
+                          String(item.quantity)
+                        }
                       />
                     </td>
                   </tr>
@@ -215,6 +304,33 @@ export function ProductionOutputForm({
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {expectedOutput !== null ? (
+        shortfall > 0 ? (
+          <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <p className="font-semibold">
+              Production shortfall: {shortfall.toLocaleString("en")}{" "}
+              {selectedProduct?.unit.abbreviation} below expected.
+            </p>
+            <p className="mt-1">
+              The materials used should produce at least{" "}
+              {expectedOutput.toLocaleString("en")}{" "}
+              {selectedProduct?.unit.abbreviation}, but only{" "}
+              {produced.toLocaleString("en")} recorded. Management will see this
+              run flagged.
+            </p>
+          </div>
+        ) : (
+          <p className="rounded-md border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-600">
+            Expected output from materials used: at least{" "}
+            <span className="font-semibold text-stone-900">
+              {expectedOutput.toLocaleString("en")}{" "}
+              {selectedProduct?.unit.abbreviation}
+            </span>
+            .
+          </p>
+        )
       ) : null}
 
       <TextareaField label="Notes" name="notes" placeholder="Optional" />

@@ -25,3 +25,25 @@ export async function issueMaterialRequest(
   revalidatePath("/production/requests");
   return { ok: true, error: null, token: Date.now() };
 }
+
+export async function rejectMaterialRequest(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const id = getString(formData, "id");
+  const result = await apiSend(
+    `/store/material-requests/${id}/reject`,
+    "POST",
+    {
+      notes: getOptionalString(formData, "notes"),
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidatePath("/store/requests");
+  revalidatePath("/production/requests");
+  return { ok: true, error: null, token: Date.now() };
+}

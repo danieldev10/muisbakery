@@ -114,6 +114,7 @@ export type ManagementProfitLossReport = {
   losses: {
     productionWasteQuantity: string;
     productionWasteEstimatedValue: string;
+    wasteReturnedToProductionQuantity: string;
     damagedReturnsQuantity: string;
     damagedReturnsEstimatedValue: string;
     totalEstimatedLoss: string;
@@ -133,6 +134,7 @@ export type ManagementProductionReport = {
     quantityProduced: string;
     quantityTransferred: string;
     wasteQuantity: string;
+    undercutRuns: number;
   };
   outputByProduct: Array<{
     product: ManagementProductRef;
@@ -155,6 +157,8 @@ export type ManagementProductionReport = {
   runs: Array<{
     id: string;
     quantityProduced: string;
+    expectedQuantity: string | null;
+    shortfallQuantity: string | null;
     quantityTransferred: string;
     wasteQuantity: string;
     producedAt: string;

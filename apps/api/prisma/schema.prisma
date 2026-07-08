@@ -19,6 +19,7 @@ enum MaterialRequestStatus {
   PARTIALLY_ISSUED
   FULFILLED
   CANCELLED
+  REJECTED
 }
 
 enum RawMaterialStockMovementType {
@@ -31,6 +32,7 @@ enum FinishedProductStockMovementType {
   RECEIVE_FROM_PRODUCTION
   SALE
   RETURN
+  DAMAGED
   ADJUSTMENT
 }
 
@@ -58,6 +60,11 @@ enum ProductionMaterialStockMovementType {
   CONSUME
   WASTE
   ADJUSTMENT
+}
+
+enum ProductionWasteType {
+  DAMAGED
+  RETURNED_TO_PRODUCTION
 }
 
 model User {
@@ -362,6 +369,9 @@ model ProductionRun {
   id                  String   @id @default(cuid())
   productId           String
   quantityProduced    Int
+  // Lower-bound output implied by the recipe and the materials actually used.
+  // Null when the product has no active recipe to derive it from.
+  expectedQuantity    Int?
   quantityTransferred Int      @default(0)
   wasteQuantity       Int      @default(0)
   producedAt          DateTime
@@ -460,13 +470,14 @@ model ProductionMaterialStockMovement {
 }
 
 model ProductionWaste {
-  id              String   @id @default(cuid())
+  id              String              @id @default(cuid())
   productionRunId String?
   productId       String
+  type            ProductionWasteType @default(DAMAGED)
   quantity        Int
   reason          String?
   recordedAt      DateTime
-  createdAt       DateTime @default(now())
+  createdAt       DateTime            @default(now())
   createdById     String?
 
   productionRun ProductionRun? @relation(fields: [productionRunId], references: [id], onDelete: SetNull)
@@ -475,6 +486,7 @@ model ProductionWaste {
 
   @@index([productionRunId])
   @@index([productId, recordedAt])
+  @@index([type])
   @@index([createdById])
 }
 

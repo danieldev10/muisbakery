@@ -64,7 +64,6 @@ export type RawMaterialBatch = {
   batchDate: string;
   quantityReceived: string;
   quantityRemaining: string;
-  unitCost: string | null;
   receivedAt: string;
   reference: string | null;
   notes: string | null;
@@ -77,7 +76,6 @@ export type RawMaterialBatch = {
 export type RawMaterialReceipt = {
   id: string;
   quantity: string;
-  unitCost: string | null;
   receivedAt: string;
   reference: string | null;
   notes: string | null;
@@ -102,7 +100,6 @@ export type InventoryBatch = {
   batchDate: string;
   quantityReceived: string;
   quantityRemaining: string;
-  unitCost: string | null;
   receivedAt: string;
   reference: string | null;
   notes: string | null;
@@ -119,7 +116,8 @@ export type MaterialRequestStatus =
   | "PENDING"
   | "PARTIALLY_ISSUED"
   | "FULFILLED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "REJECTED";
 
 export type MaterialRequestIssue = {
   id: string;
@@ -154,8 +152,11 @@ export type MaterialRequest = {
   issues: MaterialRequestIssue[];
 };
 
+export type ProductionWasteType = "DAMAGED" | "RETURNED_TO_PRODUCTION";
+
 export type ProductionWaste = {
   id: string;
+  type: ProductionWasteType;
   quantity: string;
   reason: string | null;
   recordedAt: string;
@@ -172,6 +173,8 @@ export type ProductionWaste = {
 export type ProductionRun = {
   id: string;
   quantityProduced: string;
+  expectedQuantity: string | null;
+  shortfallQuantity: string | null;
   quantityTransferred: string;
   wasteQuantity: string;
   producedAt: string;
@@ -187,6 +190,7 @@ export type ProductionRun = {
   }>;
   waste: Array<{
     id: string;
+    type: ProductionWasteType;
     quantity: string;
     reason: string | null;
     recordedAt: string;

@@ -865,33 +865,62 @@ export class SalesService {
       throw new BadRequestException("Add at least one product before checkout.");
     }
 
-    const sale = await this.createSale(
-      {
-        paymentMethod: session.paymentMethod,
-        customerName: session.customerName ?? undefined,
-        discount: session.discount.toString(),
-        amountPaid: session.amountPaid?.toString(),
-        notes: session.notes
-          ? `POS checkout. ${session.notes}`
-          : `POS checkout from session ${session.id}.`,
-        items: session.items.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity.toString(),
-          unitPrice: item.unitPrice.toString(),
-        })),
+    const parsed = createSaleSchema.safeParse({
+      paymentMethod: session.paymentMethod,
+      customerName: session.customerName ?? undefined,
+      discount: session.discount.toString(),
+      amountPaid: session.amountPaid?.toString(),
+      notes: session.notes
+        ? `POS checkout. ${session.notes}`
+        : `POS checkout from session ${session.id}.`,
+      items: session.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+      })),
+    });
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    // Sale creation and session completion happen in one transaction: the
+    // conditional status flip claims the session first, so concurrent
+    // checkouts cannot both create a sale (and deduct stock twice).
+    const { sale, updated } = await this.prisma.$transaction(
+      async (tx) => {
+        const claimed = await tx.posSession.updateMany({
+          where: { id: session.id, status: PosSessionStatus.ACTIVE },
+          data: {
+            status: PosSessionStatus.COMPLETED,
+            completedAt: new Date(),
+          },
+        });
+
+        if (claimed.count === 0) {
+          throw new BadRequestException(
+            "This POS session has already been checked out or cancelled.",
+          );
+        }
+
+        const createdSale = await this.createSaleInTransaction(
+          tx,
+          parsed.data,
+          actor,
+        );
+
+        const updatedSession = await tx.posSession.update({
+          where: { id: session.id },
+          data: { completedSaleId: createdSale.id },
+          include: posSessionInclude,
+        });
+
+        return { sale: createdSale, updated: updatedSession };
       },
-      actor,
+      { timeout: 15000, maxWait: 15000 },
     );
 
-    const updated = await this.prisma.posSession.update({
-      where: { id: session.id },
-      data: {
-        status: PosSessionStatus.COMPLETED,
-        completedAt: new Date(),
-        completedSaleId: sale.id,
-      },
-      include: posSessionInclude,
-    });
+    await this.auditSaleRecorded(sale, actor);
 
     const serializedSession = serializePosSession(updated);
 
@@ -983,8 +1012,27 @@ export class SalesService {
       throw new BadRequestException(parsed.error.issues[0]?.message);
     }
 
-    const productIds = parsed.data.items.map((item) => item.productId);
-    const products = await this.prisma.product.findMany({
+    const sale = await this.prisma.$transaction(
+      async (tx) => this.createSaleInTransaction(tx, parsed.data, actor),
+      { timeout: 15000, maxWait: 15000 },
+    );
+
+    await this.auditSaleRecorded(sale, actor);
+
+    return serializeSale(sale);
+  }
+
+  /**
+   * Creates a sale and deducts finished-goods stock (FIFO). Must run inside
+   * a transaction so callers (direct sales, POS checkout) stay atomic.
+   */
+  private async createSaleInTransaction(
+    tx: Prisma.TransactionClient,
+    data: z.infer<typeof createSaleSchema>,
+    actor: AuthenticatedUser,
+  ) {
+    const productIds = data.items.map((item) => item.productId);
+    const products = await tx.product.findMany({
       where: { id: { in: productIds } },
       select: productSelect,
     });
@@ -994,7 +1042,7 @@ export class SalesService {
       throw new BadRequestException("One or more selected products do not exist.");
     }
 
-    const items = parsed.data.items.map((item) => {
+    const items = data.items.map((item) => {
       const product = productById.get(item.productId);
 
       if (!product) {
@@ -1021,7 +1069,7 @@ export class SalesService {
     const subtotal = roundMoney(
       items.reduce((sum, item) => sum + item.lineTotal, 0),
     );
-    const discount = roundMoney(parsed.data.discount ?? 0);
+    const discount = roundMoney(data.discount ?? 0);
 
     if (discount > subtotal) {
       throw new BadRequestException("Discount cannot exceed sale subtotal.");
@@ -1029,8 +1077,8 @@ export class SalesService {
 
     const totalAmount = roundMoney(subtotal - discount);
     const amountPaid = roundMoney(
-      parsed.data.amountPaid ??
-        (parsed.data.paymentMethod === PaymentMethod.CREDIT ? 0 : totalAmount),
+      data.amountPaid ??
+        (data.paymentMethod === PaymentMethod.CREDIT ? 0 : totalAmount),
     );
 
     if (amountPaid > totalAmount) {
@@ -1038,114 +1086,114 @@ export class SalesService {
     }
 
     const balanceDue = roundMoney(totalAmount - amountPaid);
-    const soldAt = parsed.data.soldAt ?? new Date();
+    const soldAt = data.soldAt ?? new Date();
 
-    const sale = await this.prisma.$transaction(
-      async (tx) => {
-        const createdSale = await tx.sale.create({
+    const createdSale = await tx.sale.create({
+      data: {
+        paymentMethod: data.paymentMethod,
+        customerName: data.customerName,
+        soldAt,
+        subtotal,
+        discount,
+        totalAmount,
+        amountPaid,
+        balanceDue,
+        notes: data.notes,
+        createdById: actor.id,
+      },
+    });
+
+    for (const item of items) {
+      const lockedBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+          SELECT "id"
+          FROM "SalesProductBatch"
+          WHERE "productId" = ${item.productId}
+            AND "quantityRemaining" > 0
+          ORDER BY "receivedAt" ASC, "batchNumber" ASC
+          FOR UPDATE
+        `,
+      );
+      const batches =
+        lockedBatchIds.length > 0
+          ? await tx.salesProductBatch.findMany({
+              where: { id: { in: lockedBatchIds.map((batch) => batch.id) } },
+              orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
+            })
+          : [];
+      const availableQuantity = batches.reduce(
+        (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
+        0,
+      );
+
+      if (availableQuantity < item.quantity) {
+        throw new BadRequestException(
+          `Only ${formatQuantity(availableQuantity)} ${item.product.unit.abbreviation} of ${productLabel(item.product)} is available for sale.`,
+        );
+      }
+
+      const saleItem = await tx.saleItem.create({
+        data: {
+          saleId: createdSale.id,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          lineTotal: item.lineTotal,
+        },
+      });
+
+      let remainingToSell = item.quantity;
+
+      for (const batch of batches) {
+        if (remainingToSell <= 0) {
+          break;
+        }
+
+        const batchRemaining = decimalToNumber(batch.quantityRemaining);
+        const quantityFromBatch = roundQuantity(
+          Math.min(batchRemaining, remainingToSell),
+        );
+        const balanceAfter = roundQuantity(batchRemaining - quantityFromBatch);
+
+        await tx.salesProductBatch.update({
+          where: { id: batch.id },
+          data: { quantityRemaining: balanceAfter },
+        });
+
+        await tx.saleItemBatch.create({
           data: {
-            paymentMethod: parsed.data.paymentMethod,
-            customerName: parsed.data.customerName,
-            soldAt,
-            subtotal,
-            discount,
-            totalAmount,
-            amountPaid,
-            balanceDue,
-            notes: parsed.data.notes,
-            createdById: actor.id,
+            saleItemId: saleItem.id,
+            batchId: batch.id,
+            quantity: quantityFromBatch,
           },
         });
 
-        for (const item of items) {
-          const lockedBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
-            Prisma.sql`
-              SELECT "id"
-              FROM "SalesProductBatch"
-              WHERE "productId" = ${item.productId}
-                AND "quantityRemaining" > 0
-              ORDER BY "receivedAt" ASC, "batchNumber" ASC
-              FOR UPDATE
-            `,
-          );
-          const batches =
-            lockedBatchIds.length > 0
-              ? await tx.salesProductBatch.findMany({
-                  where: { id: { in: lockedBatchIds.map((batch) => batch.id) } },
-                  orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
-                })
-              : [];
-          const availableQuantity = batches.reduce(
-            (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
-            0,
-          );
-
-          if (availableQuantity < item.quantity) {
-            throw new BadRequestException(
-              `Only ${formatQuantity(availableQuantity)} ${item.product.unit.abbreviation} of ${productLabel(item.product)} is available for sale.`,
-            );
-          }
-
-          const saleItem = await tx.saleItem.create({
-            data: {
-              saleId: createdSale.id,
-              productId: item.productId,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              lineTotal: item.lineTotal,
-            },
-          });
-
-          let remainingToSell = item.quantity;
-
-          for (const batch of batches) {
-            if (remainingToSell <= 0) {
-              break;
-            }
-
-            const batchRemaining = decimalToNumber(batch.quantityRemaining);
-            const quantityFromBatch = roundQuantity(
-              Math.min(batchRemaining, remainingToSell),
-            );
-            const balanceAfter = roundQuantity(batchRemaining - quantityFromBatch);
-
-            await tx.salesProductBatch.update({
-              where: { id: batch.id },
-              data: { quantityRemaining: balanceAfter },
-            });
-
-            await tx.saleItemBatch.create({
-              data: {
-                saleItemId: saleItem.id,
-                batchId: batch.id,
-                quantity: quantityFromBatch,
-              },
-            });
-
-            await tx.salesProductStockMovement.create({
-              data: {
-                productId: item.productId,
-                batchId: batch.id,
-                type: FinishedProductStockMovementType.SALE,
-                quantity: quantityFromBatch,
-                balanceAfter,
-                actorId: actor.id,
-                note: `Sale #${createdSale.saleNumber}`,
-              },
-            });
-
-            remainingToSell = roundQuantity(remainingToSell - quantityFromBatch);
-          }
-        }
-
-        return tx.sale.findUniqueOrThrow({
-          where: { id: createdSale.id },
-          include: saleInclude,
+        await tx.salesProductStockMovement.create({
+          data: {
+            productId: item.productId,
+            batchId: batch.id,
+            type: FinishedProductStockMovementType.SALE,
+            quantity: quantityFromBatch,
+            balanceAfter,
+            actorId: actor.id,
+            note: `Sale #${createdSale.saleNumber}`,
+          },
         });
-      },
-      { timeout: 15000, maxWait: 15000 },
-    );
 
+        remainingToSell = roundQuantity(remainingToSell - quantityFromBatch);
+      }
+    }
+
+    return tx.sale.findUniqueOrThrow({
+      where: { id: createdSale.id },
+      include: saleInclude,
+    });
+  }
+
+  private async auditSaleRecorded(
+    sale: SaleWithIncludes,
+    actor: AuthenticatedUser,
+  ) {
     await this.audit.record({
       actorId: actor.id,
       action: "SALE_RECORDED",
@@ -1157,8 +1205,6 @@ export class SalesService {
         paymentMethod: sale.paymentMethod,
       },
     });
-
-    return serializeSale(sale);
   }
 
   async recordReturn(input: unknown, actor: AuthenticatedUser) {
@@ -1511,7 +1557,7 @@ export class SalesService {
         data: {
           productId: input.productId,
           batchId: batch.id,
-          type: FinishedProductStockMovementType.ADJUSTMENT,
+          type: FinishedProductStockMovementType.DAMAGED,
           quantity: quantityFromBatch,
           balanceAfter,
           actorId: input.actorId,

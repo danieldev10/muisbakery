@@ -8,6 +8,7 @@ import {
   FinishedProductStockMovementType,
   MaterialRequestStatus,
   ProductionMaterialStockMovementType,
+  ProductionWasteType,
   Prisma,
 } from "@prisma/client";
 import { z } from "zod";
@@ -67,12 +68,18 @@ const materialUsageSchema = z.object({
   quantity: quantitySchema,
 });
 
+const optionalWasteType = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.enum(ProductionWasteType).optional(),
+);
+
 const createRunSchema = z
   .object({
     productId: z.string().trim().min(1),
     quantityProduced: productCountSchema,
     quantityTransferred: optionalNonnegativeCount,
     wasteQuantity: optionalNonnegativeCount,
+    wasteType: optionalWasteType,
     wasteReason: optionalText(300),
     producedAt: optionalDate,
     notes: optionalText(500),
@@ -304,6 +311,7 @@ function serializeRequest(request: MaterialRequestWithIncludes) {
 function serializeWaste(waste: ProductionWasteWithIncludes) {
   return {
     id: waste.id,
+    type: waste.type,
     quantity: waste.quantity.toString(),
     reason: waste.reason,
     recordedAt: waste.recordedAt.toISOString(),
@@ -379,9 +387,16 @@ function serializeProductionInventoryItem(material: ProductionInventoryMaterial)
 }
 
 function serializeRun(run: ProductionRunWithIncludes) {
+  const shortfall =
+    run.expectedQuantity !== null && run.quantityProduced < run.expectedQuantity
+      ? run.expectedQuantity - run.quantityProduced
+      : 0;
+
   return {
     id: run.id,
     quantityProduced: run.quantityProduced.toString(),
+    expectedQuantity: run.expectedQuantity?.toString() ?? null,
+    shortfallQuantity: shortfall > 0 ? String(shortfall) : null,
     quantityTransferred: run.quantityTransferred.toString(),
     wasteQuantity: run.wasteQuantity.toString(),
     producedAt: run.producedAt.toISOString(),
@@ -397,6 +412,7 @@ function serializeRun(run: ProductionRunWithIncludes) {
     })),
     waste: run.waste.map((waste) => ({
       id: waste.id,
+      type: waste.type,
       quantity: waste.quantity.toString(),
       reason: waste.reason,
       recordedAt: waste.recordedAt.toISOString(),
@@ -413,6 +429,53 @@ function serializeRun(run: ProductionRunWithIncludes) {
       product: batch.product,
     })),
   };
+}
+
+/**
+ * Lower-bound output implied by the recipe and the materials actually used:
+ * the limiting recipe ingredient determines how many recipe batches the
+ * consumed materials could have produced. Undercutting shows up as
+ * quantityProduced falling below this number.
+ */
+function expectedOutputForUsages(
+  product: ProductOption,
+  usages: Array<{ rawMaterialId: string; quantity: number }>,
+) {
+  const recipe = product.recipe;
+
+  if (!recipe?.isActive || recipe.items.length === 0) {
+    return null;
+  }
+
+  const yieldQuantity = decimalToNumber(recipe.yieldQuantity);
+
+  if (yieldQuantity <= 0) {
+    return null;
+  }
+
+  const usageByMaterial = new Map(
+    usages.map((usage) => [usage.rawMaterialId, usage.quantity]),
+  );
+  let limitingBatches: number | null = null;
+
+  for (const item of recipe.items) {
+    const perBatch = decimalToNumber(item.quantity);
+
+    if (perBatch <= 0) {
+      continue;
+    }
+
+    const used = usageByMaterial.get(item.rawMaterialId) ?? 0;
+    const batches = used / perBatch;
+    limitingBatches =
+      limitingBatches === null ? batches : Math.min(limitingBatches, batches);
+  }
+
+  if (limitingBatches === null) {
+    return null;
+  }
+
+  return Math.floor(limitingBatches * yieldQuantity + 1e-9);
 }
 
 function expectedUsagesForProduct(product: ProductOption, quantityProduced: number) {
@@ -662,10 +725,13 @@ export class ProductionService {
           );
         }
 
+        const expectedOutput = expectedOutputForUsages(product, materialUsages);
+
         const createdRun = await tx.productionRun.create({
           data: {
             productId: parsed.data.productId,
             quantityProduced: parsed.data.quantityProduced,
+            expectedQuantity: expectedOutput,
             quantityTransferred,
             wasteQuantity,
             producedAt,
@@ -778,6 +844,7 @@ export class ProductionService {
             data: {
               productionRunId: createdRun.id,
               productId: parsed.data.productId,
+              type: parsed.data.wasteType ?? ProductionWasteType.DAMAGED,
               quantity: wasteQuantity,
               reason: parsed.data.wasteReason,
               recordedAt: producedAt,
@@ -841,6 +908,7 @@ export class ProductionService {
       metadata: {
         productId: run.productId,
         quantityProduced: run.quantityProduced.toString(),
+        expectedQuantity: run.expectedQuantity?.toString() ?? null,
         quantityTransferred: run.quantityTransferred.toString(),
         wasteQuantity: run.wasteQuantity.toString(),
       },

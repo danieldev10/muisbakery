@@ -27,6 +27,7 @@ export async function createProductionRun(
     quantityProduced: getString(formData, "quantityProduced"),
     quantityTransferred: getOptionalString(formData, "quantityTransferred"),
     wasteQuantity: getOptionalString(formData, "wasteQuantity"),
+    wasteType: getOptionalString(formData, "wasteType"),
     wasteReason: getOptionalString(formData, "wasteReason"),
     producedAt: getOptionalString(formData, "producedAt"),
     notes: getOptionalString(formData, "notes"),
