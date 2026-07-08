@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { randomBytes } from "node:crypto";
 import {
   FinishedProductStockMovementType,
   PaymentMethod,
@@ -12,577 +11,49 @@ import {
   Prisma,
   SalesReturnDisposition,
 } from "@prisma/client";
-import { z } from "zod";
 
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { PrismaService } from "../database/prisma.service";
 import { PosDisplayEvents } from "./pos-display-events";
-
-const optionalText = (max = 300) =>
-  z.preprocess(
-    (value) =>
-      typeof value === "string" && value.trim() === "" ? undefined : value,
-    z.string().trim().max(max).optional(),
-  );
-
-const nullableText = (max = 300) =>
-  z.preprocess(
-    (value) => (typeof value === "string" && value.trim() === "" ? null : value),
-    z.string().trim().max(max).nullable().optional(),
-  );
-
-const optionalDate = z.preprocess(
-  (value) =>
-    typeof value === "string" && value.trim() === "" ? undefined : value,
-  z.coerce.date().optional(),
-);
-
-const quantitySchema = z.coerce
-  .number()
-  .positive("Quantity must be greater than zero.")
-  .max(99_999_999)
-  .refine(Number.isInteger, {
-    message: "Quantity must be a whole number.",
-  });
-
-const moneySchema = z.coerce
-  .number()
-  .nonnegative("Amount cannot be negative.")
-  .max(999_999_999);
-
-const nonnegativeQuantitySchema = z.coerce
-  .number()
-  .nonnegative("Quantity cannot be negative.")
-  .max(99_999_999)
-  .refine(Number.isInteger, {
-    message: "Quantity must be a whole number.",
-  });
-
-const optionalMoneySchema = z.preprocess(
-  (value) =>
-    typeof value === "string" && value.trim() === "" ? undefined : value,
-  moneySchema.optional(),
-);
-
-const nullableMoneySchema = z.preprocess(
-  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
-  moneySchema.nullable().optional(),
-);
-
-const saleItemSchema = z.object({
-  productId: z.string().trim().min(1),
-  quantity: quantitySchema,
-  unitPrice: optionalMoneySchema,
-});
-
-const createSaleSchema = z
-  .object({
-    paymentMethod: z.enum(PaymentMethod),
-    customerName: optionalText(160),
-    soldAt: optionalDate,
-    discount: optionalMoneySchema,
-    amountPaid: optionalMoneySchema,
-    notes: optionalText(500),
-    items: z.array(saleItemSchema).min(1, "Add at least one sale item."),
-  })
-  .superRefine((value, context) => {
-    const productIds = new Set<string>();
-
-    value.items.forEach((item, index) => {
-      if (productIds.has(item.productId)) {
-        context.addIssue({
-          code: "custom",
-          message: "Each product can only appear once on a sale.",
-          path: ["items", index, "productId"],
-        });
-      }
-      productIds.add(item.productId);
-    });
-  });
-
-const recordReturnSchema = z
-  .object({
-    saleItemId: z.preprocess(
-      (value) =>
-        typeof value === "string" && value.trim() === "" ? undefined : value,
-      z.string().trim().min(1).optional(),
-    ),
-    productId: z.preprocess(
-      (value) =>
-        typeof value === "string" && value.trim() === "" ? undefined : value,
-      z.string().trim().min(1).optional(),
-    ),
-    disposition: z.enum(SalesReturnDisposition),
-    quantity: quantitySchema,
-    reason: optionalText(500),
-    recordedAt: optionalDate,
-  })
-  .superRefine((value, context) => {
-    if (
-      value.disposition === SalesReturnDisposition.RETURN_TO_STOCK &&
-      !value.saleItemId
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Select a sale item before returning goods to stock.",
-        path: ["saleItemId"],
-      });
-    }
-
-    if (!value.saleItemId && !value.productId) {
-      context.addIssue({
-        code: "custom",
-        message: "Select a product or a sale item.",
-        path: ["productId"],
-      });
-    }
-  });
-
-const createPosTerminalSchema = z.object({
-  name: optionalText(100),
-});
-
-const createPosSessionSchema = z.object({
-  customerName: optionalText(160),
-  terminalId: optionalText(80),
-});
-
-const updatePosSessionSchema = z.object({
-  customerName: nullableText(160),
-  paymentMethod: z.enum(PaymentMethod).optional(),
-  discount: optionalMoneySchema,
-  amountPaid: nullableMoneySchema,
-  notes: nullableText(500),
-});
-
-const upsertPosSessionItemSchema = z.object({
-  productId: z.string().trim().min(1),
-  quantity: nonnegativeQuantitySchema,
-  unitPrice: optionalMoneySchema,
-});
-
-const unitSelect = {
-  id: true,
-  name: true,
-  abbreviation: true,
-} satisfies Prisma.UnitSelect;
-
-const productSelect = {
-  id: true,
-  name: true,
-  size: true,
-  unitPrice: true,
-  unit: { select: unitSelect },
-} satisfies Prisma.ProductSelect;
-
-const userSelect = {
-  id: true,
-  name: true,
-  email: true,
-} satisfies Prisma.UserSelect;
-
-const batchSelect = {
-  id: true,
-  batchNumber: true,
-  batchDate: true,
-  quantityReceived: true,
-  quantityRemaining: true,
-  receivedAt: true,
-  notes: true,
-  productionRun: {
-    select: {
-      id: true,
-      producedAt: true,
-    },
-  },
-  createdBy: { select: userSelect },
-} satisfies Prisma.SalesProductBatchSelect;
-
-const inventoryInclude = {
-  unit: { select: unitSelect },
-  salesBatches: {
-    where: { quantityRemaining: { gt: 0 } },
-    select: batchSelect,
-    orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
-  },
-} satisfies Prisma.ProductInclude;
-
-const saleInclude = {
-  createdBy: { select: userSelect },
-  items: {
-    include: {
-      product: { select: productSelect },
-      batchIssues: {
-        include: {
-          batch: {
-            select: {
-              id: true,
-              batchNumber: true,
-              batchDate: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "asc" },
-      },
-    },
-    orderBy: { createdAt: "asc" },
-  },
-} satisfies Prisma.SaleInclude;
-
-const saleItemOptionInclude = {
-  sale: {
-    select: {
-      id: true,
-      saleNumber: true,
-      soldAt: true,
-    },
-  },
-  product: { select: productSelect },
-  batchIssues: {
-    include: {
-      batch: {
-        select: {
-          id: true,
-          batchNumber: true,
-          batchDate: true,
-        },
-      },
-    },
-    orderBy: { createdAt: "asc" },
-  },
-  returns: {
-    select: {
-      quantity: true,
-    },
-  },
-} satisfies Prisma.SaleItemInclude;
-
-const returnInclude = {
-  saleItem: {
-    include: {
-      sale: {
-        select: {
-          id: true,
-          saleNumber: true,
-          soldAt: true,
-        },
-      },
-      product: { select: productSelect },
-    },
-  },
-  product: { select: productSelect },
-  batch: {
-    select: {
-      id: true,
-      batchNumber: true,
-      batchDate: true,
-    },
-  },
-  createdBy: { select: userSelect },
-} satisfies Prisma.SalesProductReturnInclude;
-
-const posSessionInclude = {
-  terminal: {
-    select: {
-      id: true,
-      displayToken: true,
-    },
-  },
-  completedSale: {
-    select: {
-      id: true,
-      saleNumber: true,
-      totalAmount: true,
-      amountPaid: true,
-      balanceDue: true,
-      soldAt: true,
-    },
-  },
-  items: {
-    include: {
-      product: { select: productSelect },
-    },
-    orderBy: { createdAt: "asc" },
-  },
-} satisfies Prisma.PosSessionInclude;
-
-const posTerminalInclude = {
-  currentSession: {
-    include: posSessionInclude,
-  },
-} satisfies Prisma.PosTerminalInclude;
-
-type ProductInventory = Prisma.ProductGetPayload<{
-  include: typeof inventoryInclude;
-}>;
-
-type SaleWithIncludes = Prisma.SaleGetPayload<{
-  include: typeof saleInclude;
-}>;
-
-type SaleItemOption = Prisma.SaleItemGetPayload<{
-  include: typeof saleItemOptionInclude;
-}>;
-
-type SalesReturnWithIncludes = Prisma.SalesProductReturnGetPayload<{
-  include: typeof returnInclude;
-}>;
-
-type PosSessionWithIncludes = Prisma.PosSessionGetPayload<{
-  include: typeof posSessionInclude;
-}>;
-
-type PosTerminalWithIncludes = Prisma.PosTerminalGetPayload<{
-  include: typeof posTerminalInclude;
-}>;
-
-function decimalToNumber(value: Prisma.Decimal | number | string) {
-  return Number(value.toString());
-}
-
-function roundQuantity(value: number) {
-  return Math.round((value + Number.EPSILON) * 1000) / 1000;
-}
-
-function roundMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-function formatQuantity(value: number) {
-  return String(Math.round(value));
-}
-
-function productLabel(product: { name: string; size: string }) {
-  return product.size ? `${product.name} - ${product.size}` : product.name;
-}
-
-function toDayRange(dateInput?: string) {
-  const base = dateInput ? new Date(`${dateInput}T00:00:00`) : new Date();
-
-  if (Number.isNaN(base.getTime())) {
-    throw new BadRequestException("Enter a valid summary date.");
-  }
-
-  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate());
-  const end = new Date(start);
-  end.setDate(start.getDate() + 1);
-
-  return { start, end };
-}
-
-function serializeBatch(batch: ProductInventory["salesBatches"][number]) {
-  return {
-    id: batch.id,
-    batchNumber: batch.batchNumber,
-    batchDate: batch.batchDate.toISOString(),
-    quantityReceived: batch.quantityReceived.toString(),
-    quantityRemaining: batch.quantityRemaining.toString(),
-    receivedAt: batch.receivedAt.toISOString(),
-    notes: batch.notes,
-    productionRun: batch.productionRun
-      ? {
-          id: batch.productionRun.id,
-          producedAt: batch.productionRun.producedAt.toISOString(),
-        }
-      : null,
-    createdBy: batch.createdBy,
-  };
-}
-
-function serializeInventoryItem(product: ProductInventory) {
-  const totalRemaining = product.salesBatches.reduce(
-    (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
-    0,
-  );
-
-  return {
-    product: {
-      id: product.id,
-      name: product.name,
-      size: product.size,
-      unit: product.unit,
-      unitPrice: product.unitPrice?.toString() ?? null,
-    },
-    totalRemaining: formatQuantity(totalRemaining),
-    batches: product.salesBatches.map(serializeBatch),
-  };
-}
-
-function serializeSale(sale: SaleWithIncludes) {
-  return {
-    id: sale.id,
-    saleNumber: sale.saleNumber,
-    paymentMethod: sale.paymentMethod,
-    customerName: sale.customerName,
-    soldAt: sale.soldAt.toISOString(),
-    subtotal: sale.subtotal.toString(),
-    discount: sale.discount.toString(),
-    totalAmount: sale.totalAmount.toString(),
-    amountPaid: sale.amountPaid.toString(),
-    balanceDue: sale.balanceDue.toString(),
-    notes: sale.notes,
-    createdAt: sale.createdAt.toISOString(),
-    createdBy: sale.createdBy,
-    items: sale.items.map((item) => ({
-      id: item.id,
-      quantity: item.quantity.toString(),
-      unitPrice: item.unitPrice.toString(),
-      lineTotal: item.lineTotal.toString(),
-      product: item.product,
-      batchIssues: item.batchIssues.map((issue) => ({
-        id: issue.id,
-        quantity: issue.quantity.toString(),
-        batch: {
-          id: issue.batch.id,
-          batchNumber: issue.batch.batchNumber,
-          batchDate: issue.batch.batchDate.toISOString(),
-        },
-      })),
-    })),
-  };
-}
-
-function serializeSaleItemOption(item: SaleItemOption) {
-  const soldQuantity = decimalToNumber(item.quantity);
-  const returnedQuantity = item.returns.reduce(
-    (sum, entry) => sum + decimalToNumber(entry.quantity),
-    0,
-  );
-  const returnableQuantity = Math.max(
-    0,
-    roundQuantity(soldQuantity - returnedQuantity),
-  );
-
-  return {
-    id: item.id,
-    quantity: item.quantity.toString(),
-    returnableQuantity: formatQuantity(returnableQuantity),
-    unitPrice: item.unitPrice.toString(),
-    lineTotal: item.lineTotal.toString(),
-    sale: {
-      id: item.sale.id,
-      saleNumber: item.sale.saleNumber,
-      soldAt: item.sale.soldAt.toISOString(),
-    },
-    product: item.product,
-    batchIssues: item.batchIssues.map((issue) => ({
-      id: issue.id,
-      quantity: issue.quantity.toString(),
-      batch: {
-        id: issue.batch.id,
-        batchNumber: issue.batch.batchNumber,
-        batchDate: issue.batch.batchDate.toISOString(),
-      },
-    })),
-  };
-}
-
-function serializeReturn(entry: SalesReturnWithIncludes) {
-  return {
-    id: entry.id,
-    disposition: entry.disposition,
-    quantity: entry.quantity.toString(),
-    reason: entry.reason,
-    recordedAt: entry.recordedAt.toISOString(),
-    createdAt: entry.createdAt.toISOString(),
-    product: entry.product,
-    batch: entry.batch
-      ? {
-          id: entry.batch.id,
-          batchNumber: entry.batch.batchNumber,
-          batchDate: entry.batch.batchDate.toISOString(),
-        }
-      : null,
-    saleItem: entry.saleItem
-      ? {
-          id: entry.saleItem.id,
-          quantity: entry.saleItem.quantity.toString(),
-          sale: {
-            id: entry.saleItem.sale.id,
-            saleNumber: entry.saleItem.sale.saleNumber,
-            soldAt: entry.saleItem.sale.soldAt.toISOString(),
-          },
-          product: entry.saleItem.product,
-        }
-      : null,
-    createdBy: entry.createdBy,
-  };
-}
-
-function generateDisplayToken() {
-  return randomBytes(12).toString("base64url");
-}
-
-function serializePosSession(session: PosSessionWithIncludes) {
-  const items = session.items.map((item) => {
-    const quantity = decimalToNumber(item.quantity);
-    const unitPrice = decimalToNumber(item.unitPrice);
-    const lineTotal = roundMoney(quantity * unitPrice);
-
-    return {
-      id: item.id,
-      quantity: item.quantity.toString(),
-      unitPrice: item.unitPrice.toString(),
-      lineTotal: lineTotal.toFixed(2),
-      product: item.product,
-    };
-  });
-  const subtotal = roundMoney(
-    items.reduce((sum, item) => sum + Number(item.lineTotal), 0),
-  );
-  const discount = decimalToNumber(session.discount);
-  const totalAmount = Math.max(0, roundMoney(subtotal - discount));
-  const amountPaid =
-    session.amountPaid !== null
-      ? decimalToNumber(session.amountPaid)
-      : session.paymentMethod === PaymentMethod.CREDIT
-        ? 0
-        : totalAmount;
-  const balanceDue = Math.max(0, roundMoney(totalAmount - amountPaid));
-
-  return {
-    id: session.id,
-    displayToken: session.displayToken,
-    terminal: session.terminal,
-    status: session.status,
-    customerName: session.customerName,
-    paymentMethod: session.paymentMethod,
-    discount: session.discount.toString(),
-    amountPaid: amountPaid.toFixed(2),
-    balanceDue: balanceDue.toFixed(2),
-    subtotal: subtotal.toFixed(2),
-    totalAmount: totalAmount.toFixed(2),
-    notes: session.notes,
-    createdAt: session.createdAt.toISOString(),
-    updatedAt: session.updatedAt.toISOString(),
-    completedAt: session.completedAt?.toISOString() ?? null,
-    completedSale: session.completedSale
-      ? {
-          id: session.completedSale.id,
-          saleNumber: session.completedSale.saleNumber,
-          totalAmount: session.completedSale.totalAmount.toString(),
-          amountPaid: session.completedSale.amountPaid.toString(),
-          balanceDue: session.completedSale.balanceDue.toString(),
-          soldAt: session.completedSale.soldAt.toISOString(),
-        }
-      : null,
-    items,
-  };
-}
-
-function serializePosTerminal(terminal: PosTerminalWithIncludes) {
-  return {
-    id: terminal.id,
-    name: terminal.name,
-    displayToken: terminal.displayToken,
-    createdAt: terminal.createdAt.toISOString(),
-    updatedAt: terminal.updatedAt.toISOString(),
-    currentSession: terminal.currentSession
-      ? serializePosSession(terminal.currentSession)
-      : null,
-  };
-}
+import {
+  createPosSessionSchema,
+  createPosTerminalSchema,
+  createSaleSchema,
+  recordReturnSchema,
+  updatePosSessionSchema,
+  upsertPosSessionItemSchema,
+  type CreateSaleInput,
+} from "./sales.schemas";
+import {
+  inventoryInclude,
+  posSessionInclude,
+  posTerminalInclude,
+  productSelect,
+  returnInclude,
+  saleInclude,
+  saleItemOptionInclude,
+  type PosSessionWithIncludes,
+  type SalesReturnWithIncludes,
+  type SaleWithIncludes,
+} from "./sales.queries";
+import {
+  serializeInventoryItem,
+  serializePosSession,
+  serializePosTerminal,
+  serializeReturn,
+  serializeSale,
+  serializeSaleItemOption,
+} from "./sales.serializers";
+import {
+  decimalToNumber,
+  formatQuantity,
+  generateDisplayToken,
+  productLabel,
+  roundMoney,
+  roundQuantity,
+  toDayRange,
+} from "./sales.utils";
 
 @Injectable()
 export class SalesService {
@@ -1028,7 +499,7 @@ export class SalesService {
    */
   private async createSaleInTransaction(
     tx: Prisma.TransactionClient,
-    data: z.infer<typeof createSaleSchema>,
+    data: CreateSaleInput,
     actor: AuthenticatedUser,
   ) {
     const productIds = data.items.map((item) => item.productId);
