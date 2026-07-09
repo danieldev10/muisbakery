@@ -1,8 +1,9 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 
+import { AdminModal } from "@/components/admin/form-modal";
 import { FormFeedback, SubmitButton } from "@/components/admin/form-controls";
 import {
   type FormState,
@@ -176,19 +177,52 @@ function RecipeFields({ products, rawMaterials }: FieldsProps) {
   );
 }
 
-export function RecipeForm(props: FieldsProps) {
+export function RecipeForm({
+  onSuccess,
+  ...props
+}: FieldsProps & {
+  onSuccess?: () => void;
+}) {
   const [state, formAction] = useActionState<FormState, FormData>(
     createRecipe,
     initialFormState,
   );
 
+  useEffect(() => {
+    if (state.ok) {
+      onSuccess?.();
+    }
+  }, [onSuccess, state.ok, state.token]);
+
   return (
     <form action={formAction} className="grid gap-4">
       <RecipeFields key={state.token ?? "initial"} {...props} />
-      <FormFeedback state={state} />
-      <div>
+      {state.error ? <FormFeedback state={state} /> : null}
+      <div className="flex justify-end gap-2">
+        {onSuccess ? (
+          <button
+            className="inline-flex h-10 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-white px-4 text-sm font-semibold text-[var(--text-secondary)] transition hover:bg-[var(--surface-warm)]"
+            onClick={onSuccess}
+            type="button"
+          >
+            Cancel
+          </button>
+        ) : null}
         <SubmitButton>Create recipe</SubmitButton>
       </div>
     </form>
+  );
+}
+
+export function RecipeFormModal(props: FieldsProps) {
+  return (
+    <AdminModal
+      description="Create the raw material formula Production will use for a finished product."
+      title="Add recipe"
+      triggerLabel="Add recipe"
+      widthClassName="max-w-3xl"
+    >
+      {({ close }) => <RecipeForm {...props} onSuccess={close} />}
+    </AdminModal>
   );
 }

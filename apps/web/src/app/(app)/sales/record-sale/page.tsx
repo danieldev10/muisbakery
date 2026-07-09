@@ -6,15 +6,22 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { PaymentMethod, Sale, SalesOptions } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
-import { TablePagination } from "@/components/admin/pagination";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesDateRange,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import { createSale } from "./actions";
 
@@ -65,10 +72,55 @@ export default async function RecordSalePage({
     apiGet<SalesOptions>("/sales/options"),
     apiGet<Sale[]>("/sales/sales"),
   ]);
-  const { pageItems, ...pagination } = paginate(sales, pageNumber(params.page));
-
   const stockedProducts = options.products.filter(
     (item) => Number(item.totalRemaining) > 0,
+  );
+  const query = firstParam(params, "q");
+  const paymentFilter = firstParam(params, "payment");
+  const productFilter = firstParam(params, "product");
+  const from = firstParam(params, "from");
+  const to = firstParam(params, "to");
+  const productOptions = [
+    ...new Map(
+      sales.flatMap((sale) =>
+        sale.items.map((item) => [
+          item.product.id,
+          {
+            label: formatProductName(item.product),
+            value: item.product.id,
+          },
+        ]),
+      ),
+    ).values(),
+  ];
+  const filteredSales = sales.filter(
+    (sale) =>
+      matchesSearch(query, [
+        sale.saleNumber,
+        sale.customerName,
+        sale.paymentMethod,
+        paymentLabels[sale.paymentMethod],
+        sale.totalAmount,
+        sale.amountPaid,
+        sale.balanceDue,
+        sale.notes,
+        sale.createdBy?.name,
+        sale.createdBy?.email,
+        ...sale.items.flatMap((item) => [
+          formatProductName(item.product),
+          item.quantity,
+          item.unitPrice,
+          item.lineTotal,
+        ]),
+      ]) &&
+      matchesSelect(paymentFilter, sale.paymentMethod) &&
+      (!productFilter ||
+        sale.items.some((item) => item.product.id === productFilter)) &&
+      matchesDateRange(sale.soldAt, from, to),
+  );
+  const { pageItems, ...pagination } = paginate(
+    filteredSales,
+    pageNumber(params.page),
   );
 
   return (
@@ -186,9 +238,37 @@ export default async function RecordSalePage({
         )}
       </Card>
 
-      <Card title={`Recent sales (${sales.length})`}>
+      <Card title={`Recent sales (${filteredSales.length} of ${sales.length})`}>
+        {sales.length > 0 ? (
+          <TableToolbar
+            basePath="/sales/record-sale"
+            dateFilters={[
+              { label: "Sold from", name: "from" },
+              { label: "Sold to", name: "to" },
+            ]}
+            searchParams={params}
+            searchPlaceholder="Search sale number, customer, product, or payment"
+            selectFilters={[
+              {
+                label: "Payment",
+                name: "payment",
+                options: options.paymentMethods.map((method) => ({
+                  label: paymentLabels[method],
+                  value: method,
+                })),
+              },
+              {
+                label: "Product",
+                name: "product",
+                options: productOptions,
+              },
+            ]}
+          />
+        ) : null}
         {sales.length === 0 ? (
           <EmptyState>No sales have been recorded yet.</EmptyState>
+        ) : filteredSales.length === 0 ? (
+          <EmptyState>No sales match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={

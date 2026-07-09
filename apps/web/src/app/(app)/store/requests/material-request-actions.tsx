@@ -135,18 +135,20 @@ export function MaterialRequestStatusBadge({
 }) {
   const [open, setOpen] = useState(false);
   const label = statusLabel(status);
-  const badgeClass = `inline-flex h-5 items-center justify-center rounded-full px-2.5 font-medium leading-none align-middle ${statusClass(
+  // Identical box metrics for the static and clickable variants so the
+  // pills line up pixel-for-pixel across rows.
+  const badgeClass = `inline-flex h-5 items-center justify-center rounded-full px-2.5 text-xs font-medium leading-none align-middle ${statusClass(
     status,
   )}`;
 
   if (!reason) {
-    return <span className={`${badgeClass} text-xs`}>{label}</span>;
+    return <span className={badgeClass}>{label}</span>;
   }
 
   return (
     <>
       <button
-        className={`${badgeClass} appearance-none border-0 text-[11px] transition hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-amber)]`}
+        className={`${badgeClass} cursor-pointer appearance-none border-0 transition hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-burgundy)]`}
         onClick={() => setOpen(true)}
         title="View status reason"
         type="button"

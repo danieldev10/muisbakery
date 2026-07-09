@@ -1,13 +1,14 @@
 import Link from "next/link";
 
+import { AdminModal } from "@/components/admin/form-modal";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
-  PageHeader,
   StatusBadge,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { Product, RawMaterial, Recipe } from "@/lib/admin/types";
 import {
   pageNumber,
@@ -16,9 +17,14 @@ import {
 } from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import { deleteRecipe } from "./actions";
-import { RecipeForm } from "./recipe-form";
+import { RecipeFormModal } from "./recipe-form";
 
 export default async function RecipesPage({
   searchParams,
@@ -31,6 +37,27 @@ export default async function RecipesPage({
     apiGet<Product[]>("/admin/products"),
     apiGet<RawMaterial[]>("/admin/raw-materials"),
   ]);
+  const query = firstParam(params, "q");
+  const productFilter = firstParam(params, "product");
+  const materialFilter = firstParam(params, "material");
+  const statusFilter = firstParam(params, "status");
+  const filteredRecipes = recipes.filter(
+    (recipe) =>
+      matchesSearch(query, [
+        formatProductName(recipe.product),
+        recipe.yieldQuantity,
+        recipe.notes,
+        ...recipe.items.flatMap((item) => [
+          item.rawMaterial.name,
+          item.quantity,
+          item.unit.abbreviation,
+        ]),
+      ]) &&
+      matchesSelect(productFilter, recipe.productId) &&
+      matchesSelect(statusFilter, recipe.isActive) &&
+      (!materialFilter ||
+        recipe.items.some((item) => item.rawMaterialId === materialFilter)),
+  );
 
   const recipeProductIds = new Set(recipes.map((r) => r.productId));
   const productOptions = products
@@ -51,45 +78,87 @@ export default async function RecipesPage({
 
   const canBuild = productOptions.length > 0 && materialOptions.length > 0;
   const { pageItems, ...pagination } = paginate(
-    recipes,
+    filteredRecipes,
     pageNumber(params.page),
   );
 
   return (
-    <>
-      <PageHeader
-        title="Recipes"
-        description="Set the raw material formula used to make each product."
-      />
-
-      <Card title="Add recipe">
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+          Recipes ({filteredRecipes.length} of {recipes.length})
+        </h2>
         {canBuild ? (
-          <RecipeForm
+          <RecipeFormModal
             products={productOptions}
             rawMaterials={materialOptions}
           />
         ) : (
-          <EmptyState>
-            You need at least one product without a recipe and one raw
-            material first. Manage them under{" "}
-            <Link className="font-medium text-red-800 underline" href="/admin/products">
-              Products
-            </Link>
-            ,{" "}
-            <Link
-              className="font-medium text-red-800 underline"
-              href="/admin/raw-materials"
-            >
-              Raw materials
-            </Link>
-            .
-          </EmptyState>
+          <AdminModal
+            description="Recipes need one available product and one active raw material."
+            title="Add recipe"
+            triggerLabel="Add recipe"
+          >
+            <EmptyState>
+              You need at least one product without a recipe and one raw
+              material first. Manage them under{" "}
+              <Link
+                className="font-medium text-red-800 underline"
+                href="/admin/products"
+              >
+                Products
+              </Link>
+              ,{" "}
+              <Link
+                className="font-medium text-red-800 underline"
+                href="/admin/raw-materials"
+              >
+                Raw materials
+              </Link>
+              .
+            </EmptyState>
+          </AdminModal>
         )}
-      </Card>
+      </div>
 
-      <Card title={`Recipes (${recipes.length})`}>
+      <div>
+        {recipes.length > 0 ? (
+          <TableToolbar
+            basePath="/admin/recipes"
+            searchParams={params}
+            searchPlaceholder="Search product, material, quantity, or notes"
+            selectFilters={[
+              {
+                label: "Product",
+                name: "product",
+                options: products.map((product) => ({
+                  label: formatProductName(product),
+                  value: product.id,
+                })),
+              },
+              {
+                label: "Material",
+                name: "material",
+                options: rawMaterials.map((material) => ({
+                  label: material.name,
+                  value: material.id,
+                })),
+              },
+              {
+                label: "Status",
+                name: "status",
+                options: [
+                  { label: "Active", value: "true" },
+                  { label: "Inactive", value: "false" },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {recipes.length === 0 ? (
           <EmptyState>No recipes yet.</EmptyState>
+        ) : filteredRecipes.length === 0 ? (
+          <EmptyState>No recipes match the current filters.</EmptyState>
         ) : (
           <div className="grid gap-4">
             {pageItems.map((recipe) => (
@@ -142,7 +211,7 @@ export default async function RecipesPage({
           searchParams={params}
           {...pagination}
         />
-      </Card>
-    </>
+      </div>
+    </Card>
   );
 }

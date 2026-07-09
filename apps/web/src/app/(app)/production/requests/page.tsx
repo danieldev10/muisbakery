@@ -11,18 +11,25 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type {
   MaterialRequest,
   MaterialRequestStatus,
   ProductionOptions,
 } from "@/lib/operations/types";
-import { TablePagination } from "@/components/admin/pagination";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesDateRange,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import { cancelMaterialRequest, createMaterialRequest } from "./actions";
 
@@ -88,15 +95,38 @@ export default async function ProductionRequestsPage({
     apiGet<ProductionOptions>("/production/options"),
     apiGet<MaterialRequest[]>("/production/material-requests"),
   ]);
-  const { pageItems, ...pagination } = paginate(
-    requests,
-    pageNumber(params.page),
-  );
-
   const materialOptions = options.rawMaterials.map((material) => ({
     value: material.id,
     label: `${material.name} (${material.baseUnit.abbreviation})`,
   }));
+  const query = firstParam(params, "q");
+  const materialFilter = firstParam(params, "material");
+  const statusFilter = firstParam(params, "status");
+  const from = firstParam(params, "from");
+  const to = firstParam(params, "to");
+  const statusOptions = [
+    ...new Set(requests.map((request) => request.status)),
+  ].map((status) => ({ label: statusLabel(status), value: status }));
+  const filteredRequests = requests.filter(
+    (request) =>
+      matchesSearch(query, [
+        request.rawMaterial.name,
+        request.rawMaterial.baseUnit.abbreviation,
+        request.status,
+        statusLabel(request.status),
+        request.notes,
+        request.responseNotes,
+        request.requestedBy.name,
+        request.requestedBy.email,
+      ]) &&
+      matchesSelect(materialFilter, request.rawMaterial.id) &&
+      matchesSelect(statusFilter, request.status) &&
+      matchesDateRange(request.createdAt, from, to),
+  );
+  const { pageItems, ...pagination } = paginate(
+    filteredRequests,
+    pageNumber(params.page),
+  );
 
   return (
     <>
@@ -148,9 +178,34 @@ export default async function ProductionRequestsPage({
         )}
       </Card>
 
-      <Card title={`Requests (${requests.length})`}>
+      <Card title={`Requests (${filteredRequests.length} of ${requests.length})`}>
+        {requests.length > 0 ? (
+          <TableToolbar
+            basePath="/production/requests"
+            dateFilters={[
+              { label: "Created from", name: "from" },
+              { label: "Created to", name: "to" },
+            ]}
+            searchParams={params}
+            searchPlaceholder="Search material, requester, status, or notes"
+            selectFilters={[
+              {
+                label: "Material",
+                name: "material",
+                options: materialOptions,
+              },
+              {
+                label: "Status",
+                name: "status",
+                options: statusOptions,
+              },
+            ]}
+          />
+        ) : null}
         {requests.length === 0 ? (
           <EmptyState>No material requests yet.</EmptyState>
+        ) : filteredRequests.length === 0 ? (
+          <EmptyState>No material requests match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={

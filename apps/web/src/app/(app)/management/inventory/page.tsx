@@ -6,6 +6,7 @@ import {
 } from "@/components/admin/layout";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementInventoryReport } from "@/lib/management/types";
 import {
   pageNumber,
@@ -14,6 +15,12 @@ import {
 } from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesDateRange,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import { formatDate, formatMoney, formatQuantity, MetricCard } from "../_components";
 import { updateRawMaterialUnitCost } from "./actions";
@@ -31,21 +38,104 @@ export default async function ManagementInventoryPage({
   const stockedFinishedProducts = report.finishedProducts.filter(
     (item) => item.batches.length > 0,
   );
+  const stockQuery = firstParam(params, "stockQ");
+  const filteredStockedRawMaterials = stockedRawMaterials.filter((item) =>
+    matchesSearch(stockQuery, [
+      item.rawMaterial.name,
+      item.rawMaterial.baseUnit.name,
+      item.rawMaterial.baseUnit.abbreviation,
+      item.totalRemaining,
+      item.estimatedValue,
+      ...item.batches.flatMap((batch) => [
+        batch.batchNumber,
+        batch.batchLabel,
+        batch.supplier?.name,
+        batch.quantityRemaining,
+        batch.estimatedValue,
+      ]),
+    ]),
+  );
+  const costQuery = firstParam(params, "costQ");
+  const costStatus = firstParam(params, "costStatus");
+  const filteredCostMaterials = report.rawMaterials.filter(
+    (item) =>
+      matchesSearch(costQuery, [
+        item.rawMaterial.name,
+        item.rawMaterial.baseUnit.name,
+        item.rawMaterial.baseUnit.abbreviation,
+        item.rawMaterial.unitCost,
+      ]) &&
+      matchesSelect(
+        costStatus,
+        item.rawMaterial.unitCost ? "set" : "missing",
+      ),
+  );
+  const batchQuery = firstParam(params, "batchQ");
+  const batchSupplier = firstParam(params, "batchSupplier");
+  const batchFrom = firstParam(params, "batchFrom");
+  const batchTo = firstParam(params, "batchTo");
+  const batchSupplierOptions = [
+    ...new Map(
+      stockedRawMaterials.flatMap((item) =>
+        item.batches
+          .filter((batch) => batch.supplier)
+          .map((batch) => [
+            batch.supplier!.id,
+            { label: batch.supplier!.name, value: batch.supplier!.id },
+          ]),
+      ),
+    ).values(),
+  ];
+  const filteredBatchMaterials = stockedRawMaterials.filter((item) =>
+    item.batches.some(
+      (batch) =>
+        matchesSearch(batchQuery, [
+          item.rawMaterial.name,
+          item.rawMaterial.baseUnit.abbreviation,
+          batch.batchNumber,
+          batch.batchLabel,
+          batch.supplier?.name,
+          batch.quantityRemaining,
+          batch.unitCost,
+          batch.estimatedValue,
+        ]) &&
+        matchesSelect(batchSupplier, batch.supplier?.id ?? "") &&
+        matchesDateRange(batch.receivedAt, batchFrom, batchTo),
+    ),
+  );
+  const productQuery = firstParam(params, "productQ");
+  const filteredFinishedProducts = stockedFinishedProducts.filter((item) =>
+    matchesSearch(productQuery, [
+      formatProductName(item.product),
+      item.product.unit.name,
+      item.product.unit.abbreviation,
+      item.product.unitPrice,
+      item.totalRemaining,
+      item.estimatedRetailValue,
+      ...item.batches.flatMap((batch) => [
+        batch.batchNumber,
+        batch.batchDate,
+        batch.quantityRemaining,
+        batch.estimatedRetailValue,
+        batch.productionRun?.producedAt,
+      ]),
+    ]),
+  );
   const { pageItems: stockItems, ...stockPagination } = paginate(
-    stockedRawMaterials,
+    filteredStockedRawMaterials,
     pageNumber(params.stockPage),
   );
   const { pageItems: costItems, ...costsPagination } = paginate(
-    report.rawMaterials,
+    filteredCostMaterials,
     pageNumber(params.costsPage),
   );
   const { pageItems: batchItems, ...batchesPagination } = paginate(
-    stockedRawMaterials,
+    filteredBatchMaterials,
     pageNumber(params.batchesPage),
     5,
   );
   const { pageItems: productItems, ...productsPagination } = paginate(
-    stockedFinishedProducts,
+    filteredFinishedProducts,
     pageNumber(params.productsPage),
   );
 
@@ -74,9 +164,20 @@ export default async function ManagementInventoryPage({
         />
       </div>
 
-      <Card title="Raw material stock">
+      <Card title={`Raw material stock (${filteredStockedRawMaterials.length} of ${stockedRawMaterials.length})`}>
+        {stockedRawMaterials.length > 0 ? (
+          <TableToolbar
+            basePath="/management/inventory"
+            pageParams={["stockPage"]}
+            searchParam="stockQ"
+            searchParams={params}
+            searchPlaceholder="Search material, unit, batch, supplier, or value"
+          />
+        ) : null}
         {stockedRawMaterials.length === 0 ? (
           <EmptyState>No raw materials currently have stock.</EmptyState>
+        ) : filteredStockedRawMaterials.length === 0 ? (
+          <EmptyState>No raw material stock matches the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -122,9 +223,30 @@ export default async function ManagementInventoryPage({
         />
       </Card>
 
-      <Card title="Managed raw material costs">
+      <Card title={`Managed raw material costs (${filteredCostMaterials.length} of ${report.rawMaterials.length})`}>
+        {report.rawMaterials.length > 0 ? (
+          <TableToolbar
+            basePath="/management/inventory"
+            pageParams={["costsPage"]}
+            searchParam="costQ"
+            searchParams={params}
+            searchPlaceholder="Search material, unit, or cost"
+            selectFilters={[
+              {
+                label: "Cost",
+                name: "costStatus",
+                options: [
+                  { label: "Cost set", value: "set" },
+                  { label: "Missing cost", value: "missing" },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {report.rawMaterials.length === 0 ? (
           <EmptyState>No raw materials have been created yet.</EmptyState>
+        ) : filteredCostMaterials.length === 0 ? (
+          <EmptyState>No raw material costs match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -188,9 +310,31 @@ export default async function ManagementInventoryPage({
         />
       </Card>
 
-      <Card title="Raw material batches">
+      <Card title={`Raw material batches (${filteredBatchMaterials.length} of ${stockedRawMaterials.length})`}>
+        {stockedRawMaterials.length > 0 ? (
+          <TableToolbar
+            basePath="/management/inventory"
+            dateFilters={[
+              { label: "Received from", name: "batchFrom" },
+              { label: "Received to", name: "batchTo" },
+            ]}
+            pageParams={["batchesPage"]}
+            searchParam="batchQ"
+            searchParams={params}
+            searchPlaceholder="Search material, batch, supplier, cost, or value"
+            selectFilters={[
+              {
+                label: "Supplier",
+                name: "batchSupplier",
+                options: batchSupplierOptions,
+              },
+            ]}
+          />
+        ) : null}
         {stockedRawMaterials.length === 0 ? (
           <EmptyState>No raw material batches to show.</EmptyState>
+        ) : filteredBatchMaterials.length === 0 ? (
+          <EmptyState>No raw material batches match the current filters.</EmptyState>
         ) : (
           <div className="grid gap-4">
             {batchItems.map((item) => (
@@ -221,7 +365,23 @@ export default async function ManagementInventoryPage({
                       </>
                     }
                   >
-                    {item.batches.map((batch) => (
+                    {item.batches
+                      .filter(
+                        (batch) =>
+                          matchesSearch(batchQuery, [
+                            item.rawMaterial.name,
+                            item.rawMaterial.baseUnit.abbreviation,
+                            batch.batchNumber,
+                            batch.batchLabel,
+                            batch.supplier?.name,
+                            batch.quantityRemaining,
+                            batch.unitCost,
+                            batch.estimatedValue,
+                          ]) &&
+                          matchesSelect(batchSupplier, batch.supplier?.id ?? "") &&
+                          matchesDateRange(batch.receivedAt, batchFrom, batchTo),
+                      )
+                      .map((batch) => (
                       <tr key={batch.id}>
                         <td className="py-3 pr-4 font-medium text-stone-900">
                           Batch {batch.batchNumber}
@@ -257,9 +417,20 @@ export default async function ManagementInventoryPage({
         />
       </Card>
 
-      <Card title="Finished goods">
+      <Card title={`Finished goods (${filteredFinishedProducts.length} of ${stockedFinishedProducts.length})`}>
+        {stockedFinishedProducts.length > 0 ? (
+          <TableToolbar
+            basePath="/management/inventory"
+            pageParams={["productsPage"]}
+            searchParam="productQ"
+            searchParams={params}
+            searchPlaceholder="Search product, unit, price, batch, or value"
+          />
+        ) : null}
         {stockedFinishedProducts.length === 0 ? (
           <EmptyState>No finished products currently have stock.</EmptyState>
+        ) : filteredFinishedProducts.length === 0 ? (
+          <EmptyState>No finished goods match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={

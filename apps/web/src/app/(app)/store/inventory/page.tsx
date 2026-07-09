@@ -4,9 +4,9 @@ import Link from "next/link";
 import {
   Card,
   EmptyState,
-  PageHeader,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { InventoryItem } from "@/lib/operations/types";
 import {
   pageNumber,
@@ -14,6 +14,7 @@ import {
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import { firstParam, matchesSearch } from "@/lib/table-filters";
 
 import { formatDate, formatQuantity } from "./inventory-utils";
 
@@ -25,17 +26,41 @@ export default async function StoreInventoryPage({
   const params = await searchParams;
   const inventory = await apiGet<InventoryItem[]>("/store/inventory");
   const stockedItems = inventory.filter((item) => item.batches.length > 0);
+  const query = firstParam(params, "q");
+  const filteredItems = stockedItems.filter((item) =>
+    matchesSearch(query, [
+      item.rawMaterial.name,
+      item.rawMaterial.baseUnit.name,
+      item.rawMaterial.baseUnit.abbreviation,
+      item.totalRemaining,
+      ...item.batches.flatMap((batch) => [
+        batch.batchNumber,
+        batch.batchLabel,
+        batch.supplier?.name,
+        batch.reference,
+      ]),
+    ]),
+  );
   const { pageItems, ...pagination } = paginate(
-    stockedItems,
+    filteredItems,
     pageNumber(params.page),
     12,
   );
 
   return (
     <>
-      <Card title={`Raw material stock (${stockedItems.length})`}>
+      <Card title={`Raw material stock (${filteredItems.length} of ${stockedItems.length})`}>
+        {stockedItems.length > 0 ? (
+          <TableToolbar
+            basePath="/store/inventory"
+            searchParams={params}
+            searchPlaceholder="Search material, unit, batch, supplier, or reference"
+          />
+        ) : null}
         {stockedItems.length === 0 ? (
           <EmptyState>No raw material batches have stock yet.</EmptyState>
+        ) : filteredItems.length === 0 ? (
+          <EmptyState>No raw material stock matches the current filters.</EmptyState>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {pageItems.map((item) => {

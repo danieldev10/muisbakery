@@ -4,15 +4,21 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { PaymentMethod, SalesSummary } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
-import { TablePagination } from "@/components/admin/pagination";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 const paymentLabels: Record<PaymentMethod, string> = {
   CASH: "Cash",
@@ -67,8 +73,62 @@ export default async function SalesDailySummaryPage({
   const summary = await apiGet<SalesSummary>(
     `/sales/summary?date=${encodeURIComponent(date)}`,
   );
+  const paymentSummaryQuery = firstParam(query, "paymentSummaryQ");
+  const filteredPaymentSummary = summary.paymentSummary.filter((entry) =>
+    matchesSearch(paymentSummaryQuery, [
+      entry.method,
+      paymentLabels[entry.method],
+      entry.count,
+      entry.amount,
+    ]),
+  );
+  const productSummaryQuery = firstParam(query, "productSummaryQ");
+  const filteredProductSummary = summary.productSummary.filter((entry) =>
+    matchesSearch(productSummaryQuery, [
+      formatProductName(entry.product),
+      entry.quantitySold,
+      entry.revenue,
+    ]),
+  );
+  const salesQuery = firstParam(query, "q");
+  const paymentFilter = firstParam(query, "payment");
+  const productFilter = firstParam(query, "product");
+  const productOptions = [
+    ...new Map(
+      summary.sales.flatMap((sale) =>
+        sale.items.map((item) => [
+          item.product.id,
+          {
+            label: formatProductName(item.product),
+            value: item.product.id,
+          },
+        ]),
+      ),
+    ).values(),
+  ];
+  const filteredSales = summary.sales.filter(
+    (sale) =>
+      matchesSearch(salesQuery, [
+        sale.saleNumber,
+        sale.customerName,
+        sale.paymentMethod,
+        paymentLabels[sale.paymentMethod],
+        sale.totalAmount,
+        sale.amountPaid,
+        sale.balanceDue,
+        ...sale.items.flatMap((item) => [
+          formatProductName(item.product),
+          item.quantity,
+          item.unitPrice,
+          item.lineTotal,
+        ]),
+      ]) &&
+      matchesSelect(paymentFilter, sale.paymentMethod) &&
+      (!productFilter ||
+        sale.items.some((item) => item.product.id === productFilter)),
+  );
   const { pageItems, ...pagination } = paginate(
-    summary.sales,
+    filteredSales,
     pageNumber(query.page),
   );
 
@@ -139,33 +199,57 @@ export default async function SalesDailySummaryPage({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Payment methods">
-          <TableShell
-            head={
-              <>
-                <th className="py-2 pr-4">Method</th>
-                <th className="py-2 pr-4">Sales</th>
-                <th className="py-2 pr-4">Amount</th>
-              </>
-            }
-          >
-            {summary.paymentSummary.map((entry) => (
-              <tr key={entry.method}>
-                <td className="py-3 pr-4 font-medium text-stone-900">
-                  {paymentLabels[entry.method]}
-                </td>
-                <td className="py-3 pr-4 text-stone-600">{entry.count}</td>
-                <td className="py-3 pr-4 text-stone-600">
-                  {formatMoney(entry.amount)}
-                </td>
-              </tr>
-            ))}
-          </TableShell>
+        <Card title={`Payment methods (${filteredPaymentSummary.length} of ${summary.paymentSummary.length})`}>
+          {summary.paymentSummary.length > 0 ? (
+            <TableToolbar
+              basePath="/sales/daily-summary"
+              pageParams={[]}
+              searchParam="paymentSummaryQ"
+              searchParams={query}
+              searchPlaceholder="Search payment method, count, or amount"
+            />
+          ) : null}
+          {filteredPaymentSummary.length === 0 ? (
+            <EmptyState>No payment methods match the current filters.</EmptyState>
+          ) : (
+            <TableShell
+              head={
+                <>
+                  <th className="py-2 pr-4">Method</th>
+                  <th className="py-2 pr-4">Sales</th>
+                  <th className="py-2 pr-4">Amount</th>
+                </>
+              }
+            >
+              {filteredPaymentSummary.map((entry) => (
+                <tr key={entry.method}>
+                  <td className="py-3 pr-4 font-medium text-stone-900">
+                    {paymentLabels[entry.method]}
+                  </td>
+                  <td className="py-3 pr-4 text-stone-600">{entry.count}</td>
+                  <td className="py-3 pr-4 text-stone-600">
+                    {formatMoney(entry.amount)}
+                  </td>
+                </tr>
+              ))}
+            </TableShell>
+          )}
         </Card>
 
-        <Card title="Product sales">
+        <Card title={`Product sales (${filteredProductSummary.length} of ${summary.productSummary.length})`}>
+          {summary.productSummary.length > 0 ? (
+            <TableToolbar
+              basePath="/sales/daily-summary"
+              pageParams={[]}
+              searchParam="productSummaryQ"
+              searchParams={query}
+              searchPlaceholder="Search product, quantity, or revenue"
+            />
+          ) : null}
           {summary.productSummary.length === 0 ? (
             <EmptyState>No product sales for this date.</EmptyState>
+          ) : filteredProductSummary.length === 0 ? (
+            <EmptyState>No product sales match the current filters.</EmptyState>
           ) : (
             <TableShell
               head={
@@ -176,7 +260,7 @@ export default async function SalesDailySummaryPage({
                 </>
               }
             >
-              {summary.productSummary.map((entry) => (
+              {filteredProductSummary.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
                     {formatProductName(entry.product)}
@@ -197,9 +281,32 @@ export default async function SalesDailySummaryPage({
         </Card>
       </div>
 
-      <Card title={`Sales (${summary.sales.length})`}>
+      <Card title={`Sales (${filteredSales.length} of ${summary.sales.length})`}>
+        {summary.sales.length > 0 ? (
+          <TableToolbar
+            basePath="/sales/daily-summary"
+            searchParams={query}
+            searchPlaceholder="Search sale number, customer, product, or payment"
+            selectFilters={[
+              {
+                label: "Payment",
+                name: "payment",
+                options: Object.entries(paymentLabels).map(
+                  ([value, label]) => ({ label, value }),
+                ),
+              },
+              {
+                label: "Product",
+                name: "product",
+                options: productOptions,
+              },
+            ]}
+          />
+        ) : null}
         {summary.sales.length === 0 ? (
           <EmptyState>No sales for this date.</EmptyState>
+        ) : filteredSales.length === 0 ? (
+          <EmptyState>No sales match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={

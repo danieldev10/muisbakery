@@ -1,23 +1,28 @@
 import Link from "next/link";
 
-import { AdminForm } from "@/components/admin/admin-form";
+import { AdminFormModal, AdminModal } from "@/components/admin/form-modal";
 import { Field, SelectField } from "@/components/admin/form-controls";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
-  PageHeader,
   StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
-import type { Product, Unit } from "@/lib/admin/types";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
+import type { Product, Unit } from "@/lib/admin/types";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import { createProduct, setProductActive, updateProductDetails } from "./actions";
 
@@ -44,8 +49,24 @@ export default async function ProductsPage({
     apiGet<Product[]>("/admin/products"),
     apiGet<Unit[]>("/admin/units"),
   ]);
+  const query = firstParam(params, "q");
+  const unitFilter = firstParam(params, "unit");
+  const statusFilter = firstParam(params, "status");
+  const filteredProducts = products.filter(
+    (product) =>
+      matchesSearch(query, [
+        product.name,
+        product.size,
+        product.description,
+        product.unit.name,
+        product.unit.abbreviation,
+        product.unitPrice,
+      ]) &&
+      matchesSelect(unitFilter, product.unit.id) &&
+      matchesSelect(statusFilter, product.isActive),
+  );
   const { pageItems, ...pagination } = paginate(
-    products,
+    filteredProducts,
     pageNumber(params.page),
   );
 
@@ -57,23 +78,36 @@ export default async function ProductsPage({
     }));
 
   return (
-    <>
-      <PageHeader
-        title="Products"
-        description="Define the finished goods production makes and sales sells."
-      />
-
-      <Card title="Add product">
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+          All products ({filteredProducts.length} of {products.length})
+        </h2>
         {unitOptions.length === 0 ? (
-          <EmptyState>
-            Add at least one unit in{" "}
-            <Link className="font-medium text-red-800 underline" href="/admin/settings">
-              Settings
-            </Link>{" "}
-            before creating products.
-          </EmptyState>
+          <AdminModal
+            description="A unit is required before a finished product can be created."
+            title="Add product"
+            triggerLabel="Add product"
+          >
+            <EmptyState>
+              Add at least one unit in{" "}
+              <Link
+                className="font-medium text-red-800 underline"
+                href="/admin/settings"
+              >
+                Settings
+              </Link>{" "}
+              before creating products.
+            </EmptyState>
+          </AdminModal>
         ) : (
-          <AdminForm action={createProduct} submitLabel="Create product">
+          <AdminFormModal
+            action={createProduct}
+            description="Create a finished good with its production unit and optional selling price."
+            submitLabel="Create product"
+            title="Add product"
+            triggerLabel="Add product"
+          >
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
                 label="Name"
@@ -94,10 +128,10 @@ export default async function ProductsPage({
                 required
               />
               <Field
-                label="Default price"
-                name="unitPrice"
                 hint="Selling price per unit. Optional."
+                label="Default price"
                 min="0"
+                name="unitPrice"
                 step="0.01"
                 type="number"
               />
@@ -107,13 +141,40 @@ export default async function ProductsPage({
               name="description"
               placeholder="Optional notes"
             />
-          </AdminForm>
+          </AdminFormModal>
         )}
-      </Card>
+      </div>
 
-      <Card title={`All products (${products.length})`}>
+      <div>
+        {products.length > 0 ? (
+          <TableToolbar
+            basePath="/admin/products"
+            searchParams={params}
+            searchPlaceholder="Search product, size, unit, or price"
+            selectFilters={[
+              {
+                label: "Unit",
+                name: "unit",
+                options: units.map((unit) => ({
+                  label: `${unit.name} (${unit.abbreviation})`,
+                  value: unit.id,
+                })),
+              },
+              {
+                label: "Status",
+                name: "status",
+                options: [
+                  { label: "Active", value: "true" },
+                  { label: "Inactive", value: "false" },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {products.length === 0 ? (
           <EmptyState>No products yet.</EmptyState>
+        ) : filteredProducts.length === 0 ? (
+          <EmptyState>No products match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -205,7 +266,7 @@ export default async function ProductsPage({
           searchParams={params}
           {...pagination}
         />
-      </Card>
-    </>
+      </div>
+    </Card>
   );
 }

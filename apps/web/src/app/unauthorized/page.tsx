@@ -12,9 +12,9 @@ export default function UnauthorizedPage() {
         </h1>
         <Link
           className="mt-6 inline-flex h-10 items-center justify-center rounded-[5px] border border-[var(--brand-burgundy-dark)] bg-[var(--brand-burgundy)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-whisper)] transition hover:bg-[var(--brand-burgundy-dark)]"
-          href="/dashboard"
+          href="/"
         >
-          Back to dashboard
+          Back to workspace
         </Link>
       </section>
     </main>

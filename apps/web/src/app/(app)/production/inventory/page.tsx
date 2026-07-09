@@ -4,14 +4,16 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
-import type { ProductionMaterialInventoryItem } from "@/lib/operations/types";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
+import type { ProductionMaterialInventoryItem } from "@/lib/operations/types";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import { firstParam, matchesSearch } from "@/lib/table-filters";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -36,8 +38,25 @@ export default async function ProductionInventoryPage({
     "/production/inventory",
   );
   const stockedItems = inventory.filter((item) => item.batches.length > 0);
+  const query = firstParam(params, "q");
+  const filteredItems = stockedItems.filter((item) =>
+    matchesSearch(query, [
+      item.rawMaterial.name,
+      item.rawMaterial.baseUnit.name,
+      item.rawMaterial.baseUnit.abbreviation,
+      item.totalRemaining,
+      ...item.batches.flatMap((batch) => [
+        batch.quantityReceived,
+        batch.quantityRemaining,
+        batch.storeBatch?.batchNumber,
+        batch.storeBatch?.batchDate,
+        batch.createdBy?.name,
+        batch.createdBy?.email,
+      ]),
+    ]),
+  );
   const { pageItems, ...pagination } = paginate(
-    stockedItems,
+    filteredItems,
     pageNumber(params.page),
     5,
   );
@@ -49,9 +68,18 @@ export default async function ProductionInventoryPage({
         description="Raw materials issued from Store and still available for production."
       />
 
-      <Card title={`Raw materials in Production (${stockedItems.length})`}>
+      <Card title={`Raw materials in Production (${filteredItems.length} of ${stockedItems.length})`}>
+        {stockedItems.length > 0 ? (
+          <TableToolbar
+            basePath="/production/inventory"
+            searchParams={params}
+            searchPlaceholder="Search material, unit, Store batch, or user"
+          />
+        ) : null}
         {stockedItems.length === 0 ? (
           <EmptyState>No issued raw materials are available in Production.</EmptyState>
+        ) : filteredItems.length === 0 ? (
+          <EmptyState>No Production inventory matches the current filters.</EmptyState>
         ) : (
           <div className="grid gap-4">
             {pageItems.map((item) => (

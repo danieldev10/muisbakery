@@ -1,15 +1,21 @@
-import { AdminForm } from "@/components/admin/admin-form";
+import { AdminFormModal } from "@/components/admin/form-modal";
 import { Field } from "@/components/admin/form-controls";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
-  PageHeader,
   StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { AppSettings, ExpenseCategory, Unit } from "@/lib/admin/types";
+import type { PageSearchParams } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import {
   createExpenseCategory,
@@ -24,20 +30,34 @@ const DEFAULT_SETTINGS: AppSettings = {
   requireStockAdjustmentApproval: true,
 };
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [units, categories, settings] = await Promise.all([
     apiGet<Unit[]>("/admin/units"),
     apiGet<ExpenseCategory[]>("/admin/expense-categories"),
     apiGet<AppSettings>("/admin/settings"),
   ]);
+  const unitQuery = firstParam(params, "unitQ");
+  const unitStatus = firstParam(params, "unitStatus");
+  const categoryQuery = firstParam(params, "categoryQ");
+  const categoryStatus = firstParam(params, "categoryStatus");
+  const filteredUnits = units.filter(
+    (unit) =>
+      matchesSearch(unitQuery, [unit.name, unit.abbreviation]) &&
+      matchesSelect(unitStatus, unit.isActive),
+  );
+  const filteredCategories = categories.filter(
+    (category) =>
+      matchesSearch(categoryQuery, [category.name, category.description]) &&
+      matchesSelect(categoryStatus, category.isActive),
+  );
 
   return (
     <>
-      <PageHeader
-        title="Settings"
-        description="Measurement units, expense categories, and approval rules."
-      />
-
       <Card
         title="Approval settings"
         description="Control which workflows need approval in later modules."
@@ -45,25 +65,63 @@ export default async function SettingsPage() {
         <SettingsForm settings={settings ?? DEFAULT_SETTINGS} />
       </Card>
 
-      <Card
-        title="Units"
-        description="Units of measure used by raw materials, products, and recipes."
-      >
-        <AdminForm action={createUnit} submitLabel="Add unit">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Name" name="name" placeholder="e.g. Kilogram" required />
-            <Field
-              label="Abbreviation"
-              name="abbreviation"
-              placeholder="e.g. kg"
-              required
-            />
+      <Card>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+              Units ({filteredUnits.length} of {units.length})
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">
+              Units of measure used by raw materials, products, and recipes.
+            </p>
           </div>
-        </AdminForm>
+          <AdminFormModal
+            action={createUnit}
+            description="Create a measurement unit for materials, products, and recipes."
+            submitLabel="Add unit"
+            title="Add unit"
+            triggerLabel="Add unit"
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Name"
+                name="name"
+                placeholder="e.g. Kilogram"
+                required
+              />
+              <Field
+                label="Abbreviation"
+                name="abbreviation"
+                placeholder="e.g. kg"
+                required
+              />
+            </div>
+          </AdminFormModal>
+        </div>
 
-        <div className="mt-5">
+        <div>
+          {units.length > 0 ? (
+            <TableToolbar
+              basePath="/admin/settings"
+              searchParam="unitQ"
+              searchParams={params}
+              searchPlaceholder="Search unit or abbreviation"
+              selectFilters={[
+                {
+                  label: "Status",
+                  name: "unitStatus",
+                  options: [
+                    { label: "Active", value: "true" },
+                    { label: "Inactive", value: "false" },
+                  ],
+                },
+              ]}
+            />
+          ) : null}
           {units.length === 0 ? (
             <EmptyState>No units yet.</EmptyState>
+          ) : filteredUnits.length === 0 ? (
+            <EmptyState>No units match the current filters.</EmptyState>
           ) : (
             <TableShell
               head={
@@ -75,7 +133,7 @@ export default async function SettingsPage() {
                 </>
               }
             >
-              {units.map((unit) => (
+              {filteredUnits.map((unit) => (
                 <tr key={unit.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
                     {unit.name}
@@ -106,28 +164,61 @@ export default async function SettingsPage() {
         </div>
       </Card>
 
-      <Card
-        title="Expense categories"
-        description="Used to classify expenses in management reporting."
-      >
-        <AdminForm
-          action={createExpenseCategory}
-          submitLabel="Add category"
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field
-              label="Name"
-              name="name"
-              placeholder="e.g. Utilities"
-              required
-            />
-            <Field label="Description" name="description" />
+      <Card>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+              Expense categories ({filteredCategories.length} of{" "}
+              {categories.length})
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">
+              Used to classify expenses in management reporting.
+            </p>
           </div>
-        </AdminForm>
+          <AdminFormModal
+            action={createExpenseCategory}
+            description="Create a category for classifying management expenses."
+            submitLabel="Add category"
+            title="Add category"
+            triggerLabel="Add category"
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Name"
+                name="name"
+                placeholder="e.g. Utilities"
+                required
+              />
+              <Field label="Description" name="description" />
+            </div>
+          </AdminFormModal>
+        </div>
 
-        <div className="mt-5">
+        <div>
+          {categories.length > 0 ? (
+            <TableToolbar
+              basePath="/admin/settings"
+              searchParam="categoryQ"
+              searchParams={params}
+              searchPlaceholder="Search category or description"
+              selectFilters={[
+                {
+                  label: "Status",
+                  name: "categoryStatus",
+                  options: [
+                    { label: "Active", value: "true" },
+                    { label: "Inactive", value: "false" },
+                  ],
+                },
+              ]}
+            />
+          ) : null}
           {categories.length === 0 ? (
             <EmptyState>No expense categories yet.</EmptyState>
+          ) : filteredCategories.length === 0 ? (
+            <EmptyState>
+              No expense categories match the current filters.
+            </EmptyState>
           ) : (
             <TableShell
               head={
@@ -139,7 +230,7 @@ export default async function SettingsPage() {
                 </>
               }
             >
-              {categories.map((category) => (
+              {filteredCategories.map((category) => (
                 <tr key={category.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
                     {category.name}

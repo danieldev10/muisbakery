@@ -9,6 +9,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { InventoryItem, MaterialRequest } from "@/lib/operations/types";
 import {
   pageNumber,
@@ -16,6 +17,13 @@ import {
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesDateRange,
+  matchesSearch,
+  matchesSelect,
+  optionLabel,
+} from "@/lib/table-filters";
 
 import {
   formatDate,
@@ -53,6 +61,36 @@ export default async function StoreInventoryDetailPage({
   }
 
   const unit = item.rawMaterial.baseUnit.abbreviation;
+  const batchQuery = firstParam(query, "batchQ");
+  const batchSupplier = firstParam(query, "batchSupplier");
+  const batchFrom = firstParam(query, "batchFrom");
+  const batchTo = firstParam(query, "batchTo");
+  const batchSupplierOptions = [
+    ...new Map(
+      item.batches
+        .filter((batch) => batch.supplier)
+        .map((batch) => [
+          batch.supplier!.id,
+          {
+            label: batch.supplier!.name,
+            value: batch.supplier!.id,
+          },
+        ]),
+    ).values(),
+  ];
+  const filteredBatches = item.batches.filter(
+    (batch) =>
+      matchesSearch(batchQuery, [
+        batch.batchNumber,
+        batch.batchLabel,
+        batch.reference,
+        batch.supplier?.name,
+        batch.quantityReceived,
+        batch.quantityRemaining,
+      ]) &&
+      matchesSelect(batchSupplier, batch.supplier?.id ?? "") &&
+      matchesDateRange(batch.receivedAt, batchFrom, batchTo),
+  );
   const approvedRequests = requests
     .filter(
       (request) =>
@@ -64,8 +102,36 @@ export default async function StoreInventoryDetailPage({
         new Date(approvedAt(right)).getTime() -
         new Date(approvedAt(left)).getTime(),
     );
+  const requestQuery = firstParam(query, "requestQ");
+  const requestStatus = firstParam(query, "requestStatus");
+  const requestFrom = firstParam(query, "requestFrom");
+  const requestTo = firstParam(query, "requestTo");
+  const requestStatusOptions = [
+    ...new Set(approvedRequests.map((request) => request.status)),
+  ].map((status) => ({ label: optionLabel(status), value: status }));
+  const filteredApprovedRequests = approvedRequests.filter(
+    (request) =>
+      matchesSearch(requestQuery, [
+        request.status,
+        optionLabel(request.status),
+        request.requestedQuantity,
+        request.issuedQuantity,
+        request.notes,
+        request.responseNotes,
+        request.requestedBy.name,
+        request.requestedBy.email,
+        ...request.issues.flatMap((issue) => [
+          issue.batch.batchNumber,
+          issue.batch.batchLabel,
+          issue.batch.supplier?.name,
+          issue.quantity,
+        ]),
+      ]) &&
+      matchesSelect(requestStatus, request.status) &&
+      matchesDateRange(approvedAt(request), requestFrom, requestTo),
+  );
   const { pageItems: requestItems, ...requestPagination } = paginate(
-    approvedRequests,
+    filteredApprovedRequests,
     pageNumber(query.requestPage),
     8,
   );
@@ -142,9 +208,30 @@ export default async function StoreInventoryDetailPage({
         </section>
       </div>
 
-      <Card title={`Current batches (${item.batches.length})`}>
+      <Card title={`Current batches (${filteredBatches.length} of ${item.batches.length})`}>
+        {item.batches.length > 0 ? (
+          <TableToolbar
+            basePath={`/store/inventory/${rawMaterialId}`}
+            dateFilters={[
+              { label: "Received from", name: "batchFrom" },
+              { label: "Received to", name: "batchTo" },
+            ]}
+            searchParam="batchQ"
+            searchParams={query}
+            searchPlaceholder="Search batch, supplier, reference, or quantity"
+            selectFilters={[
+              {
+                label: "Supplier",
+                name: "batchSupplier",
+                options: batchSupplierOptions,
+              },
+            ]}
+          />
+        ) : null}
         {item.batches.length === 0 ? (
           <EmptyState>No open batches currently have remaining stock.</EmptyState>
+        ) : filteredBatches.length === 0 ? (
+          <EmptyState>No batches match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -158,7 +245,7 @@ export default async function StoreInventoryDetailPage({
               </>
             }
           >
-            {item.batches.map((batch) => (
+            {filteredBatches.map((batch) => (
               <tr className="align-top" key={batch.id}>
                 <td className="py-3 pr-4 font-medium text-[var(--text-primary)]">
                   Batch {batch.batchNumber}
@@ -184,10 +271,34 @@ export default async function StoreInventoryDetailPage({
         )}
       </Card>
 
-      <Card title={`Approved Production requests (${approvedRequests.length})`}>
+      <Card title={`Approved Production requests (${filteredApprovedRequests.length} of ${approvedRequests.length})`}>
+        {approvedRequests.length > 0 ? (
+          <TableToolbar
+            basePath={`/store/inventory/${rawMaterialId}`}
+            dateFilters={[
+              { label: "Approved from", name: "requestFrom" },
+              { label: "Approved to", name: "requestTo" },
+            ]}
+            pageParams={["requestPage"]}
+            searchParam="requestQ"
+            searchParams={query}
+            searchPlaceholder="Search requester, status, issued batch, or notes"
+            selectFilters={[
+              {
+                label: "Status",
+                name: "requestStatus",
+                options: requestStatusOptions,
+              },
+            ]}
+          />
+        ) : null}
         {approvedRequests.length === 0 ? (
           <EmptyState>
             No approved Production requests have been issued for this material.
+          </EmptyState>
+        ) : filteredApprovedRequests.length === 0 ? (
+          <EmptyState>
+            No approved Production requests match the current filters.
           </EmptyState>
         ) : (
           <TableShell

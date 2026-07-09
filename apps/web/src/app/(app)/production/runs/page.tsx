@@ -4,15 +4,22 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ProductionRun } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
-import { TablePagination } from "@/components/admin/pagination";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesDateRange,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -34,7 +41,51 @@ export default async function ProductionRunsPage({
 }) {
   const params = await searchParams;
   const runs = await apiGet<ProductionRun[]>("/production/runs");
-  const { pageItems, ...pagination } = paginate(runs, pageNumber(params.page));
+  const query = firstParam(params, "q");
+  const productFilter = firstParam(params, "product");
+  const varianceFilter = firstParam(params, "variance");
+  const from = firstParam(params, "from");
+  const to = firstParam(params, "to");
+  const productOptions = [
+    ...new Map(
+      runs.map((run) => [
+        run.product.id,
+        {
+          label: formatProductName(run.product),
+          value: run.product.id,
+        },
+      ]),
+    ).values(),
+  ];
+  const filteredRuns = runs.filter(
+    (run) =>
+      matchesSearch(query, [
+        formatProductName(run.product),
+        run.quantityProduced,
+        run.quantityTransferred,
+        run.wasteQuantity,
+        run.expectedQuantity,
+        run.shortfallQuantity,
+        run.notes,
+        run.createdBy?.name,
+        run.createdBy?.email,
+        ...run.materialUsages.flatMap((usage) => [
+          usage.rawMaterial.name,
+          usage.actualQuantity,
+          usage.expectedQuantity,
+        ]),
+      ]) &&
+      matchesSelect(productFilter, run.product.id) &&
+      matchesSelect(
+        varianceFilter,
+        run.shortfallQuantity ? "shortfall" : "on-track",
+      ) &&
+      matchesDateRange(run.producedAt, from, to),
+  );
+  const { pageItems, ...pagination } = paginate(
+    filteredRuns,
+    pageNumber(params.page),
+  );
 
   return (
     <>
@@ -43,9 +94,37 @@ export default async function ProductionRunsPage({
         description="Finished goods produced by Production and transferred to Sales."
       />
 
-      <Card title={`Runs (${runs.length})`}>
+      <Card title={`Runs (${filteredRuns.length} of ${runs.length})`}>
+        {runs.length > 0 ? (
+          <TableToolbar
+            basePath="/production/runs"
+            dateFilters={[
+              { label: "Produced from", name: "from" },
+              { label: "Produced to", name: "to" },
+            ]}
+            searchParams={params}
+            searchPlaceholder="Search product, material, quantity, or notes"
+            selectFilters={[
+              {
+                label: "Product",
+                name: "product",
+                options: productOptions,
+              },
+              {
+                label: "Variance",
+                name: "variance",
+                options: [
+                  { label: "On track", value: "on-track" },
+                  { label: "Shortfall", value: "shortfall" },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {runs.length === 0 ? (
           <EmptyState>No production runs yet.</EmptyState>
+        ) : filteredRuns.length === 0 ? (
+          <EmptyState>No production runs match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={

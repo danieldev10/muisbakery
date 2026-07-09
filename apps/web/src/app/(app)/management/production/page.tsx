@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementProductionReport } from "@/lib/management/types";
 import {
   pageNumber,
@@ -13,6 +14,11 @@ import {
 } from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import {
   formatDateTime,
@@ -33,8 +39,71 @@ export default async function ManagementProductionPage({
   const report = await apiGet<ManagementProductionReport>(
     `/management/production?month=${encodeURIComponent(month)}`,
   );
+  const outputQuery = firstParam(query, "outputQ");
+  const filteredOutputByProduct = report.outputByProduct.filter((entry) =>
+    matchesSearch(outputQuery, [
+      formatProductName(entry.product),
+      entry.runsCount,
+      entry.quantityProduced,
+      entry.quantityTransferred,
+      entry.wasteQuantity,
+    ]),
+  );
+  const wasteQuery = firstParam(query, "wasteQ");
+  const filteredWasteByProduct = report.wasteByProduct.filter((entry) =>
+    matchesSearch(wasteQuery, [
+      formatProductName(entry.product),
+      entry.count,
+      entry.quantity,
+      entry.estimatedRetailValue,
+    ]),
+  );
+  const usageQuery = firstParam(query, "usageQ");
+  const filteredMaterialUsage = report.materialUsage.filter((entry) =>
+    matchesSearch(usageQuery, [
+      entry.rawMaterial.name,
+      entry.rawMaterial.baseUnit.abbreviation,
+      entry.expectedQuantity,
+      entry.actualQuantity,
+    ]),
+  );
+  const runsQuery = firstParam(query, "runsQ");
+  const runsProduct = firstParam(query, "runsProduct");
+  const runsVariance = firstParam(query, "runsVariance");
+  const runsProductOptions = [
+    ...new Map(
+      report.runs.map((run) => [
+        run.product.id,
+        { label: formatProductName(run.product), value: run.product.id },
+      ]),
+    ).values(),
+  ];
+  const filteredRuns = report.runs.filter(
+    (run) =>
+      matchesSearch(runsQuery, [
+        formatProductName(run.product),
+        run.quantityProduced,
+        run.expectedQuantity,
+        run.shortfallQuantity,
+        run.quantityTransferred,
+        run.wasteQuantity,
+        run.notes,
+        run.createdBy?.name,
+        run.createdBy?.email,
+        ...run.materialUsages.flatMap((usage) => [
+          usage.rawMaterial.name,
+          usage.actualQuantity,
+          usage.expectedQuantity,
+        ]),
+      ]) &&
+      matchesSelect(runsProduct, run.product.id) &&
+      matchesSelect(
+        runsVariance,
+        run.shortfallQuantity ? "shortfall" : "on-track",
+      ),
+  );
   const { pageItems: runItems, ...runsPagination } = paginate(
-    report.runs,
+    filteredRuns,
     pageNumber(query.page),
   );
 
@@ -71,9 +140,20 @@ export default async function ManagementProductionPage({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Output by product">
+        <Card title={`Output by product (${filteredOutputByProduct.length} of ${report.outputByProduct.length})`}>
+          {report.outputByProduct.length > 0 ? (
+            <TableToolbar
+              basePath="/management/production"
+              pageParams={[]}
+              searchParam="outputQ"
+              searchParams={query}
+              searchPlaceholder="Search product, run count, output, sent, or waste"
+            />
+          ) : null}
           {report.outputByProduct.length === 0 ? (
             <EmptyState>No production output for this month.</EmptyState>
+          ) : filteredOutputByProduct.length === 0 ? (
+            <EmptyState>No product output matches the current filters.</EmptyState>
           ) : (
             <TableShell
               head={
@@ -86,7 +166,7 @@ export default async function ManagementProductionPage({
                 </>
               }
             >
-              {report.outputByProduct.map((entry) => (
+              {filteredOutputByProduct.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
                     {formatProductName(entry.product)}
@@ -118,9 +198,20 @@ export default async function ManagementProductionPage({
           )}
         </Card>
 
-        <Card title="Waste by product">
+        <Card title={`Waste by product (${filteredWasteByProduct.length} of ${report.wasteByProduct.length})`}>
+          {report.wasteByProduct.length > 0 ? (
+            <TableToolbar
+              basePath="/management/production"
+              pageParams={[]}
+              searchParam="wasteQ"
+              searchParams={query}
+              searchPlaceholder="Search product, entries, quantity, or value"
+            />
+          ) : null}
           {report.wasteByProduct.length === 0 ? (
             <EmptyState>No waste recorded for this month.</EmptyState>
+          ) : filteredWasteByProduct.length === 0 ? (
+            <EmptyState>No product waste matches the current filters.</EmptyState>
           ) : (
             <TableShell
               head={
@@ -132,7 +223,7 @@ export default async function ManagementProductionPage({
                 </>
               }
             >
-              {report.wasteByProduct.map((entry) => (
+              {filteredWasteByProduct.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
                     {formatProductName(entry.product)}
@@ -154,9 +245,20 @@ export default async function ManagementProductionPage({
         </Card>
       </div>
 
-      <Card title="Raw material usage">
+      <Card title={`Raw material usage (${filteredMaterialUsage.length} of ${report.materialUsage.length})`}>
+        {report.materialUsage.length > 0 ? (
+          <TableToolbar
+            basePath="/management/production"
+            pageParams={[]}
+            searchParam="usageQ"
+            searchParams={query}
+            searchPlaceholder="Search material, unit, expected, or actual"
+          />
+        ) : null}
         {report.materialUsage.length === 0 ? (
           <EmptyState>No raw materials were consumed this month.</EmptyState>
+        ) : filteredMaterialUsage.length === 0 ? (
+          <EmptyState>No material usage matches the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -167,7 +269,7 @@ export default async function ManagementProductionPage({
               </>
             }
           >
-            {report.materialUsage.map((entry) => (
+            {filteredMaterialUsage.map((entry) => (
               <tr key={entry.rawMaterial.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {entry.rawMaterial.name}
@@ -190,9 +292,35 @@ export default async function ManagementProductionPage({
         )}
       </Card>
 
-      <Card title={`Production runs (${report.runs.length})`}>
+      <Card title={`Production runs (${filteredRuns.length} of ${report.runs.length})`}>
+        {report.runs.length > 0 ? (
+          <TableToolbar
+            basePath="/management/production"
+            pageParams={["page"]}
+            searchParam="runsQ"
+            searchParams={query}
+            searchPlaceholder="Search product, material, user, quantity, or notes"
+            selectFilters={[
+              {
+                label: "Product",
+                name: "runsProduct",
+                options: runsProductOptions,
+              },
+              {
+                label: "Variance",
+                name: "runsVariance",
+                options: [
+                  { label: "On track", value: "on-track" },
+                  { label: "Shortfall", value: "shortfall" },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {report.runs.length === 0 ? (
           <EmptyState>No production runs for this month.</EmptyState>
+        ) : filteredRuns.length === 0 ? (
+          <EmptyState>No production runs match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={

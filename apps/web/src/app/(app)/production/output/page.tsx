@@ -4,13 +4,21 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type {
   ProductionMaterialInventoryItem,
   ProductionOptions,
   ProductionRun,
 } from "@/lib/operations/types";
+import type { PageSearchParams } from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesDateRange,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import { ProductionOutputForm } from "./production-output-form";
 
@@ -27,7 +35,12 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-export default async function ProductionOutputPage() {
+export default async function ProductionOutputPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [options, inventory, runs] = await Promise.all([
     apiGet<ProductionOptions>("/production/options"),
     apiGet<ProductionMaterialInventoryItem[]>("/production/inventory"),
@@ -36,6 +49,33 @@ export default async function ProductionOutputPage() {
 
   const productsWithRecipes = options.products.filter(
     (product) => product.recipe,
+  );
+  const query = firstParam(params, "q");
+  const productFilter = firstParam(params, "product");
+  const from = firstParam(params, "from");
+  const to = firstParam(params, "to");
+  const productOptions = [
+    ...new Map(
+      runs.map((run) => [
+        run.product.id,
+        {
+          label: formatProductName(run.product),
+          value: run.product.id,
+        },
+      ]),
+    ).values(),
+  ];
+  const filteredRuns = runs.filter(
+    (run) =>
+      matchesSearch(query, [
+        formatProductName(run.product),
+        run.quantityProduced,
+        run.quantityTransferred,
+        run.wasteQuantity,
+        run.notes,
+      ]) &&
+      matchesSelect(productFilter, run.product.id) &&
+      matchesDateRange(run.producedAt, from, to),
   );
 
   return (
@@ -59,9 +99,29 @@ export default async function ProductionOutputPage() {
         )}
       </Card>
 
-      <Card title="Recent output">
+      <Card title={`Recent output (${filteredRuns.length} of ${runs.length})`}>
+        {runs.length > 0 ? (
+          <TableToolbar
+            basePath="/production/output"
+            dateFilters={[
+              { label: "Produced from", name: "from" },
+              { label: "Produced to", name: "to" },
+            ]}
+            searchParams={params}
+            searchPlaceholder="Search product, quantity, or notes"
+            selectFilters={[
+              {
+                label: "Product",
+                name: "product",
+                options: productOptions,
+              },
+            ]}
+          />
+        ) : null}
         {runs.length === 0 ? (
           <EmptyState>No production output has been recorded yet.</EmptyState>
+        ) : filteredRuns.length === 0 ? (
+          <EmptyState>No production output matches the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -74,7 +134,7 @@ export default async function ProductionOutputPage() {
               </>
             }
           >
-            {runs.slice(0, 10).map((run) => (
+            {filteredRuns.slice(0, 10).map((run) => (
               <tr className="align-top" key={run.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {formatProductName(run.product)}

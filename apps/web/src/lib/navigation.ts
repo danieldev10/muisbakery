@@ -8,7 +8,7 @@ export type NavItem = {
 
 export const roleNav: Record<AppRole, NavItem[]> = {
   ADMIN: [
-    { label: "Dashboard", href: "/dashboard" },
+    { label: "Dashboard", href: "/admin/dashboard" },
     { label: "Users", href: "/admin/users" },
     { label: "Raw materials", href: "/admin/raw-materials" },
     { label: "Products", href: "/admin/products" },
@@ -17,13 +17,13 @@ export const roleNav: Record<AppRole, NavItem[]> = {
     { label: "Settings", href: "/admin/settings" },
   ],
   STORE: [
-    { label: "Dashboard", href: "/dashboard" },
+    { label: "Dashboard", href: "/store/dashboard" },
     { label: "Inventory", href: "/store/inventory" },
     { label: "Receive materials", href: "/store/receiving" },
     { label: "Material requests", href: "/store/requests" },
   ],
   PRODUCTION: [
-    { label: "Dashboard", href: "/dashboard" },
+    { label: "Dashboard", href: "/production/dashboard" },
     { label: "Material requests", href: "/production/requests" },
     { label: "Inventory", href: "/production/inventory" },
     { label: "Output", href: "/production/output" },
@@ -31,7 +31,7 @@ export const roleNav: Record<AppRole, NavItem[]> = {
     { label: "Waste", href: "/production/waste" },
   ],
   SALES: [
-    { label: "Dashboard", href: "/dashboard" },
+    { label: "Dashboard", href: "/sales/dashboard" },
     { label: "Point of sale", href: "/sales/pos" },
     { label: "Inventory", href: "/sales/inventory" },
     { label: "Daily summary", href: "/sales/daily-summary" },

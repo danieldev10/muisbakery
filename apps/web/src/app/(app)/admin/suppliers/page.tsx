@@ -1,14 +1,14 @@
-import { AdminForm } from "@/components/admin/admin-form";
+import { AdminFormModal } from "@/components/admin/form-modal";
 import { Field, TextareaField } from "@/components/admin/form-controls";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
-  PageHeader,
   StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { Supplier } from "@/lib/admin/types";
 import {
   pageNumber,
@@ -16,6 +16,11 @@ import {
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import { createSupplier, setSupplierActive } from "./actions";
 
@@ -26,20 +31,37 @@ export default async function SuppliersPage({
 }) {
   const params = await searchParams;
   const suppliers = await apiGet<Supplier[]>("/admin/suppliers");
+  const query = firstParam(params, "q");
+  const statusFilter = firstParam(params, "status");
+  const filteredSuppliers = suppliers.filter(
+    (supplier) =>
+      matchesSearch(query, [
+        supplier.name,
+        supplier.contactName,
+        supplier.phone,
+        supplier.email,
+        supplier.address,
+        supplier.notes,
+      ]) && matchesSelect(statusFilter, supplier.isActive),
+  );
   const { pageItems, ...pagination } = paginate(
-    suppliers,
+    filteredSuppliers,
     pageNumber(params.page),
   );
 
   return (
-    <>
-      <PageHeader
-        title="Suppliers"
-        description="Maintain the suppliers the store buys raw materials from."
-      />
-
-      <Card title="Add supplier">
-        <AdminForm action={createSupplier} submitLabel="Create supplier">
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+          All suppliers ({filteredSuppliers.length} of {suppliers.length})
+        </h2>
+        <AdminFormModal
+          action={createSupplier}
+          description="Create a supplier profile for Store receiving."
+          submitLabel="Create supplier"
+          title="Add supplier"
+          triggerLabel="Add supplier"
+        >
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Name" name="name" required />
             <Field label="Contact person" name="contactName" />
@@ -48,12 +70,31 @@ export default async function SuppliersPage({
           </div>
           <Field label="Address" name="address" />
           <TextareaField label="Notes" name="notes" />
-        </AdminForm>
-      </Card>
+        </AdminFormModal>
+      </div>
 
-      <Card title={`All suppliers (${suppliers.length})`}>
+      <div>
+        {suppliers.length > 0 ? (
+          <TableToolbar
+            basePath="/admin/suppliers"
+            searchParams={params}
+            searchPlaceholder="Search supplier, contact, phone, or email"
+            selectFilters={[
+              {
+                label: "Status",
+                name: "status",
+                options: [
+                  { label: "Active", value: "true" },
+                  { label: "Inactive", value: "false" },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {suppliers.length === 0 ? (
           <EmptyState>No suppliers yet.</EmptyState>
+        ) : filteredSuppliers.length === 0 ? (
+          <EmptyState>No suppliers match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -106,7 +147,7 @@ export default async function SuppliersPage({
           searchParams={params}
           {...pagination}
         />
-      </Card>
-    </>
+      </div>
+    </Card>
   );
 }

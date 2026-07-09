@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { SalesInventoryItem } from "@/lib/operations/types";
 import {
   pageNumber,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
+import { firstParam, matchesSearch } from "@/lib/table-filters";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -34,8 +36,27 @@ export default async function SalesInventoryPage({
   const params = await searchParams;
   const inventory = await apiGet<SalesInventoryItem[]>("/sales/inventory");
   const stockedItems = inventory.filter((item) => item.batches.length > 0);
+  const query = firstParam(params, "q");
+  const filteredItems = stockedItems.filter((item) =>
+    matchesSearch(query, [
+      formatProductName(item.product),
+      item.product.unit.name,
+      item.product.unit.abbreviation,
+      item.totalRemaining,
+      item.product.unitPrice,
+      ...item.batches.flatMap((batch) => [
+        batch.batchNumber,
+        batch.batchDate,
+        batch.quantityReceived,
+        batch.quantityRemaining,
+        batch.productionRun?.producedAt,
+        batch.createdBy?.name,
+        batch.createdBy?.email,
+      ]),
+    ]),
+  );
   const { pageItems, ...pagination } = paginate(
-    stockedItems,
+    filteredItems,
     pageNumber(params.page),
     5,
   );
@@ -47,9 +68,18 @@ export default async function SalesInventoryPage({
         description="Finished goods received from Production and available for sale."
       />
 
-      <Card title={`Finished goods stock (${stockedItems.length})`}>
+      <Card title={`Finished goods stock (${filteredItems.length} of ${stockedItems.length})`}>
+        {stockedItems.length > 0 ? (
+          <TableToolbar
+            basePath="/sales/inventory"
+            searchParams={params}
+            searchPlaceholder="Search product, unit, batch, production run, or user"
+          />
+        ) : null}
         {stockedItems.length === 0 ? (
           <EmptyState>No finished goods have been sent to Sales yet.</EmptyState>
+        ) : filteredItems.length === 0 ? (
+          <EmptyState>No Sales inventory matches the current filters.</EmptyState>
         ) : (
           <div className="grid gap-4">
             {pageItems.map((item) => (

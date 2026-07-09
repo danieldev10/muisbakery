@@ -50,14 +50,15 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button,
-input {
-  font: inherit;
-}
-
-select,
-textarea {
-  font: inherit;
+/* Layered so Tailwind utilities (also layered) can still override
+   font properties on form controls; un-layered rules always win. */
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 }
 
 ::selection {

@@ -14,7 +14,7 @@ import type { ComponentType } from "react";
 
 import { getCurrentUser } from "@/lib/auth";
 import type { AppRole } from "@/lib/roles";
-import { roleLabels } from "@/lib/roles";
+import { getRoleHome } from "@/lib/roles";
 import { apiGet } from "@/lib/server-api";
 
 type DashboardTone = "default" | "good" | "warning" | "danger";
@@ -366,14 +366,17 @@ function ActivityTable({
           }
         >
           <div className="overflow-x-auto">
-            <table className="min-w-[760px] table-fixed text-left text-sm">
+            {/* table-fixed only applies with an explicit width; without w-full
+                the table auto-sizes past its grid column and bleeds under the
+                breakdown sidebar. */}
+            <table className="w-full min-w-[760px] table-fixed text-left text-sm">
               <colgroup>
-                <col className="w-[23%]" />
-                <col className="w-[19%]" />
+                <col className="w-[22%]" />
+                <col className="w-[18%]" />
                 <col className="w-[12%]" />
-                <col className="w-[20%]" />
+                <col className="w-[19%]" />
                 <col className="w-[10%]" />
-                <col className="w-[16%]" />
+                <col className="w-[19%]" />
               </colgroup>
               <thead className="border-b border-stone-200 bg-stone-50 text-xs font-semibold uppercase text-stone-500">
                 <tr>
@@ -413,9 +416,9 @@ function ActivityTable({
                         <span className="text-stone-400">-</span>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2.5">
+                    <td className="truncate px-3 py-2.5">
                       {item.value ? (
-                        <span className="inline-block rounded-md bg-stone-100 px-2 py-1 text-xs font-medium text-stone-700">
+                        <span className="inline-block max-w-full truncate rounded-md bg-stone-100 px-2 py-1 text-xs font-medium text-stone-700">
                           {formatDisplayTitle(item.value)}
                         </span>
                       ) : (
@@ -425,7 +428,7 @@ function ActivityTable({
                     <td className="truncate px-3 py-2.5 font-mono text-xs text-stone-500">
                       {item.reference ?? "-"}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-stone-500">
+                    <td className="truncate px-3 py-2.5 text-stone-500">
                       {item.meta ?? "-"}
                     </td>
                   </tr>
@@ -489,48 +492,35 @@ function DashboardSectionCard({ section }: { section: DashboardSection }) {
   );
 }
 
-export default async function DashboardPage() {
+export async function RoleDashboardPage({
+  expectedRole,
+}: {
+  expectedRole: AppRole;
+}) {
   const user = await getCurrentUser();
 
   if (!user) {
     redirect("/login");
   }
 
+  if (user.role !== expectedRole) {
+    redirect(getRoleHome(user.role));
+  }
+
   const summary = await apiGet<DashboardSummary>("/dashboard/summary");
-  // Store staff work from the sidebar; their dashboard goes straight to the
-  // numbers without the intro banner and quick-link cards.
-  const showOverviewSections = user.role !== "STORE";
+  // No intro banner: the header already names the workspace and user. Store
+  // staff also skip the quick-link cards and go straight to the numbers.
+  const showQuickActions = user.role !== "STORE";
 
   return (
     <div className="grid gap-6">
-      {showOverviewSections ? (
-        <section className="rounded-md border border-stone-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-red-800">
-                {summary.eyebrow}
-              </p>
-              <h1 className="mt-1 text-2xl font-semibold text-stone-950">
-                {summary.title}
-              </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-500">
-                {summary.description}
-              </p>
-            </div>
-            <div className="shrink-0 rounded-md border border-stone-200 px-3 py-2 text-sm text-stone-600">
-              {roleLabels[user.role]} | {user.email}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {summary.cards.map((card, index) => (
           <MetricCard card={card} index={index} key={card.label} />
         ))}
       </section>
 
-      {showOverviewSections && summary.actions.length > 0 ? (
+      {showQuickActions && summary.actions.length > 0 ? (
         <section className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {summary.actions.map((action) => (
             <ActionCard action={action} key={action.href} />

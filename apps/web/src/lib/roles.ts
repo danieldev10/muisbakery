@@ -25,19 +25,19 @@ export const roleDescriptions: Record<AppRole, string> = {
 };
 
 export const roleDashboards: Record<AppRole, string> = {
-  ADMIN: "/dashboard",
-  STORE: "/store/inventory",
-  PRODUCTION: "/production/requests",
-  SALES: "/sales/inventory",
+  ADMIN: "/admin/dashboard",
+  STORE: "/store/dashboard",
+  PRODUCTION: "/production/dashboard",
+  SALES: "/sales/dashboard",
   MANAGEMENT: "/management/dashboard",
 };
 
 export const roleScopes: Record<AppRole, string[]> = {
-  ADMIN: ["dashboard", "admin", "store", "production", "sales", "management"],
-  STORE: ["dashboard", "store"],
-  PRODUCTION: ["dashboard", "production"],
-  SALES: ["dashboard", "sales"],
-  MANAGEMENT: ["dashboard", "management"],
+  ADMIN: ["admin", "store", "production", "sales", "management"],
+  STORE: ["store"],
+  PRODUCTION: ["production"],
+  SALES: ["sales"],
+  MANAGEMENT: ["management"],
 };
 
 export function isAppRole(role: unknown): role is AppRole {
@@ -45,7 +45,7 @@ export function isAppRole(role: unknown): role is AppRole {
 }
 
 export function getRoleHome(role: unknown) {
-  return isAppRole(role) ? roleDashboards[role] : "/dashboard";
+  return isAppRole(role) ? roleDashboards[role] : "/unauthorized";
 }
 
 export function canAccessSection(role: AppRole, section: string) {

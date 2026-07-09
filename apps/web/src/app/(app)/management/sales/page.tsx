@@ -5,6 +5,7 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementSalesReport } from "@/lib/management/types";
 import {
   pageNumber,
@@ -13,6 +14,11 @@ import {
 } from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 import {
   formatDateTime,
@@ -39,12 +45,88 @@ export default async function ManagementSalesPage({
   const report = await apiGet<ManagementSalesReport>(
     `/management/sales?month=${encodeURIComponent(month)}`,
   );
+  const paymentQuery = firstParam(query, "paymentQ");
+  const filteredPaymentSummary = report.paymentSummary.filter((entry) =>
+    matchesSearch(paymentQuery, [
+      entry.method,
+      paymentLabels[entry.method],
+      entry.count,
+      entry.amount,
+    ]),
+  );
+  const productSummaryQuery = firstParam(query, "productSummaryQ");
+  const filteredProductSummary = report.productSummary.filter((entry) =>
+    matchesSearch(productSummaryQuery, [
+      formatProductName(entry.product),
+      entry.quantitySold,
+      entry.revenue,
+    ]),
+  );
+  const salesQuery = firstParam(query, "salesQ");
+  const salesPayment = firstParam(query, "salesPayment");
+  const salesProduct = firstParam(query, "salesProduct");
+  const salesProductOptions = [
+    ...new Map(
+      report.sales.flatMap((sale) =>
+        sale.items.map((item) => [
+          item.product.id,
+          { label: formatProductName(item.product), value: item.product.id },
+        ]),
+      ),
+    ).values(),
+  ];
+  const filteredSales = report.sales.filter(
+    (sale) =>
+      matchesSearch(salesQuery, [
+        sale.saleNumber,
+        sale.paymentMethod,
+        paymentLabels[sale.paymentMethod],
+        sale.totalAmount,
+        sale.amountPaid,
+        sale.balanceDue,
+        sale.createdBy?.name,
+        sale.createdBy?.email,
+        ...sale.items.flatMap((item) => [
+          formatProductName(item.product),
+          item.quantity,
+          item.lineTotal,
+        ]),
+      ]) &&
+      matchesSelect(salesPayment, sale.paymentMethod) &&
+      (!salesProduct ||
+        sale.items.some((item) => item.product.id === salesProduct)),
+  );
+  const returnsQuery = firstParam(query, "returnsQ");
+  const returnsDisposition = firstParam(query, "returnsDisposition");
+  const returnsProduct = firstParam(query, "returnsProduct");
+  const returnsProductOptions = [
+    ...new Map(
+      report.returns.map((entry) => [
+        entry.product.id,
+        { label: formatProductName(entry.product), value: entry.product.id },
+      ]),
+    ).values(),
+  ];
+  const filteredReturns = report.returns.filter(
+    (entry) =>
+      matchesSearch(returnsQuery, [
+        formatProductName(entry.product),
+        entry.disposition,
+        returnLabels[entry.disposition],
+        entry.quantity,
+        entry.reason,
+        entry.createdBy?.name,
+        entry.createdBy?.email,
+      ]) &&
+      matchesSelect(returnsDisposition, entry.disposition) &&
+      matchesSelect(returnsProduct, entry.product.id),
+  );
   const { pageItems: salesItems, ...salesPagination } = paginate(
-    report.sales,
+    filteredSales,
     pageNumber(query.salesPage),
   );
   const { pageItems: returnItems, ...returnsPagination } = paginate(
-    report.returns,
+    filteredReturns,
     pageNumber(query.returnsPage),
   );
 
@@ -81,33 +163,57 @@ export default async function ManagementSalesPage({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Payment methods">
-          <TableShell
-            head={
-              <>
-                <th className="py-2 pr-4">Method</th>
-                <th className="py-2 pr-4">Sales</th>
-                <th className="py-2 pr-4">Amount</th>
-              </>
-            }
-          >
-            {report.paymentSummary.map((entry) => (
-              <tr key={entry.method}>
-                <td className="py-3 pr-4 font-medium text-stone-900">
-                  {paymentLabels[entry.method]}
-                </td>
-                <td className="py-3 pr-4 text-stone-600">{entry.count}</td>
-                <td className="py-3 pr-4 text-stone-600">
-                  {formatMoney(entry.amount)}
-                </td>
-              </tr>
-            ))}
-          </TableShell>
+        <Card title={`Payment methods (${filteredPaymentSummary.length} of ${report.paymentSummary.length})`}>
+          {report.paymentSummary.length > 0 ? (
+            <TableToolbar
+              basePath="/management/sales"
+              pageParams={[]}
+              searchParam="paymentQ"
+              searchParams={query}
+              searchPlaceholder="Search payment method, count, or amount"
+            />
+          ) : null}
+          {filteredPaymentSummary.length === 0 ? (
+            <EmptyState>No payment methods match the current filters.</EmptyState>
+          ) : (
+            <TableShell
+              head={
+                <>
+                  <th className="py-2 pr-4">Method</th>
+                  <th className="py-2 pr-4">Sales</th>
+                  <th className="py-2 pr-4">Amount</th>
+                </>
+              }
+            >
+              {filteredPaymentSummary.map((entry) => (
+                <tr key={entry.method}>
+                  <td className="py-3 pr-4 font-medium text-stone-900">
+                    {paymentLabels[entry.method]}
+                  </td>
+                  <td className="py-3 pr-4 text-stone-600">{entry.count}</td>
+                  <td className="py-3 pr-4 text-stone-600">
+                    {formatMoney(entry.amount)}
+                  </td>
+                </tr>
+              ))}
+            </TableShell>
+          )}
         </Card>
 
-        <Card title="Product sales">
+        <Card title={`Product sales (${filteredProductSummary.length} of ${report.productSummary.length})`}>
+          {report.productSummary.length > 0 ? (
+            <TableToolbar
+              basePath="/management/sales"
+              pageParams={[]}
+              searchParam="productSummaryQ"
+              searchParams={query}
+              searchPlaceholder="Search product, quantity, or revenue"
+            />
+          ) : null}
           {report.productSummary.length === 0 ? (
             <EmptyState>No product sales for this month.</EmptyState>
+          ) : filteredProductSummary.length === 0 ? (
+            <EmptyState>No product sales match the current filters.</EmptyState>
           ) : (
             <TableShell
               head={
@@ -118,7 +224,7 @@ export default async function ManagementSalesPage({
                 </>
               }
             >
-              {report.productSummary.map((entry) => (
+              {filteredProductSummary.map((entry) => (
                 <tr key={entry.product.id}>
                   <td className="py-3 pr-4 font-medium text-stone-900">
                     {formatProductName(entry.product)}
@@ -139,9 +245,34 @@ export default async function ManagementSalesPage({
         </Card>
       </div>
 
-      <Card title={`Sales (${report.sales.length})`}>
+      <Card title={`Sales (${filteredSales.length} of ${report.sales.length})`}>
+        {report.sales.length > 0 ? (
+          <TableToolbar
+            basePath="/management/sales"
+            pageParams={["salesPage"]}
+            searchParam="salesQ"
+            searchParams={query}
+            searchPlaceholder="Search sale, product, cashier, or payment"
+            selectFilters={[
+              {
+                label: "Payment",
+                name: "salesPayment",
+                options: Object.entries(paymentLabels).map(
+                  ([value, label]) => ({ label, value }),
+                ),
+              },
+              {
+                label: "Product",
+                name: "salesProduct",
+                options: salesProductOptions,
+              },
+            ]}
+          />
+        ) : null}
         {report.sales.length === 0 ? (
           <EmptyState>No sales for this month.</EmptyState>
+        ) : filteredSales.length === 0 ? (
+          <EmptyState>No sales match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -197,9 +328,35 @@ export default async function ManagementSalesPage({
         />
       </Card>
 
-      <Card title={`Returns (${report.returns.length})`}>
+      <Card title={`Returns (${filteredReturns.length} of ${report.returns.length})`}>
+        {report.returns.length > 0 ? (
+          <TableToolbar
+            basePath="/management/sales"
+            pageParams={["returnsPage"]}
+            searchParam="returnsQ"
+            searchParams={query}
+            searchPlaceholder="Search product, disposition, reason, or user"
+            selectFilters={[
+              {
+                label: "Disposition",
+                name: "returnsDisposition",
+                options: Object.entries(returnLabels).map(([value, label]) => ({
+                  label,
+                  value,
+                })),
+              },
+              {
+                label: "Product",
+                name: "returnsProduct",
+                options: returnsProductOptions,
+              },
+            ]}
+          />
+        ) : null}
         {report.returns.length === 0 ? (
           <EmptyState>No returns for this month.</EmptyState>
+        ) : filteredReturns.length === 0 ? (
+          <EmptyState>No returns match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={

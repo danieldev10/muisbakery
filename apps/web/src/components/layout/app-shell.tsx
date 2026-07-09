@@ -6,7 +6,7 @@ import { NotificationsBell } from "@/components/layout/notifications-bell";
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import { SideNav } from "@/components/layout/side-nav";
 import { roleNav } from "@/lib/navigation";
-import { type AppRole, roleLabels } from "@/lib/roles";
+import { getRoleHome, type AppRole, roleLabels } from "@/lib/roles";
 import { apiGet } from "@/lib/server-api";
 
 type AppShellProps = {
@@ -40,7 +40,7 @@ export async function AppShell({ children, user }: AppShellProps) {
     <div className="min-h-screen bg-[var(--app-bg)] text-[var(--text-primary)]">
       <header className="sticky top-0 z-30 border-b border-[color:var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-whisper)]">
         <div className="flex min-h-16 w-full items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <Link className="flex items-center gap-3" href="/dashboard">
+          <Link className="flex items-center gap-3" href={getRoleHome(user.role)}>
             <Image
               alt="Muis Bakery"
               className="size-10 rounded-md border border-[color:var(--border-muted)] object-cover"

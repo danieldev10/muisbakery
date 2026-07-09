@@ -1,29 +1,50 @@
-import { AdminForm } from "@/components/admin/admin-form";
+import { AdminFormModal } from "@/components/admin/form-modal";
 import { Field, SelectField } from "@/components/admin/form-controls";
-import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
-  PageHeader,
-  StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { AdminUser } from "@/lib/admin/types";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
-import { roleLabels, roles } from "@/lib/roles";
+import { type AppRole, roleLabels, roles } from "@/lib/roles";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
-import { createUser, setUserActive, setUserRole } from "./actions";
+import { createUser } from "./actions";
+import { EditUserButton } from "./edit-user-modal";
 
 const roleOptions = roles.map((role) => ({
   value: role,
   label: roleLabels[role],
 }));
+
+const roleBadgeClasses: Record<AppRole, string> = {
+  ADMIN: "bg-red-50 text-red-800",
+  STORE: "bg-amber-50 text-amber-800",
+  PRODUCTION: "bg-sky-50 text-sky-800",
+  SALES: "bg-emerald-50 text-emerald-800",
+  MANAGEMENT: "bg-indigo-50 text-indigo-800",
+};
+
+function initials(user: AdminUser) {
+  const source = user.name?.trim() || user.email;
+  const parts = source.split(/[\s@._-]+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "?";
+  const second = parts[1]?.[0] ?? "";
+
+  return `${first}${second}`.toUpperCase();
+}
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -42,17 +63,38 @@ export default async function UsersPage({
 }) {
   const params = await searchParams;
   const users = await apiGet<AdminUser[]>("/admin/users");
-  const { pageItems, ...pagination } = paginate(users, pageNumber(params.page));
+  const query = firstParam(params, "q");
+  const roleFilter = firstParam(params, "role");
+  const statusFilter = firstParam(params, "status");
+  const filteredUsers = users.filter(
+    (user) =>
+      matchesSearch(query, [
+        user.name,
+        user.email,
+        roleLabels[user.role],
+        user.role,
+      ]) &&
+      matchesSelect(roleFilter, user.role) &&
+      matchesSelect(statusFilter, user.isActive),
+  );
+  const { pageItems, ...pagination } = paginate(
+    filteredUsers,
+    pageNumber(params.page),
+  );
 
   return (
-    <>
-      <PageHeader
-        title="Users"
-        description="Create staff accounts and control their access by role."
-      />
-
-      <Card title="Add user">
-        <AdminForm action={createUser} submitLabel="Create user">
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+          All users ({filteredUsers.length} of {users.length})
+        </h2>
+        <AdminFormModal
+          action={createUser}
+          description="Create a staff login and assign the correct department role."
+          submitLabel="Create user"
+          title="Add user"
+          triggerLabel="Add user"
+        >
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Name" name="name" placeholder="Full name" />
             <Field
@@ -63,9 +105,9 @@ export default async function UsersPage({
               type="email"
             />
             <Field
+              hint="At least 8 characters."
               label="Password"
               name="password"
-              hint="At least 8 characters."
               required
               type="password"
             />
@@ -77,12 +119,36 @@ export default async function UsersPage({
               required
             />
           </div>
-        </AdminForm>
-      </Card>
+        </AdminFormModal>
+      </div>
 
-      <Card title={`All users (${users.length})`}>
+      <div>
+        {users.length > 0 ? (
+          <TableToolbar
+            basePath="/admin/users"
+            searchParams={params}
+            searchPlaceholder="Search name, email, or role"
+            selectFilters={[
+              {
+                label: "Role",
+                name: "role",
+                options: roleOptions,
+              },
+              {
+                label: "Status",
+                name: "status",
+                options: [
+                  { label: "Active", value: "true" },
+                  { label: "Inactive", value: "false" },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {users.length === 0 ? (
           <EmptyState>No users yet.</EmptyState>
+        ) : filteredUsers.length === 0 ? (
+          <EmptyState>No users match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -96,51 +162,51 @@ export default async function UsersPage({
             }
           >
             {pageItems.map((user) => (
-              <tr className="align-top" key={user.id}>
+              <tr
+                className={user.isActive ? "align-middle" : "align-middle opacity-55"}
+                key={user.id}
+              >
                 <td className="py-3 pr-4">
-                  <p className="font-medium text-stone-900">
-                    {user.name || "—"}
-                  </p>
-                  <p className="text-xs text-stone-500">{user.email}</p>
-                </td>
-                <td className="py-3 pr-4">
-                  <InlineActionForm
-                    action={setUserRole}
-                    className="flex flex-wrap items-center gap-2"
-                    submitLabel="Save"
-                  >
-                    <input name="id" type="hidden" value={user.id} />
-                    <select
-                      className="h-8 rounded-md border border-stone-300 bg-white px-2 text-xs"
-                      defaultValue={user.role}
-                      name="role"
+                  <div className="flex items-center gap-3">
+                    <span
+                      aria-hidden
+                      className={`grid size-9 shrink-0 place-items-center rounded-full text-xs font-semibold ${roleBadgeClasses[user.role]}`}
                     >
-                      {roleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </InlineActionForm>
+                      {initials(user)}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-stone-900">
+                        {user.name || "—"}
+                      </p>
+                      <p className="truncate text-xs text-stone-500">
+                        {user.email}
+                      </p>
+                    </div>
+                  </div>
                 </td>
                 <td className="py-3 pr-4">
-                  <StatusBadge active={user.isActive} />
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${roleBadgeClasses[user.role]}`}
+                  >
+                    {roleLabels[user.role]}
+                  </span>
+                </td>
+                <td className="py-3 pr-4">
+                  <span className="inline-flex items-center gap-1.5 text-sm text-stone-600">
+                    <span
+                      aria-hidden
+                      className={`size-2 rounded-full ${
+                        user.isActive ? "bg-emerald-500" : "bg-stone-300"
+                      }`}
+                    />
+                    {user.isActive ? "Active" : "Inactive"}
+                  </span>
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatDate(user.lastLoginAt)}
                 </td>
                 <td className="py-3 pr-4">
-                  <InlineActionForm
-                    action={setUserActive}
-                    submitLabel={user.isActive ? "Deactivate" : "Activate"}
-                  >
-                    <input name="id" type="hidden" value={user.id} />
-                    <input
-                      name="isActive"
-                      type="hidden"
-                      value={user.isActive ? "false" : "true"}
-                    />
-                  </InlineActionForm>
+                  <EditUserButton user={user} />
                 </td>
               </tr>
             ))}
@@ -151,7 +217,7 @@ export default async function UsersPage({
           searchParams={params}
           {...pagination}
         />
-      </Card>
-    </>
+      </div>
+    </Card>
   );
 }

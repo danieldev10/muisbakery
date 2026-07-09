@@ -38,7 +38,7 @@ type IconComponent = ComponentType<{
 }>;
 
 const iconByHref: Record<string, IconComponent> = {
-  "/dashboard": LayoutDashboard,
+  "/admin/dashboard": LayoutDashboard,
   "/admin/users": Users,
   "/admin/raw-materials": Wheat,
   "/admin/products": Package,
@@ -46,14 +46,17 @@ const iconByHref: Record<string, IconComponent> = {
   "/admin/recipes": BookOpen,
   "/admin/settings": Settings,
   "/store/inventory": Warehouse,
+  "/store/dashboard": LayoutDashboard,
   "/store/receiving": PackageCheck,
   "/store/requests": ClipboardList,
   "/production/requests": ClipboardList,
+  "/production/dashboard": LayoutDashboard,
   "/production/inventory": Boxes,
   "/production/output": Factory,
   "/production/runs": ClipboardList,
   "/production/waste": PackageX,
   "/sales/pos": ShoppingCart,
+  "/sales/dashboard": LayoutDashboard,
   "/sales/inventory": PackageOpen,
   "/sales/record-sale": ReceiptText,
   "/sales/daily-summary": ChartColumn,
@@ -67,7 +70,7 @@ const iconByHref: Record<string, IconComponent> = {
 };
 
 function isActive(pathname: string, href: string) {
-  if (href === "/dashboard") {
+  if (href.endsWith("/dashboard")) {
     return pathname === href;
   }
   return pathname === href || pathname.startsWith(`${href}/`);

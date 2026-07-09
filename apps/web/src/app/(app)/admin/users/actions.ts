@@ -27,28 +27,16 @@ export async function createUser(
   return { ok: true, error: null, token: Date.now() };
 }
 
-export async function setUserActive(
+export async function updateUser(
   _state: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  const password = getOptionalString(formData, "password");
   const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
-    isActive: formData.get("isActive") === "true",
-  });
-
-  if (!result.ok) {
-    return { ok: false, error: result.message };
-  }
-
-  revalidatePath(PATH);
-  return { ok: true, error: null, token: Date.now() };
-}
-
-export async function setUserRole(
-  _state: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
+    name: getOptionalString(formData, "name"),
     role: getString(formData, "role"),
+    isActive: getString(formData, "isActive") === "true",
+    ...(password ? { password } : {}),
   });
 
   if (!result.ok) {

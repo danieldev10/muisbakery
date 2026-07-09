@@ -4,18 +4,25 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
+import { TableToolbar } from "@/components/admin/table-toolbar";
 import type {
   ProductionWaste,
   ProductionWasteType,
 } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
-import { TablePagination } from "@/components/admin/pagination";
 import {
   pageNumber,
   paginate,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import {
+  firstParam,
+  matchesDateRange,
+  matchesSearch,
+  matchesSelect,
+} from "@/lib/table-filters";
 
 const wasteTypeLabels: Record<ProductionWasteType, string> = {
   DAMAGED: "Damaged",
@@ -57,7 +64,41 @@ export default async function ProductionWastePage({
 }) {
   const params = await searchParams;
   const waste = await apiGet<ProductionWaste[]>("/production/waste");
-  const { pageItems, ...pagination } = paginate(waste, pageNumber(params.page));
+  const query = firstParam(params, "q");
+  const productFilter = firstParam(params, "product");
+  const typeFilter = firstParam(params, "type");
+  const from = firstParam(params, "from");
+  const to = firstParam(params, "to");
+  const productOptions = [
+    ...new Map(
+      waste.map((record) => [
+        record.product.id,
+        {
+          label: formatProductName(record.product),
+          value: record.product.id,
+        },
+      ]),
+    ).values(),
+  ];
+  const filteredWaste = waste.filter(
+    (record) =>
+      matchesSearch(query, [
+        formatProductName(record.product),
+        record.type,
+        wasteTypeLabels[record.type],
+        record.quantity,
+        record.reason,
+        record.createdBy?.name,
+        record.createdBy?.email,
+      ]) &&
+      matchesSelect(productFilter, record.product.id) &&
+      matchesSelect(typeFilter, record.type) &&
+      matchesDateRange(record.recordedAt, from, to),
+  );
+  const { pageItems, ...pagination } = paginate(
+    filteredWaste,
+    pageNumber(params.page),
+  );
 
   return (
     <>
@@ -66,9 +107,36 @@ export default async function ProductionWastePage({
         description="Waste and spoilage recorded during production runs."
       />
 
-      <Card title={`Waste records (${waste.length})`}>
+      <Card title={`Waste records (${filteredWaste.length} of ${waste.length})`}>
+        {waste.length > 0 ? (
+          <TableToolbar
+            basePath="/production/waste"
+            dateFilters={[
+              { label: "Recorded from", name: "from" },
+              { label: "Recorded to", name: "to" },
+            ]}
+            searchParams={params}
+            searchPlaceholder="Search product, type, reason, or user"
+            selectFilters={[
+              {
+                label: "Product",
+                name: "product",
+                options: productOptions,
+              },
+              {
+                label: "Type",
+                name: "type",
+                options: Object.entries(wasteTypeLabels).map(
+                  ([value, label]) => ({ label, value }),
+                ),
+              },
+            ]}
+          />
+        ) : null}
         {waste.length === 0 ? (
           <EmptyState>No waste has been recorded yet.</EmptyState>
+        ) : filteredWaste.length === 0 ? (
+          <EmptyState>No waste records match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
