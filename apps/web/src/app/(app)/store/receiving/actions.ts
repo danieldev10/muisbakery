@@ -16,7 +16,6 @@ export async function receiveRawMaterial(
     quantity: getString(formData, "quantity"),
     receivedAt: getOptionalString(formData, "receivedAt"),
     reference: getOptionalString(formData, "reference"),
-    notes: getOptionalString(formData, "notes"),
   });
 
   if (!result.ok) {

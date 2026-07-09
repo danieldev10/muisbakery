@@ -1,13 +1,6 @@
-import { AdminForm } from "@/components/admin/admin-form";
-import {
-  Field,
-  SelectField,
-  TextareaField,
-} from "@/components/admin/form-controls";
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
@@ -20,6 +13,7 @@ import {
 import { apiGet } from "@/lib/server-api";
 
 import { receiveRawMaterial } from "./actions";
+import { ReceiveMaterialModal } from "./receive-material-modal";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -59,60 +53,19 @@ export default async function StoreReceivingPage({
   }));
 
   return (
-    <>
-      <PageHeader
-        title="Receive raw materials"
-        description="Record daily raw material receipts and create FIFO batches."
-      />
+    <Card>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+          Recent receipts ({receipts.length})
+        </h2>
+        <ReceiveMaterialModal
+          action={receiveRawMaterial}
+          materialOptions={materialOptions}
+          supplierOptions={supplierOptions}
+        />
+      </div>
 
-      <Card title="New receipt">
-        {materialOptions.length === 0 ? (
-          <EmptyState>
-            Active raw materials are required before Store can receive stock.
-          </EmptyState>
-        ) : (
-          <AdminForm action={receiveRawMaterial} submitLabel="Receive stock">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <SelectField
-                label="Raw material"
-                name="rawMaterialId"
-                options={materialOptions}
-                placeholder="Select material"
-                required
-              />
-              <SelectField
-                label="Supplier"
-                name="supplierId"
-                options={supplierOptions}
-                placeholder="No supplier selected"
-              />
-              <Field
-                label="Quantity"
-                min="1"
-                name="quantity"
-                placeholder="0"
-                required
-                step="1"
-                type="number"
-              />
-              <Field
-                label="Received at"
-                name="receivedAt"
-                type="datetime-local"
-                hint="Optional. Leave blank to use the current date and time."
-              />
-              <Field
-                label="Reference"
-                name="reference"
-                placeholder="Invoice or delivery note"
-              />
-            </div>
-            <TextareaField label="Notes" name="notes" placeholder="Optional" />
-          </AdminForm>
-        )}
-      </Card>
-
-      <Card title={`Recent receipts (${receipts.length})`}>
+      <div>
         {receipts.length === 0 ? (
           <EmptyState>No receipts yet.</EmptyState>
         ) : (
@@ -156,7 +109,7 @@ export default async function StoreReceivingPage({
           searchParams={params}
           {...pagination}
         />
-      </Card>
-    </>
+      </div>
+    </Card>
   );
 }
