@@ -9,6 +9,12 @@ import type {
   ProductionWasteType,
 } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 const wasteTypeLabels: Record<ProductionWasteType, string> = {
@@ -44,8 +50,14 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-export default async function ProductionWastePage() {
+export default async function ProductionWastePage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const waste = await apiGet<ProductionWaste[]>("/production/waste");
+  const { pageItems, ...pagination } = paginate(waste, pageNumber(params.page));
 
   return (
     <>
@@ -70,7 +82,7 @@ export default async function ProductionWastePage() {
               </>
             }
           >
-            {waste.map((record) => (
+            {pageItems.map((record) => (
               <tr className="align-top" key={record.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {formatProductName(record.product)}
@@ -97,6 +109,11 @@ export default async function ProductionWastePage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/production/waste"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

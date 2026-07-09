@@ -12,7 +12,7 @@ type InlineAction = (
 ) => Promise<FormState>;
 
 const defaultButtonClassName =
-  "rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-[5px] border border-[color:var(--border-muted)] bg-white px-2 py-1 text-xs font-medium text-[var(--text-secondary)] shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:bg-[var(--surface-warm)] disabled:cursor-not-allowed disabled:opacity-50";
 
 function InlineSubmitButton({
   children,
@@ -65,7 +65,9 @@ export function InlineActionForm({
         {submitLabel}
       </InlineSubmitButton>
       {state.error ? (
-        <p className="max-w-56 text-xs text-red-700">{state.error}</p>
+        <p className="max-w-56 text-xs text-[var(--brand-burgundy)]">
+          {state.error}
+        </p>
       ) : null}
       {successMessage && state.ok ? (
         <p className="text-xs text-emerald-700">{successMessage}</p>

@@ -1048,7 +1048,7 @@ export class ManagementService {
           actor: { select: userSelect },
         },
         orderBy: { createdAt: "desc" },
-        take: 100,
+        take: 200,
       }),
       this.prisma.auditLog.findMany({
         where: {

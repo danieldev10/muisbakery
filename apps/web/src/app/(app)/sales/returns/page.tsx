@@ -16,6 +16,12 @@ import type {
   SalesReturnDisposition,
 } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { recordCustomerReturn, recordDamagedStock } from "./actions";
@@ -42,11 +48,20 @@ function formatDisposition(value: SalesReturnDisposition) {
   return dispositionLabels[value];
 }
 
-export default async function SalesReturnsPage() {
+export default async function SalesReturnsPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [options, returns] = await Promise.all([
     apiGet<SalesOptions>("/sales/options"),
     apiGet<SalesReturn[]>("/sales/returns"),
   ]);
+  const { pageItems, ...pagination } = paginate(
+    returns,
+    pageNumber(params.page),
+  );
 
   const productOptions = options.products
     .filter((item) => Number(item.totalRemaining) > 0)
@@ -180,7 +195,7 @@ export default async function SalesReturnsPage() {
               </>
             }
           >
-            {returns.map((entry) => (
+            {pageItems.map((entry) => (
               <tr className="align-top" key={entry.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">
@@ -217,6 +232,11 @@ export default async function SalesReturnsPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/sales/returns"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

@@ -3,13 +3,11 @@ import type { ManagementChartDatum } from "@/lib/management/types";
 
 import { formatMoney, formatQuantity } from "./formatters";
 
-const chartColors = [
-  "bg-red-800",
-  "bg-stone-700",
-  "bg-emerald-700",
-  "bg-amber-700",
-  "bg-sky-800",
-];
+// One measure per card, so the bars share one hue; red is reserved for
+// genuinely negative values (the minus sign carries the same signal for
+// color-blind readers). Pair validated: #0d9488 / #b91c1c on white.
+const barClass = "bg-[var(--chart-bar)]";
+const negativeBarClass = "bg-[var(--negative)]";
 
 function numericValue(value: string) {
   return Number(value);
@@ -53,29 +51,35 @@ export function DashboardChartCard({
         <div className="grid gap-4">
           {data.map((item, index) => {
             const value = numericValue(item.value);
-            const color =
-              value < 0 ? "bg-red-800" : chartColors[index % chartColors.length];
+            const color = value < 0 ? negativeBarClass : barClass;
 
             return (
-              <div className="grid gap-2" key={`${item.label}:${index}`}>
+              <div className="grid gap-1.5" key={`${item.label}:${index}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-stone-900">
+                    <p className="truncate text-sm font-medium text-[var(--text-primary)]">
                       {item.label}
                     </p>
-                    <p className="text-xs text-stone-500">{item.detail}</p>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      {item.detail}
+                    </p>
                   </div>
                   <p
                     className={`shrink-0 text-sm font-semibold ${
-                      value < 0 ? "text-red-800" : "text-stone-900"
+                      value < 0
+                        ? "text-[var(--negative)]"
+                        : "text-[var(--text-primary)]"
                     }`}
                   >
                     {formatChartValue(item.value, mode)}
                   </p>
                 </div>
-                <div className="h-2.5 overflow-hidden rounded-sm bg-stone-100">
+                <div
+                  className="h-2 overflow-hidden rounded-[4px] bg-[var(--surface-muted)]"
+                  title={`${item.label}: ${formatChartValue(item.value, mode)} (${item.detail})`}
+                >
                   <div
-                    className={`h-full rounded-sm ${color}`}
+                    className={`h-full rounded-r-[4px] ${color}`}
                     style={{ width: barWidth(value, max) }}
                   />
                 </div>

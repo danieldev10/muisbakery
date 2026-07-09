@@ -460,7 +460,7 @@ export class SalesService {
     const sales = await this.prisma.sale.findMany({
       include: saleInclude,
       orderBy: { soldAt: "desc" },
-      take: 50,
+      take: 200,
     });
 
     return sales.map(serializeSale);
@@ -470,7 +470,7 @@ export class SalesService {
     const returns = await this.prisma.salesProductReturn.findMany({
       include: returnInclude,
       orderBy: { recordedAt: "desc" },
-      take: 80,
+      take: 200,
     });
 
     return returns.map(serializeReturn);

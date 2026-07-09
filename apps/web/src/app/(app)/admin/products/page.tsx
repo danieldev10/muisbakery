@@ -11,6 +11,12 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { Product, Unit } from "@/lib/admin/types";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { createProduct, setProductActive, updateProductDetails } from "./actions";
@@ -28,11 +34,20 @@ function formatPrice(value: string | null) {
   })}`;
 }
 
-export default async function ProductsPage() {
+export default async function ProductsPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [products, units] = await Promise.all([
     apiGet<Product[]>("/admin/products"),
     apiGet<Unit[]>("/admin/units"),
   ]);
+  const { pageItems, ...pagination } = paginate(
+    products,
+    pageNumber(params.page),
+  );
 
   const unitOptions = units
     .filter((unit) => unit.isActive)
@@ -113,7 +128,7 @@ export default async function ProductsPage() {
               </>
             }
           >
-            {products.map((product) => (
+            {pageItems.map((product) => (
               <tr className="align-top" key={product.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">{product.name}</p>
@@ -185,6 +200,11 @@ export default async function ProductsPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/admin/products"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

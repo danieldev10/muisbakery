@@ -4,7 +4,13 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { ManagementProductionReport } from "@/lib/management/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
@@ -20,12 +26,16 @@ import {
 export default async function ManagementProductionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string | string[] }>;
+  searchParams: Promise<PageSearchParams>;
 }) {
   const query = await searchParams;
   const month = getMonthParam(query);
   const report = await apiGet<ManagementProductionReport>(
     `/management/production?month=${encodeURIComponent(month)}`,
+  );
+  const { pageItems: runItems, ...runsPagination } = paginate(
+    report.runs,
+    pageNumber(query.page),
   );
 
   return (
@@ -196,7 +206,7 @@ export default async function ManagementProductionPage({
               </>
             }
           >
-            {report.runs.map((run) => (
+            {runItems.map((run) => (
               <tr
                 className={`align-top ${
                   run.shortfallQuantity ? "border-l-4 border-l-red-700" : ""
@@ -274,6 +284,11 @@ export default async function ManagementProductionPage({
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/management/production"
+          searchParams={query}
+          {...runsPagination}
+        />
       </Card>
     </>
   );

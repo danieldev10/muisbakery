@@ -4,7 +4,13 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { ManagementSalesReport } from "@/lib/management/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
@@ -26,12 +32,20 @@ const returnLabels = {
 export default async function ManagementSalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string | string[] }>;
+  searchParams: Promise<PageSearchParams>;
 }) {
   const query = await searchParams;
   const month = getMonthParam(query);
   const report = await apiGet<ManagementSalesReport>(
     `/management/sales?month=${encodeURIComponent(month)}`,
+  );
+  const { pageItems: salesItems, ...salesPagination } = paginate(
+    report.sales,
+    pageNumber(query.salesPage),
+  );
+  const { pageItems: returnItems, ...returnsPagination } = paginate(
+    report.returns,
+    pageNumber(query.returnsPage),
   );
 
   return (
@@ -141,7 +155,7 @@ export default async function ManagementSalesPage({
               </>
             }
           >
-            {report.sales.map((sale) => (
+            {salesItems.map((sale) => (
               <tr className="align-top" key={sale.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   #{sale.saleNumber}
@@ -175,6 +189,12 @@ export default async function ManagementSalesPage({
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/management/sales"
+          pageParam="salesPage"
+          searchParams={query}
+          {...salesPagination}
+        />
       </Card>
 
       <Card title={`Returns (${report.returns.length})`}>
@@ -192,7 +212,7 @@ export default async function ManagementSalesPage({
               </>
             }
           >
-            {report.returns.map((returnEntry) => (
+            {returnItems.map((returnEntry) => (
               <tr key={returnEntry.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {formatProductName(returnEntry.product)}
@@ -216,6 +236,12 @@ export default async function ManagementSalesPage({
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/management/sales"
+          pageParam="returnsPage"
+          searchParams={query}
+          {...returnsPagination}
+        />
       </Card>
     </>
   );

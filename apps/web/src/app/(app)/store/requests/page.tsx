@@ -9,6 +9,12 @@ import type {
   MaterialRequest,
   MaterialRequestStatus,
 } from "@/lib/operations/types";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { issueMaterialRequest, rejectMaterialRequest } from "./actions";
@@ -71,8 +77,17 @@ function RequestStatusBadge({ status }: { status: MaterialRequestStatus }) {
   );
 }
 
-export default async function StoreRequestsPage() {
+export default async function StoreRequestsPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const requests = await apiGet<MaterialRequest[]>("/store/material-requests");
+  const { pageItems, ...pagination } = paginate(
+    requests,
+    pageNumber(params.page),
+  );
 
   return (
     <>
@@ -98,7 +113,7 @@ export default async function StoreRequestsPage() {
               </>
             }
           >
-            {requests.map((request) => {
+            {pageItems.map((request) => {
               const unit = request.rawMaterial.baseUnit.abbreviation;
               const canIssue =
                 request.status === "PENDING" ||
@@ -192,6 +207,11 @@ export default async function StoreRequestsPage() {
             })}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/store/requests"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

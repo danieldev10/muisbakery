@@ -8,13 +8,28 @@ import {
   StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { Supplier } from "@/lib/admin/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { createSupplier, setSupplierActive } from "./actions";
 
-export default async function SuppliersPage() {
+export default async function SuppliersPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const suppliers = await apiGet<Supplier[]>("/admin/suppliers");
+  const { pageItems, ...pagination } = paginate(
+    suppliers,
+    pageNumber(params.page),
+  );
 
   return (
     <>
@@ -50,7 +65,7 @@ export default async function SuppliersPage() {
               </>
             }
           >
-            {suppliers.map((supplier) => (
+            {pageItems.map((supplier) => (
               <tr className="align-top" key={supplier.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">{supplier.name}</p>
@@ -86,6 +101,11 @@ export default async function SuppliersPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/admin/suppliers"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

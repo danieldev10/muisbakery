@@ -8,7 +8,13 @@ import {
   StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { AdminUser } from "@/lib/admin/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { roleLabels, roles } from "@/lib/roles";
 import { apiGet } from "@/lib/server-api";
 
@@ -29,8 +35,14 @@ function formatDate(value: string | null) {
   });
 }
 
-export default async function UsersPage() {
+export default async function UsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const users = await apiGet<AdminUser[]>("/admin/users");
+  const { pageItems, ...pagination } = paginate(users, pageNumber(params.page));
 
   return (
     <>
@@ -83,7 +95,7 @@ export default async function UsersPage() {
               </>
             }
           >
-            {users.map((user) => (
+            {pageItems.map((user) => (
               <tr className="align-top" key={user.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">
@@ -134,6 +146,11 @@ export default async function UsersPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/admin/users"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

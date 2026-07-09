@@ -4,13 +4,28 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { ManagementAuditReport } from "@/lib/management/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { formatAction, formatDateTime } from "../_components";
 
-export default async function ManagementAuditLogPage() {
+export default async function ManagementAuditLogPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const report = await apiGet<ManagementAuditReport>("/management/audit-log");
+  const { pageItems, ...pagination } = paginate(
+    report.entries,
+    pageNumber(params.page),
+  );
 
   return (
     <>
@@ -33,7 +48,7 @@ export default async function ManagementAuditLogPage() {
               </>
             }
           >
-            {report.entries.map((entry) => (
+            {pageItems.map((entry) => (
               <tr className="align-top" key={entry.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {formatAction(entry.action)}
@@ -51,6 +66,11 @@ export default async function ManagementAuditLogPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/management/audit-log"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

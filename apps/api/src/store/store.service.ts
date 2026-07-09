@@ -317,7 +317,7 @@ export class StoreService {
     const batches = await this.prisma.rawMaterialBatch.findMany({
       include: batchInclude,
       orderBy: [{ batchDate: "desc" }, { batchNumber: "desc" }],
-      take: 50,
+      take: 200,
     });
 
     return batches.map(serializeBatch);
@@ -327,7 +327,7 @@ export class StoreService {
     const receipts = await this.prisma.rawMaterialReceipt.findMany({
       include: receiptInclude,
       orderBy: [{ receivedAt: "desc" }, { createdAt: "desc" }],
-      take: 50,
+      take: 200,
     });
 
     return receipts.map(serializeReceipt);

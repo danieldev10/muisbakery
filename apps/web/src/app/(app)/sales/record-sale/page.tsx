@@ -8,6 +8,12 @@ import {
 } from "@/components/admin/layout";
 import type { PaymentMethod, Sale, SalesOptions } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { createSale } from "./actions";
@@ -49,11 +55,17 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-export default async function RecordSalePage() {
+export default async function RecordSalePage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [options, sales] = await Promise.all([
     apiGet<SalesOptions>("/sales/options"),
     apiGet<Sale[]>("/sales/sales"),
   ]);
+  const { pageItems, ...pagination } = paginate(sales, pageNumber(params.page));
 
   const stockedProducts = options.products.filter(
     (item) => Number(item.totalRemaining) > 0,
@@ -190,7 +202,7 @@ export default async function RecordSalePage() {
               </>
             }
           >
-            {sales.slice(0, 12).map((sale) => (
+            {pageItems.map((sale) => (
               <tr className="align-top" key={sale.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">
@@ -236,6 +248,11 @@ export default async function RecordSalePage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/sales/record-sale"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

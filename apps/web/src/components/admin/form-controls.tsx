@@ -6,9 +6,10 @@ import { useFormStatus } from "react-dom";
 import type { FormState } from "@/lib/admin/types";
 
 const fieldClass =
-  "h-10 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100 disabled:bg-stone-100";
+  "h-10 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-sm text-[var(--text-primary)] shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)] disabled:bg-[var(--surface-muted)]";
 
-const labelClass = "text-sm font-medium text-stone-700";
+const labelClass =
+  "text-xs font-semibold uppercase tracking-[1.3px] text-[var(--text-muted)]";
 
 type BaseFieldProps = {
   label: string;
@@ -45,7 +46,7 @@ export function Field({
     <div className="grid gap-1.5">
       <label className={labelClass} htmlFor={name}>
         {label}
-        {required ? <span className="text-red-700"> *</span> : null}
+        {required ? <span className="text-[var(--brand-burgundy)]"> *</span> : null}
       </label>
       <input
         className={fieldClass}
@@ -58,7 +59,7 @@ export function Field({
         step={step}
         type={type}
       />
-      {hint ? <p className="text-xs text-stone-500">{hint}</p> : null}
+      {hint ? <p className="text-xs text-[var(--text-muted)]">{hint}</p> : null}
     </div>
   );
 }
@@ -78,7 +79,7 @@ export function SelectField({
     <div className="grid gap-1.5">
       <label className={labelClass} htmlFor={name}>
         {label}
-        {required ? <span className="text-red-700"> *</span> : null}
+        {required ? <span className="text-[var(--brand-burgundy)]"> *</span> : null}
       </label>
       <select
         className={fieldClass}
@@ -98,7 +99,7 @@ export function SelectField({
           </option>
         ))}
       </select>
-      {hint ? <p className="text-xs text-stone-500">{hint}</p> : null}
+      {hint ? <p className="text-xs text-[var(--text-muted)]">{hint}</p> : null}
     </div>
   );
 }
@@ -115,17 +116,17 @@ export function TextareaField({
     <div className="grid gap-1.5">
       <label className={labelClass} htmlFor={name}>
         {label}
-        {required ? <span className="text-red-700"> *</span> : null}
+        {required ? <span className="text-[var(--brand-burgundy)]"> *</span> : null}
       </label>
       <textarea
-        className="min-h-20 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+        className="min-h-20 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 py-2 text-sm text-[var(--text-primary)] shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]"
         defaultValue={defaultValue}
         id={name}
         name={name}
         placeholder={placeholder}
         required={required}
       />
-      {hint ? <p className="text-xs text-stone-500">{hint}</p> : null}
+      {hint ? <p className="text-xs text-[var(--text-muted)]">{hint}</p> : null}
     </div>
   );
 }
@@ -141,7 +142,7 @@ export function SubmitButton({
 
   return (
     <button
-      className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
+      className="inline-flex h-10 items-center justify-center gap-2 rounded-[5px] border border-[var(--brand-burgundy-dark)] bg-[var(--brand-burgundy)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-whisper)] transition hover:bg-[var(--brand-burgundy-dark)] disabled:cursor-not-allowed disabled:border-[color:var(--border-muted)] disabled:bg-[#b2b6bd]"
       disabled={pending}
       type="submit"
     >
@@ -153,7 +154,7 @@ export function SubmitButton({
 export function FormFeedback({ state }: { state: FormState }) {
   if (state.error) {
     return (
-      <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+      <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
         {state.error}
       </p>
     );
@@ -161,7 +162,7 @@ export function FormFeedback({ state }: { state: FormState }) {
 
   if (state.ok) {
     return (
-      <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+      <p className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
         Saved.
       </p>
     );

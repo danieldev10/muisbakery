@@ -4,7 +4,13 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { SalesInventoryItem } from "@/lib/operations/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
@@ -20,9 +26,19 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-export default async function SalesInventoryPage() {
+export default async function SalesInventoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const inventory = await apiGet<SalesInventoryItem[]>("/sales/inventory");
   const stockedItems = inventory.filter((item) => item.batches.length > 0);
+  const { pageItems, ...pagination } = paginate(
+    stockedItems,
+    pageNumber(params.page),
+    5,
+  );
 
   return (
     <>
@@ -36,7 +52,7 @@ export default async function SalesInventoryPage() {
           <EmptyState>No finished goods have been sent to Sales yet.</EmptyState>
         ) : (
           <div className="grid gap-4">
-            {stockedItems.map((item) => (
+            {pageItems.map((item) => (
               <section
                 className="rounded-md border border-stone-200 p-4"
                 key={item.product.id}
@@ -103,6 +119,11 @@ export default async function SalesInventoryPage() {
             ))}
           </div>
         )}
+        <TablePagination
+          basePath="/sales/inventory"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

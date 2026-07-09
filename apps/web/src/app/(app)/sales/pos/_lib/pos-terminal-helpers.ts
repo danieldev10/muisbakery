@@ -15,10 +15,10 @@ export const paymentLabels: Record<PaymentMethod, string> = {
 };
 
 export const fieldClass =
-  "h-10 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100";
+  "h-10 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-sm text-[var(--text-primary)] shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]";
 
 export const iconButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 transition hover:border-red-800 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-white text-[var(--text-secondary)] shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:bg-[var(--surface-warm)] hover:text-[var(--brand-burgundy)] disabled:cursor-not-allowed disabled:opacity-50";
 
 export type PosSessionPatch = {
   paymentMethod?: PaymentMethod;

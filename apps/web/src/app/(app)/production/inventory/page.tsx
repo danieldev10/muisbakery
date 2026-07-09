@@ -5,6 +5,12 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import type { ProductionMaterialInventoryItem } from "@/lib/operations/types";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 function formatDate(value: string) {
@@ -20,11 +26,21 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-export default async function ProductionInventoryPage() {
+export default async function ProductionInventoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const inventory = await apiGet<ProductionMaterialInventoryItem[]>(
     "/production/inventory",
   );
   const stockedItems = inventory.filter((item) => item.batches.length > 0);
+  const { pageItems, ...pagination } = paginate(
+    stockedItems,
+    pageNumber(params.page),
+    5,
+  );
 
   return (
     <>
@@ -38,7 +54,7 @@ export default async function ProductionInventoryPage() {
           <EmptyState>No issued raw materials are available in Production.</EmptyState>
         ) : (
           <div className="grid gap-4">
-            {stockedItems.map((item) => (
+            {pageItems.map((item) => (
               <section
                 className="rounded-md border border-stone-200 p-4"
                 key={item.rawMaterial.id}
@@ -101,6 +117,11 @@ export default async function ProductionInventoryPage() {
             ))}
           </div>
         )}
+        <TablePagination
+          basePath="/production/inventory"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

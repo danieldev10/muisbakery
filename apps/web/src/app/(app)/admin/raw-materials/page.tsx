@@ -10,16 +10,31 @@ import {
   StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { RawMaterial, Unit } from "@/lib/admin/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { createRawMaterial, setRawMaterialActive } from "./actions";
 
-export default async function RawMaterialsPage() {
+export default async function RawMaterialsPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [materials, units] = await Promise.all([
     apiGet<RawMaterial[]>("/admin/raw-materials"),
     apiGet<Unit[]>("/admin/units"),
   ]);
+  const { pageItems, ...pagination } = paginate(
+    materials,
+    pageNumber(params.page),
+  );
 
   const unitOptions = units
     .filter((unit) => unit.isActive)
@@ -79,7 +94,7 @@ export default async function RawMaterialsPage() {
               </>
             }
           >
-            {materials.map((material) => (
+            {pageItems.map((material) => (
               <tr className="align-top" key={material.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">{material.name}</p>
@@ -112,6 +127,11 @@ export default async function RawMaterialsPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/admin/raw-materials"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

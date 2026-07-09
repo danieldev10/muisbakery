@@ -659,7 +659,7 @@ export class ProductionService {
     const runs = await this.prisma.productionRun.findMany({
       include: runInclude,
       orderBy: { producedAt: "desc" },
-      take: 50,
+      take: 200,
     });
 
     return runs.map(serializeRun);
@@ -669,7 +669,7 @@ export class ProductionService {
     const waste = await this.prisma.productionWaste.findMany({
       include: wasteInclude,
       orderBy: { recordedAt: "desc" },
-      take: 50,
+      take: 200,
     });
 
     return waste.map(serializeWaste);

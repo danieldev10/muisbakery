@@ -10,7 +10,13 @@ import {
   PageHeader,
   TableShell,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { RawMaterialReceipt, StoreOptions } from "@/lib/operations/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { receiveRawMaterial } from "./actions";
@@ -28,11 +34,20 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-export default async function StoreReceivingPage() {
+export default async function StoreReceivingPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [options, receipts] = await Promise.all([
     apiGet<StoreOptions>("/store/options"),
     apiGet<RawMaterialReceipt[]>("/store/receipts"),
   ]);
+  const { pageItems, ...pagination } = paginate(
+    receipts,
+    pageNumber(params.page),
+  );
 
   const materialOptions = options.rawMaterials.map((material) => ({
     value: material.id,
@@ -112,7 +127,7 @@ export default async function StoreReceivingPage() {
               </>
             }
           >
-            {receipts.map((receipt) => (
+            {pageItems.map((receipt) => (
               <tr className="align-top" key={receipt.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   Batch {receipt.batch.batchNumber}
@@ -136,6 +151,11 @@ export default async function StoreReceivingPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/store/receiving"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

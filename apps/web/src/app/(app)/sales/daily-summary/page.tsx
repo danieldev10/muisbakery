@@ -6,6 +6,12 @@ import {
 } from "@/components/admin/layout";
 import type { PaymentMethod, SalesSummary } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -51,7 +57,7 @@ function formatQuantity(value: string, unit: string) {
 export default async function SalesDailySummaryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string | string[] }>;
+  searchParams: Promise<PageSearchParams>;
 }) {
   const query = await searchParams;
   const date =
@@ -60,6 +66,10 @@ export default async function SalesDailySummaryPage({
       : todayInputValue();
   const summary = await apiGet<SalesSummary>(
     `/sales/summary?date=${encodeURIComponent(date)}`,
+  );
+  const { pageItems, ...pagination } = paginate(
+    summary.sales,
+    pageNumber(query.page),
   );
 
   return (
@@ -202,7 +212,7 @@ export default async function SalesDailySummaryPage({
               </>
             }
           >
-            {summary.sales.map((sale) => (
+            {pageItems.map((sale) => (
               <tr className="align-top" key={sale.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   #{sale.saleNumber}
@@ -233,6 +243,11 @@ export default async function SalesDailySummaryPage({
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/sales/daily-summary"
+          searchParams={query}
+          {...pagination}
+        />
       </Card>
     </>
   );

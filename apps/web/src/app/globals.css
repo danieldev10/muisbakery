@@ -1,23 +1,70 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f5f4;
-  --foreground: #1c1917;
+  /* Warm light theme — the only theme. */
+  --background: #faf7f1;
+  --foreground: #292524;
+  --app-bg: #faf7f1;
+  --surface: #ffffff;
+  --surface-muted: #f5f1e9;
+  --surface-warm: #fbf8f1;
+  --text-primary: #292524;
+  --text-secondary: #44403c;
+  --text-muted: #77706a;
+  --border-muted: #e8e2d6;
+  --border-strong: #d8d0c1;
+  --brand-burgundy: #8f2636;
+  --brand-burgundy-dark: #741d2b;
+  --brand-tint: #f9eef0;
+  --brand-tint-strong: #f2dce0;
+  --chart-bar: #0d9488;
+  --negative: #b91c1c;
+  --focus-ring: rgba(143, 38, 54, 0.22);
+  --shadow-whisper: rgba(97, 104, 117, 0.05) 0px 1px 1px,
+    rgba(97, 104, 117, 0.05) 0px 2px 2px;
+  --shadow-panel: rgba(41, 37, 36, 0.05) 0px 1px 2px,
+    rgba(41, 37, 36, 0.07) 0px 8px 24px;
+
+  /* Legacy aliases still referenced by the customer-facing display. */
+  --brand-charcoal: #1c1917;
+  --brand-near-black: #131110;
+  --brand-amber: #f0a21b;
+  --brand-cream: #efe4c8;
+  --brand-cream-strong: #f6d68a;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: Arial, Helvetica, sans-serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Helvetica, Arial, sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+  font-feature-settings: "kern" 1;
+  line-height: 1.63;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
 input {
   font: inherit;
+}
+
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: var(--brand-tint-strong);
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
 }

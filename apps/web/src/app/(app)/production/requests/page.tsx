@@ -16,6 +16,12 @@ import type {
   MaterialRequestStatus,
   ProductionOptions,
 } from "@/lib/operations/types";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 import { cancelMaterialRequest, createMaterialRequest } from "./actions";
@@ -72,11 +78,20 @@ function RequestStatusBadge({ status }: { status: MaterialRequestStatus }) {
   );
 }
 
-export default async function ProductionRequestsPage() {
+export default async function ProductionRequestsPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [options, requests] = await Promise.all([
     apiGet<ProductionOptions>("/production/options"),
     apiGet<MaterialRequest[]>("/production/material-requests"),
   ]);
+  const { pageItems, ...pagination } = paginate(
+    requests,
+    pageNumber(params.page),
+  );
 
   const materialOptions = options.rawMaterials.map((material) => ({
     value: material.id,
@@ -150,7 +165,7 @@ export default async function ProductionRequestsPage() {
               </>
             }
           >
-            {requests.map((request) => {
+            {pageItems.map((request) => {
               const unit = request.rawMaterial.baseUnit.abbreviation;
 
               return (
@@ -206,6 +221,11 @@ export default async function ProductionRequestsPage() {
             })}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/production/requests"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

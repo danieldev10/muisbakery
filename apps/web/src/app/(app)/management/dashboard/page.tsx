@@ -39,7 +39,11 @@ export default async function ManagementDashboardPage({
         />
         <MetricCard
           label="Estimated gross profit"
-          tone="positive"
+          tone={
+            Number(report.summary.estimatedGrossProfit) < 0
+              ? "warning"
+              : "positive"
+          }
           value={formatMoney(report.summary.estimatedGrossProfit)}
           detail={`Materials issued ${formatMoney(report.summary.estimatedMaterialCost)}`}
         />

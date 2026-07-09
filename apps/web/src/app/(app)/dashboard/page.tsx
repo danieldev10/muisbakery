@@ -49,6 +49,8 @@ type DashboardSection = {
   description?: string;
   emptyText: string;
   items: DashboardItem[];
+  /** "table" renders the section as a full-width activity table. */
+  layout?: "table";
 };
 
 type DashboardSummary = {
@@ -136,18 +138,6 @@ function getDepartmentBadgeClasses(value?: string) {
   }
 
   return "bg-red-50 text-red-800";
-}
-
-function getBarClasses(index: number) {
-  const colors = [
-    "bg-red-700",
-    "bg-emerald-700",
-    "bg-sky-700",
-    "bg-amber-600",
-    "bg-indigo-700",
-  ];
-
-  return colors[index % colors.length];
 }
 
 function getActivityBreakdown(
@@ -296,7 +286,7 @@ function ActivityBreakdown({
             No activity yet.
           </p>
         ) : (
-          entries.map((entry, index) => (
+          entries.map((entry) => (
             <div className="grid gap-1.5" key={entry.label}>
               <div className="flex items-center justify-between gap-3 text-xs">
                 <span className="truncate font-medium text-stone-700">
@@ -307,8 +297,9 @@ function ActivityBreakdown({
                 </span>
               </div>
               <div className="h-2 rounded-full bg-stone-100">
+                {/* One measure across labels: a single hue, identity lives in the label. */}
                 <div
-                  className={`h-2 rounded-full ${getBarClasses(index)}`}
+                  className="h-2 rounded-full bg-[var(--chart-bar)]"
                   style={{
                     width: `${Math.max(8, (entry.value / maxValue) * 100)}%`,
                   }}
@@ -339,7 +330,13 @@ function ActivityCharts({ items }: { items: DashboardItem[] }) {
   );
 }
 
-function ActivityTable({ section }: { section: DashboardSection }) {
+function ActivityTable({
+  section,
+  showBreakdown = true,
+}: {
+  section: DashboardSection;
+  showBreakdown?: boolean;
+}) {
   return (
     <section className="rounded-md border border-stone-200 bg-white shadow-sm xl:col-span-2">
       <div className="flex items-start gap-3 border-b border-stone-200 p-4">
@@ -363,7 +360,11 @@ function ActivityTable({ section }: { section: DashboardSection }) {
           {section.emptyText}
         </p>
       ) : (
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div
+          className={
+            showBreakdown ? "grid lg:grid-cols-[minmax(0,1fr)_320px]" : "grid"
+          }
+        >
           <div className="overflow-x-auto">
             <table className="min-w-[760px] table-fixed text-left text-sm">
               <colgroup>
@@ -432,7 +433,7 @@ function ActivityTable({ section }: { section: DashboardSection }) {
               </tbody>
             </table>
           </div>
-          <ActivityCharts items={section.items} />
+          {showBreakdown ? <ActivityCharts items={section.items} /> : null}
         </div>
       )}
     </section>
@@ -440,6 +441,10 @@ function ActivityTable({ section }: { section: DashboardSection }) {
 }
 
 function DashboardSectionCard({ section }: { section: DashboardSection }) {
+  if (section.layout === "table") {
+    return <ActivityTable section={section} showBreakdown={false} />;
+  }
+
   if (section.title === "Latest activity") {
     return <ActivityTable section={section} />;
   }
@@ -492,27 +497,32 @@ export default async function DashboardPage() {
   }
 
   const summary = await apiGet<DashboardSummary>("/dashboard/summary");
+  // Store staff work from the sidebar; their dashboard goes straight to the
+  // numbers without the intro banner and quick-link cards.
+  const showOverviewSections = user.role !== "STORE";
 
   return (
     <div className="grid gap-6">
-      <section className="rounded-md border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-red-800">
-              {summary.eyebrow}
-            </p>
-            <h1 className="mt-1 text-2xl font-semibold text-stone-950">
-              {summary.title}
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-500">
-              {summary.description}
-            </p>
+      {showOverviewSections ? (
+        <section className="rounded-md border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-red-800">
+                {summary.eyebrow}
+              </p>
+              <h1 className="mt-1 text-2xl font-semibold text-stone-950">
+                {summary.title}
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-500">
+                {summary.description}
+              </p>
+            </div>
+            <div className="shrink-0 rounded-md border border-stone-200 px-3 py-2 text-sm text-stone-600">
+              {roleLabels[user.role]} | {user.email}
+            </div>
           </div>
-          <div className="shrink-0 rounded-md border border-stone-200 px-3 py-2 text-sm text-stone-600">
-            {roleLabels[user.role]} | {user.email}
-          </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {summary.cards.map((card, index) => (
@@ -520,7 +530,7 @@ export default async function DashboardPage() {
         ))}
       </section>
 
-      {summary.actions.length > 0 ? (
+      {showOverviewSections && summary.actions.length > 0 ? (
         <section className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {summary.actions.map((action) => (
             <ActionCard action={action} key={action.href} />

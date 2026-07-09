@@ -60,13 +60,16 @@ export function LoginForm({ callbackUrl }: LoginFormProps) {
   return (
     <form className="grid gap-5" onSubmit={handleSubmit}>
       <div className="grid gap-2">
-        <label className="text-sm font-medium text-stone-700" htmlFor="email">
+        <label
+          className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--text-muted)]"
+          htmlFor="email"
+        >
           Email
         </label>
         <input
           autoComplete="email"
           autoFocus
-          className="h-11 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+          className="h-11 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-sm text-[var(--text-primary)] shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]"
           id="email"
           name="email"
           onChange={(event) => setEmail(event.target.value)}
@@ -79,14 +82,14 @@ export function LoginForm({ callbackUrl }: LoginFormProps) {
 
       <div className="grid gap-2">
         <label
-          className="text-sm font-medium text-stone-700"
+          className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--text-muted)]"
           htmlFor="password"
         >
           Password
         </label>
         <input
           autoComplete="current-password"
-          className="h-11 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+          className="h-11 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-sm text-[var(--text-primary)] shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]"
           id="password"
           name="password"
           onChange={(event) => setPassword(event.target.value)}
@@ -97,13 +100,13 @@ export function LoginForm({ callbackUrl }: LoginFormProps) {
       </div>
 
       {error ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
         </p>
       ) : null}
 
       <button
-        className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
+        className="inline-flex h-11 items-center justify-center gap-2 rounded-[5px] border border-[var(--brand-burgundy-dark)] bg-[var(--brand-burgundy)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-whisper)] transition hover:bg-[var(--brand-burgundy-dark)] disabled:cursor-not-allowed disabled:border-[color:var(--border-muted)] disabled:bg-[#b2b6bd]"
         disabled={isSubmitting}
         type="submit"
       >

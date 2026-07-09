@@ -5,20 +5,48 @@ import {
   TableShell,
 } from "@/components/admin/layout";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
+import { TablePagination } from "@/components/admin/pagination";
 import type { ManagementInventoryReport } from "@/lib/management/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import { formatDate, formatMoney, formatQuantity, MetricCard } from "../_components";
 import { updateRawMaterialUnitCost } from "./actions";
 
-export default async function ManagementInventoryPage() {
+export default async function ManagementInventoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const report = await apiGet<ManagementInventoryReport>("/management/inventory");
   const stockedRawMaterials = report.rawMaterials.filter(
     (item) => item.batches.length > 0,
   );
   const stockedFinishedProducts = report.finishedProducts.filter(
     (item) => item.batches.length > 0,
+  );
+  const { pageItems: stockItems, ...stockPagination } = paginate(
+    stockedRawMaterials,
+    pageNumber(params.stockPage),
+  );
+  const { pageItems: costItems, ...costsPagination } = paginate(
+    report.rawMaterials,
+    pageNumber(params.costsPage),
+  );
+  const { pageItems: batchItems, ...batchesPagination } = paginate(
+    stockedRawMaterials,
+    pageNumber(params.batchesPage),
+    5,
+  );
+  const { pageItems: productItems, ...productsPagination } = paginate(
+    stockedFinishedProducts,
+    pageNumber(params.productsPage),
   );
 
   return (
@@ -60,7 +88,7 @@ export default async function ManagementInventoryPage() {
               </>
             }
           >
-            {stockedRawMaterials.map((item) => {
+            {stockItems.map((item) => {
               const firstBatch = item.batches[0];
 
               return (
@@ -86,6 +114,12 @@ export default async function ManagementInventoryPage() {
             })}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/management/inventory"
+          pageParam="stockPage"
+          searchParams={params}
+          {...stockPagination}
+        />
       </Card>
 
       <Card title="Managed raw material costs">
@@ -102,7 +136,7 @@ export default async function ManagementInventoryPage() {
               </>
             }
           >
-            {report.rawMaterials.map((item) => (
+            {costItems.map((item) => (
               <tr className="align-top" key={item.rawMaterial.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {item.rawMaterial.name}
@@ -146,6 +180,12 @@ export default async function ManagementInventoryPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/management/inventory"
+          pageParam="costsPage"
+          searchParams={params}
+          {...costsPagination}
+        />
       </Card>
 
       <Card title="Raw material batches">
@@ -153,7 +193,7 @@ export default async function ManagementInventoryPage() {
           <EmptyState>No raw material batches to show.</EmptyState>
         ) : (
           <div className="grid gap-4">
-            {stockedRawMaterials.map((item) => (
+            {batchItems.map((item) => (
               <section
                 className="rounded-md border border-stone-200 p-4"
                 key={item.rawMaterial.id}
@@ -209,6 +249,12 @@ export default async function ManagementInventoryPage() {
             ))}
           </div>
         )}
+        <TablePagination
+          basePath="/management/inventory"
+          pageParam="batchesPage"
+          searchParams={params}
+          {...batchesPagination}
+        />
       </Card>
 
       <Card title="Finished goods">
@@ -225,7 +271,7 @@ export default async function ManagementInventoryPage() {
               </>
             }
           >
-            {stockedFinishedProducts.map((item) => (
+            {productItems.map((item) => (
               <tr key={item.product.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {formatProductName(item.product)}
@@ -246,6 +292,12 @@ export default async function ManagementInventoryPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/management/inventory"
+          pageParam="productsPage"
+          searchParams={params}
+          {...productsPagination}
+        />
       </Card>
     </>
   );

@@ -43,7 +43,25 @@ type DashboardSection = {
   description?: string;
   emptyText: string;
   items: DashboardItem[];
+  /** "table" renders the section as a full-width activity table. */
+  layout?: "table";
 };
+
+type NotificationItem = {
+  id: string;
+  label: string;
+  detail: string;
+  meta: string;
+  href: string;
+};
+
+const STORE_WORKFLOW_ACTIONS = [
+  "STORE_RAW_MATERIAL_RECEIVED",
+  "STORE_MATERIAL_REQUEST_ISSUED",
+  "STORE_MATERIAL_REQUEST_REJECTED",
+  "PRODUCTION_MATERIAL_REQUEST_CREATED",
+  "PRODUCTION_MATERIAL_REQUEST_CANCELLED",
+];
 
 type DashboardResponse = {
   role: AuthenticatedUser["role"];
@@ -192,6 +210,54 @@ export class DashboardController {
     return this.managementDashboard(user);
   }
 
+  /**
+   * Items that need the signed-in user's action right now. Powers the
+   * header notification bell; roles without actionable work get zero.
+   */
+  @Get("notifications")
+  async notifications(
+    @Req() request: Request,
+  ): Promise<{ count: number; items: NotificationItem[] }> {
+    const user = await this.auth.requireUser(request);
+
+    // Store (and Admin, who oversees everything) act on open material requests.
+    if (user.role === "STORE" || user.role === "ADMIN") {
+      const [count, requests] = await Promise.all([
+        this.prisma.materialRequest.count({
+          where: openMaterialRequestWhere(),
+        }),
+        this.prisma.materialRequest.findMany({
+          where: openMaterialRequestWhere(),
+          include: {
+            rawMaterial: { select: rawMaterialSelect },
+            requestedBy: { select: userSelect },
+          },
+          orderBy: { createdAt: "asc" },
+          take: 8,
+        }),
+      ]);
+
+      return {
+        count,
+        items: requests.map((request) => ({
+          id: request.id,
+          label: `${request.rawMaterial.name}: ${formatQuantity(
+            decimalToNumber(request.requestedQuantity) -
+              decimalToNumber(request.issuedQuantity),
+            request.rawMaterial.baseUnit.abbreviation,
+          )} to issue`,
+          detail: `Requested by ${
+            request.requestedBy.name ?? request.requestedBy.email
+          }`,
+          meta: formatDateTime(request.createdAt),
+          href: "/store/requests",
+        })),
+      };
+    }
+
+    return { count: 0, items: [] };
+  }
+
   private async adminDashboard(
     user: AuthenticatedUser,
   ): Promise<DashboardResponse> {
@@ -275,65 +341,40 @@ export class DashboardController {
   private async storeDashboard(
     user: AuthenticatedUser,
   ): Promise<DashboardResponse> {
-    const [materials, openRequestCount, openRequests, recentReceipts, oldestBatches] =
-      await Promise.all([
-        this.prisma.rawMaterial.findMany({
-          where: {
-            OR: [
-              { isActive: true },
-              { batches: { some: { quantityRemaining: { gt: 0 } } } },
-            ],
+    const [materials, openRequestCount, storeWorkflow] = await Promise.all([
+      this.prisma.rawMaterial.findMany({
+        where: {
+          OR: [
+            { isActive: true },
+            { batches: { some: { quantityRemaining: { gt: 0 } } } },
+          ],
+        },
+        include: {
+          baseUnit: { select: unitSelect },
+          batches: {
+            where: { quantityRemaining: { gt: 0 } },
+            orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
           },
-          include: {
-            baseUnit: { select: unitSelect },
-            batches: {
-              where: { quantityRemaining: { gt: 0 } },
-              orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
-            },
-          },
-          orderBy: { name: "asc" },
-        }),
-        this.prisma.materialRequest.count({
-          where: openMaterialRequestWhere(),
-        }),
-        this.prisma.materialRequest.findMany({
-          where: openMaterialRequestWhere(),
-          include: {
-            rawMaterial: { select: rawMaterialSelect },
-            requestedBy: { select: userSelect },
-          },
-          orderBy: { createdAt: "asc" },
-          take: 5,
-        }),
-        this.prisma.rawMaterialReceipt.findMany({
-          include: {
-            rawMaterial: { select: rawMaterialSelect },
-            supplier: { select: { id: true, name: true } },
-          },
-          orderBy: [{ receivedAt: "desc" }, { createdAt: "desc" }],
-          take: 5,
-        }),
-        this.prisma.rawMaterialBatch.findMany({
-          where: { quantityRemaining: { gt: 0 } },
-          include: {
-            rawMaterial: { select: rawMaterialSelect },
-            supplier: { select: { id: true, name: true } },
-          },
-          orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
-          take: 5,
-        }),
-      ]);
+        },
+        orderBy: { name: "asc" },
+      }),
+      this.prisma.materialRequest.count({
+        where: openMaterialRequestWhere(),
+      }),
+      this.prisma.auditLog.findMany({
+        where: { action: { in: STORE_WORKFLOW_ACTIONS } },
+        include: {
+          actor: { select: userSelect },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 12,
+      }),
+    ]);
 
+    // No costs here: unit costs and stock valuation are Management/Admin-only.
     const inventory = materials.map((material) => {
       const totalRemaining = material.batches.reduce(
         (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
-        0,
-      );
-      const estimatedValue = material.batches.reduce(
-        (sum, batch) =>
-          sum +
-          decimalToNumber(batch.quantityRemaining) *
-            decimalToNumber(batch.unitCost),
         0,
       );
 
@@ -343,7 +384,6 @@ export class DashboardController {
         unit: material.baseUnit.abbreviation,
         batches: material.batches.length,
         totalRemaining,
-        estimatedValue,
       };
     });
     const stockedMaterials = inventory.filter((item) => item.totalRemaining > 0);
@@ -351,10 +391,6 @@ export class DashboardController {
       (item) => item.totalRemaining <= lowStockThreshold,
     );
     const totalBatches = inventory.reduce((sum, item) => sum + item.batches, 0);
-    const stockValue = inventory.reduce(
-      (sum, item) => sum + item.estimatedValue,
-      0,
-    );
 
     return {
       role: user.role,
@@ -381,10 +417,10 @@ export class DashboardController {
           detail: "Batches with stock remaining",
         },
         {
-          label: "Estimated stock value",
-          value: formatMoney(stockValue),
-          detail: `${formatInteger(lowMaterials.length)} low stock alerts`,
-          tone: lowMaterials.length > 0 ? "warning" : "default",
+          label: "Low stock alerts",
+          value: formatInteger(lowMaterials.length),
+          detail: `Materials at or below ${formatInteger(lowStockThreshold)} in stock`,
+          tone: lowMaterials.length > 0 ? "warning" : "good",
         },
       ],
       actions: [
@@ -406,55 +442,24 @@ export class DashboardController {
       ],
       sections: [
         {
-          title: "Requests needing Store action",
-          emptyText: "No open Production material requests.",
-          items: openRequests.map((request) => ({
-            id: request.id,
-            title: request.rawMaterial.name,
-            detail: `Requested by ${request.requestedBy.name ?? request.requestedBy.email}`,
-            meta: formatDateTime(request.createdAt),
-            value: `${formatQuantity(
-              decimalToNumber(request.requestedQuantity) -
-                decimalToNumber(request.issuedQuantity),
-              request.rawMaterial.baseUnit.abbreviation,
-            )} left`,
-            tone: "warning",
-            href: "/store/requests",
-          })),
-        },
-        {
-          title: "Oldest stock to use first",
-          description: "FIFO batches with remaining stock.",
-          emptyText: "No raw material batches currently have stock.",
-          items: oldestBatches.map((batch) => ({
-            id: batch.id,
-            title: `${batch.rawMaterial.name} batch ${batch.batchNumber}`,
-            detail: batch.supplier
-              ? `Supplier: ${batch.supplier.name}`
-              : "No supplier recorded",
-            meta: `Received ${formatDate(batch.receivedAt)}`,
-            value: formatQuantity(
-              decimalToNumber(batch.quantityRemaining),
-              batch.rawMaterial.baseUnit.abbreviation,
-            ),
-            href: "/store/inventory",
-          })),
-        },
-        {
-          title: "Recent receipts",
-          emptyText: "No raw materials have been received yet.",
-          items: recentReceipts.map((receipt) => ({
-            id: receipt.id,
-            title: receipt.rawMaterial.name,
-            detail: receipt.supplier
-              ? `Supplier: ${receipt.supplier.name}`
-              : "No supplier recorded",
-            meta: formatDateTime(receipt.receivedAt),
-            value: formatQuantity(
-              decimalToNumber(receipt.quantity),
-              receipt.rawMaterial.baseUnit.abbreviation,
-            ),
-            href: "/store/receiving",
+          title: "Recent workflow",
+          description:
+            "Receipts, issues, rejections, and Production requests touching Store.",
+          emptyText: "No Store workflow activity has been recorded yet.",
+          layout: "table",
+          items: storeWorkflow.map((entry) => ({
+            id: entry.id,
+            title: entry.action.replaceAll("_", " ").toLowerCase(),
+            detail: entry.actor
+              ? (entry.actor.name ?? entry.actor.email)
+              : "System",
+            department: entry.actor?.role ?? "SYSTEM",
+            meta: formatDateTime(entry.createdAt),
+            reference: formatShortReference(entry.entityId),
+            value: entry.entityType,
+            href: entry.action.startsWith("STORE_RAW_MATERIAL")
+              ? "/store/receiving"
+              : "/store/requests",
           })),
         },
       ],

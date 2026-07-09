@@ -6,6 +6,12 @@ import {
 } from "@/components/admin/layout";
 import type { ProductionRun } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
+import { TablePagination } from "@/components/admin/pagination";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
 
 function formatDate(value: string) {
@@ -21,8 +27,14 @@ function formatQuantity(value: string, unit: string) {
   })} ${unit}`;
 }
 
-export default async function ProductionRunsPage() {
+export default async function ProductionRunsPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const runs = await apiGet<ProductionRun[]>("/production/runs");
+  const { pageItems, ...pagination } = paginate(runs, pageNumber(params.page));
 
   return (
     <>
@@ -47,7 +59,7 @@ export default async function ProductionRunsPage() {
               </>
             }
           >
-            {runs.map((run) => (
+            {pageItems.map((run) => (
               <tr
                 className={`align-top ${
                   run.shortfallQuantity ? "border-l-4 border-l-red-700" : ""
@@ -129,6 +141,11 @@ export default async function ProductionRunsPage() {
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath="/production/runs"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

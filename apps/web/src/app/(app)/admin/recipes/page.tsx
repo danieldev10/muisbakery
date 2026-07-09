@@ -7,14 +7,25 @@ import {
   PageHeader,
   StatusBadge,
 } from "@/components/admin/layout";
+import { TablePagination } from "@/components/admin/pagination";
 import type { Product, RawMaterial, Recipe } from "@/lib/admin/types";
+import {
+  pageNumber,
+  paginate,
+  type PageSearchParams,
+} from "@/lib/paginate";
 import { formatProductName } from "@/lib/product-label";
 import { apiGet } from "@/lib/server-api";
 
 import { deleteRecipe } from "./actions";
 import { RecipeForm } from "./recipe-form";
 
-export default async function RecipesPage() {
+export default async function RecipesPage({
+  searchParams,
+}: {
+  searchParams: Promise<PageSearchParams>;
+}) {
+  const params = await searchParams;
   const [recipes, products, rawMaterials] = await Promise.all([
     apiGet<Recipe[]>("/admin/recipes"),
     apiGet<Product[]>("/admin/products"),
@@ -39,6 +50,10 @@ export default async function RecipesPage() {
     }));
 
   const canBuild = productOptions.length > 0 && materialOptions.length > 0;
+  const { pageItems, ...pagination } = paginate(
+    recipes,
+    pageNumber(params.page),
+  );
 
   return (
     <>
@@ -77,7 +92,7 @@ export default async function RecipesPage() {
           <EmptyState>No recipes yet.</EmptyState>
         ) : (
           <div className="grid gap-4">
-            {recipes.map((recipe) => (
+            {pageItems.map((recipe) => (
               <div
                 className="rounded-md border border-stone-200 p-4"
                 key={recipe.id}
@@ -122,6 +137,11 @@ export default async function RecipesPage() {
             ))}
           </div>
         )}
+        <TablePagination
+          basePath="/admin/recipes"
+          searchParams={params}
+          {...pagination}
+        />
       </Card>
     </>
   );

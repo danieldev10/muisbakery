@@ -132,26 +132,26 @@ export function SideNav({ items }: { items: NavItem[] }) {
     <aside
       className={
         collapsed
-          ? "sticky top-16 h-[calc(100vh-4rem)] w-[72px] shrink-0 overflow-y-auto overflow-x-hidden border-r border-stone-200 bg-white transition-[width] duration-200"
-          : "sticky top-16 h-[calc(100vh-4rem)] w-[264px] shrink-0 overflow-y-auto overflow-x-hidden border-r border-stone-200 bg-white transition-[width] duration-200"
+          ? "sticky top-16 h-[calc(100vh-4rem)] w-[72px] shrink-0 overflow-y-auto overflow-x-hidden border-r border-[color:var(--border-muted)] bg-[var(--surface)] text-[var(--text-secondary)] transition-[width] duration-200"
+          : "sticky top-16 h-[calc(100vh-4rem)] w-[264px] shrink-0 overflow-y-auto overflow-x-hidden border-r border-[color:var(--border-muted)] bg-[var(--surface)] text-[var(--text-secondary)] transition-[width] duration-200"
       }
     >
       <div
         className={
           collapsed
-            ? "flex h-14 items-center justify-center border-b border-stone-100 px-2"
-            : "flex h-14 items-center justify-between gap-2 border-b border-stone-100 px-3"
+            ? "flex h-14 items-center justify-center border-b border-[color:var(--border-muted)] px-2"
+            : "flex h-14 items-center justify-between gap-2 border-b border-[color:var(--border-muted)] px-3"
         }
       >
         {collapsed ? null : (
-          <p className="truncate text-xs font-semibold uppercase text-stone-500">
+          <p className="truncate text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
             Menu
           </p>
         )}
         <button
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="inline-flex size-9 items-center justify-center rounded-md border border-stone-200 bg-white text-stone-700 transition hover:bg-stone-100"
+          className="inline-flex size-9 items-center justify-center rounded-md border border-[color:var(--border-muted)] bg-white text-[var(--text-muted)] transition hover:border-[var(--brand-burgundy)] hover:text-[var(--brand-burgundy)]"
           onClick={toggleCollapsed}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           type="button"
@@ -169,8 +169,8 @@ export function SideNav({ items }: { items: NavItem[] }) {
               <span
                 className={
                   collapsed
-                    ? "inline-flex h-10 w-full items-center justify-center rounded-md text-stone-400"
-                    : "inline-flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-stone-400"
+                    ? "inline-flex h-10 w-full items-center justify-center rounded-md text-[var(--text-muted)]"
+                    : "inline-flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-[var(--text-muted)]"
                 }
                 key={item.label}
                 title={item.label}
@@ -195,11 +195,11 @@ export function SideNav({ items }: { items: NavItem[] }) {
               className={
                 active
                   ? collapsed
-                    ? "inline-flex h-10 w-full items-center justify-center rounded-md bg-stone-900 text-white"
-                    : "inline-flex h-10 w-full items-center gap-3 rounded-md bg-stone-900 px-3 text-sm font-medium text-white"
+                    ? "inline-flex h-10 w-full items-center justify-center rounded-md bg-[var(--brand-burgundy)] text-white shadow-[var(--shadow-whisper)]"
+                    : "inline-flex h-10 w-full items-center gap-3 rounded-md bg-[var(--brand-burgundy)] px-3 text-sm font-semibold text-white shadow-[var(--shadow-whisper)]"
                   : collapsed
-                    ? "inline-flex h-10 w-full items-center justify-center rounded-md text-stone-700 transition hover:bg-stone-100"
-                    : "inline-flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-stone-700 transition hover:bg-stone-100"
+                    ? "inline-flex h-10 w-full items-center justify-center rounded-md text-[var(--text-secondary)] transition hover:bg-[var(--brand-tint)] hover:text-[var(--brand-burgundy)]"
+                    : "inline-flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--brand-tint)] hover:text-[var(--brand-burgundy)]"
               }
               href={item.href}
               key={item.label}
