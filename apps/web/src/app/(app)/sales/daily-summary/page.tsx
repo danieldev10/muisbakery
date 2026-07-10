@@ -5,7 +5,11 @@ import {
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
-import type { PaymentMethod, SalesSummary } from "@/lib/operations/types";
+import type {
+  CustomerType,
+  PaymentMethod,
+  SalesSummary,
+} from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
 import {
   pageNumber,
@@ -26,6 +30,11 @@ const paymentLabels: Record<PaymentMethod, string> = {
   TRANSFER: "Transfer",
   POS: "POS",
   CREDIT: "Credit",
+};
+
+const customerTypeLabels: Record<CustomerType, string> = {
+  INDIVIDUAL: "Individual",
+  RETAILER: "Retailer",
 };
 
 function todayInputValue() {
@@ -93,6 +102,7 @@ export default async function SalesDailySummaryPage({
   );
   const salesQuery = firstParam(query, "q");
   const paymentFilter = firstParam(query, "payment");
+  const customerTypeFilter = firstParam(query, "customerType");
   const productFilter = firstParam(query, "product");
   const productOptions = [
     ...new Map(
@@ -112,6 +122,9 @@ export default async function SalesDailySummaryPage({
       matchesSearch(salesQuery, [
         sale.saleNumber,
         sale.customerName,
+        sale.customerType,
+        customerTypeLabels[sale.customerType],
+        sale.retailer?.name,
         sale.paymentMethod,
         paymentLabels[sale.paymentMethod],
         sale.totalAmount,
@@ -125,6 +138,7 @@ export default async function SalesDailySummaryPage({
         ]),
       ]) &&
       matchesSelect(paymentFilter, sale.paymentMethod) &&
+      matchesSelect(customerTypeFilter, sale.customerType) &&
       (!productFilter ||
         sale.items.some((item) => item.product.id === productFilter)),
   );
@@ -292,6 +306,13 @@ export default async function SalesDailySummaryPage({
                 ),
               },
               {
+                label: "Customer",
+                name: "customerType",
+                options: Object.entries(customerTypeLabels).map(
+                  ([value, label]) => ({ label, value }),
+                ),
+              },
+              {
                 label: "Product",
                 name: "product",
                 options: productOptions,
@@ -318,7 +339,12 @@ export default async function SalesDailySummaryPage({
             {pageItems.map((sale) => (
               <tr className="align-top" key={sale.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
-                  #{sale.saleNumber}
+                  <p>#{sale.saleNumber}</p>
+                  <p className="mt-1 text-xs font-normal text-stone-500">
+                    {sale.customerType === "RETAILER"
+                      ? sale.retailer?.name ?? sale.customerName ?? "Retailer"
+                      : "Individual"}
+                  </p>
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   <SaleItemsSummary

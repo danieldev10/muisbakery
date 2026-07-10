@@ -97,6 +97,48 @@ export type FinishedProductStockItem = {
   }>;
 };
 
+export type ManagementExpenseCategoryRef = {
+  id: string;
+  name: string;
+};
+
+export type ManagementExpenseCategoryOption = ManagementExpenseCategoryRef & {
+  description: string | null;
+};
+
+export type ManagementExpenseCategorySummary = {
+  category: ManagementExpenseCategoryRef;
+  count: number;
+  amount: string;
+};
+
+export type ManagementExpense = {
+  id: string;
+  amount: string;
+  incurredAt: string;
+  vendor: string | null;
+  paymentMethod: PaymentMethod;
+  notes: string | null;
+  createdAt: string;
+  category: ManagementExpenseCategoryRef;
+  createdBy: ManagementUserRef | null;
+  voidedAt: string | null;
+  voidedBy: ManagementUserRef | null;
+  voidReason: string | null;
+};
+
+export type ManagementExpensesReport = {
+  month: ManagementMonth;
+  summary: {
+    count: number;
+    voidedCount: number;
+    totalAmount: string;
+    byCategory: ManagementExpenseCategorySummary[];
+  };
+  categories: ManagementExpenseCategoryOption[];
+  expenses: ManagementExpense[];
+};
+
 export type ManagementProfitLossReport = {
   month: ManagementMonth;
   revenue: {
@@ -111,6 +153,11 @@ export type ManagementProfitLossReport = {
     materialPurchasedCost: string;
     materialIssuedCost: string;
   };
+  expenses: {
+    count: number;
+    totalOperatingExpenses: string;
+    byCategory: ManagementExpenseCategorySummary[];
+  };
   losses: {
     productionWasteQuantity: string;
     productionWasteEstimatedValue: string;
@@ -121,8 +168,9 @@ export type ManagementProfitLossReport = {
   };
   profit: {
     estimatedGrossProfit: string;
-    estimatedNetAfterRecordedLosses: string;
     grossMarginPercent: string;
+    estimatedNetProfit: string;
+    netMarginPercent: string;
   };
   notes: string[];
 };
@@ -242,6 +290,8 @@ export type ManagementDashboardReport = {
     totalRevenue: string;
     estimatedMaterialCost: string;
     estimatedGrossProfit: string;
+    estimatedNetProfit: string;
+    operatingExpenses: string;
     rawMaterialStockValue: string;
     finishedGoodsStockValue: string;
     productionRuns: number;

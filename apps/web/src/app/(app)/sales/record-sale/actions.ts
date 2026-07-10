@@ -30,6 +30,8 @@ export async function createSale(
     });
 
   const result = await apiSend("/sales/sales", "POST", {
+    customerType: getString(formData, "customerType"),
+    retailerId: getOptionalString(formData, "retailerId"),
     paymentMethod: getString(formData, "paymentMethod"),
     customerName: getOptionalString(formData, "customerName"),
     soldAt: getOptionalString(formData, "soldAt"),
@@ -44,6 +46,7 @@ export async function createSale(
   }
 
   revalidatePath("/sales/record-sale");
+  revalidatePath("/sales/retailers");
   revalidatePath("/sales/inventory");
   revalidatePath("/sales/daily-summary");
   revalidatePath("/sales/returns");

@@ -1,4 +1,10 @@
+import type { ReactNode } from "react";
+
 import { Card } from "@/components/admin/layout";
+
+export function ManagementPageShell({ children }: { children: ReactNode }) {
+  return <div className="grid gap-5 lg:gap-6">{children}</div>;
+}
 
 export function MonthFilter({ month }: { month: string }) {
   return (

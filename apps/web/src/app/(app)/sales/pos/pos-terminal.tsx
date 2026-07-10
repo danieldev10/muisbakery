@@ -15,9 +15,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 
 import type {
+  CustomerType,
   PaymentMethod,
   PosSession,
   PosTerminal as PosTerminalRecord,
+  Retailer,
   SalesInventoryItem,
   SalesOptions,
 } from "@/lib/operations/types";
@@ -48,6 +50,9 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   const [origin] = useState(() =>
     typeof window === "undefined" ? "" : window.location.origin,
   );
+  const [customerType, setCustomerType] =
+    useState<CustomerType>("INDIVIDUAL");
+  const [retailerId, setRetailerId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const terminalRef = useRef<PosTerminalRecord | null>(null);
   const terminalLoadPromiseRef = useRef<Promise<PosTerminalRecord | null> | null>(
@@ -80,6 +85,8 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       }
 
       setPaymentMethod(nextSession?.paymentMethod ?? "CASH");
+      setCustomerType(nextSession?.customerType ?? "INDIVIDUAL");
+      setRetailerId(nextSession?.retailer?.id ?? "");
     },
     [],
   );
@@ -221,6 +228,16 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   }, [options.products, query]);
 
   const active = session?.status === "ACTIVE";
+  const selectedRetailer: Retailer | null =
+    options.retailers.find((retailer) => retailer.id === retailerId) ??
+    session?.retailer ??
+    null;
+  const projectedRetailerCredit =
+    selectedRetailer && session
+      ? Number(selectedRetailer.availableCredit) - Number(session.totalAmount)
+      : null;
+  const retailerSelectionMissing =
+    customerType === "RETAILER" && retailerId.trim() === "";
   const displayUrl =
     terminal && origin
       ? `${origin}/customer-display/terminal/${terminal.displayToken}`
@@ -288,6 +305,42 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function changeCustomerType(nextType: CustomerType) {
+    setCustomerType(nextType);
+
+    if (nextType === "INDIVIDUAL") {
+      setRetailerId("");
+      setPaymentMethod("CASH");
+      await patchSession({
+        customerType: "INDIVIDUAL",
+        retailerId: null,
+        paymentMethod: "CASH",
+      });
+      return;
+    }
+
+    const nextRetailer = selectedRetailer ?? options.retailers[0] ?? null;
+
+    setRetailerId(nextRetailer?.id ?? "");
+    setPaymentMethod("CREDIT");
+    await patchSession({
+      customerType: "RETAILER",
+      retailerId: nextRetailer?.id ?? null,
+      paymentMethod: "CREDIT",
+    });
+  }
+
+  async function changeRetailer(nextRetailerId: string) {
+    setCustomerType("RETAILER");
+    setRetailerId(nextRetailerId);
+    setPaymentMethod("CREDIT");
+    await patchSession({
+      customerType: "RETAILER",
+      retailerId: nextRetailerId || null,
+      paymentMethod: "CREDIT",
+    });
   }
 
   function queueCartSync(
@@ -438,7 +491,10 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       await apiJson<PosSession>(`/sessions/${session.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          paymentMethod,
+          customerType,
+          retailerId: customerType === "RETAILER" ? retailerId || null : null,
+          paymentMethod:
+            customerType === "RETAILER" ? "CREDIT" : paymentMethod,
         }),
       });
       const completed = await apiJson<PosSession>(
@@ -739,8 +795,80 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
             </div>
 
             <div className="grid gap-3 border-t border-stone-200 pt-4">
+              <div className="grid gap-1.5">
+                <label
+                  className="text-sm font-medium text-stone-700"
+                  htmlFor="customerType"
+                >
+                  Customer type
+                </label>
+                <select
+                  className={fieldClass}
+                  id="customerType"
+                  onChange={(event) =>
+                    void changeCustomerType(event.target.value as CustomerType)
+                  }
+                  value={customerType}
+                >
+                  <option value="INDIVIDUAL">Individual</option>
+                  <option value="RETAILER">Retailer</option>
+                </select>
+              </div>
+
+              {customerType === "RETAILER" ? (
+                <div className="grid gap-2">
+                  <div className="grid gap-1.5">
+                    <label
+                      className="text-sm font-medium text-stone-700"
+                      htmlFor="retailerId"
+                    >
+                      Retailer account
+                    </label>
+                    <select
+                      className={fieldClass}
+                      id="retailerId"
+                      onChange={(event) => void changeRetailer(event.target.value)}
+                      value={retailerId}
+                    >
+                      <option value="">Select retailer</option>
+                      {options.retailers.map((retailer) => (
+                        <option key={retailer.id} value={retailer.id}>
+                          {retailer.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedRetailer ? (
+                    <div className="rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-warm)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                      <p>
+                        Available credit:{" "}
+                        <span className="font-semibold text-[var(--text-primary)]">
+                          {formatMoney(selectedRetailer.availableCredit)}
+                        </span>
+                      </p>
+                      <p
+                        className={
+                          projectedRetailerCredit !== null &&
+                          projectedRetailerCredit < 0
+                            ? "font-semibold text-red-800"
+                            : undefined
+                        }
+                      >
+                        After this sale:{" "}
+                        {formatMoney(projectedRetailerCredit ?? 0)}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                      Create or select a retailer account before checkout.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
               <select
                 className={fieldClass}
+                disabled={customerType === "RETAILER"}
                 onChange={(event) => {
                   const method = event.target.value as PaymentMethod;
                   setPaymentMethod(method);
@@ -769,7 +897,12 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
             <button
               className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
-              disabled={busy || cartIsSyncing || session.items.length === 0}
+              disabled={
+                busy ||
+                cartIsSyncing ||
+                session.items.length === 0 ||
+                retailerSelectionMissing
+              }
               onClick={checkout}
               type="button"
             >

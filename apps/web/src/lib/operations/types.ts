@@ -250,7 +250,26 @@ export type SalesInventoryItem = {
 
 export type PaymentMethod = "CASH" | "TRANSFER" | "POS" | "CREDIT";
 
+export type CustomerType = "INDIVIDUAL" | "RETAILER";
+
 export type SalesReturnDisposition = "RETURN_TO_STOCK" | "DAMAGED";
+
+export type Retailer = {
+  id: string;
+  name: string;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  creditLimit: string;
+  outstandingBalance: string;
+  availableCredit: string;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: UserRef | null;
+};
 
 export type SaleItemBatch = {
   id: string;
@@ -274,6 +293,8 @@ export type SaleItem = {
 export type Sale = {
   id: string;
   saleNumber: number;
+  customerType: CustomerType;
+  retailer: Retailer | null;
   paymentMethod: PaymentMethod;
   customerName: string | null;
   soldAt: string;
@@ -306,6 +327,7 @@ export type SaleItemOption = {
 export type SalesOptions = {
   products: SalesInventoryItem[];
   saleItems: SaleItemOption[];
+  retailers: Retailer[];
   paymentMethods: PaymentMethod[];
   returnDispositions: SalesReturnDisposition[];
 };
@@ -376,6 +398,8 @@ export type PosSession = {
     displayToken: string;
   } | null;
   status: PosSessionStatus;
+  customerType: CustomerType;
+  retailer: Retailer | null;
   customerName: string | null;
   paymentMethod: PaymentMethod;
   discount: string;

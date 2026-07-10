@@ -31,6 +31,7 @@ export const roleNav: Record<AppRole, NavItem[]> = {
   ],
   SALES: [
     { label: "Point of sale", href: "/sales/pos" },
+    { label: "Retailers", href: "/sales/retailers" },
     { label: "Inventory", href: "/sales/inventory" },
     { label: "Daily summary", href: "/sales/daily-summary" },
     { label: "Returns", href: "/sales/returns" },
@@ -38,6 +39,7 @@ export const roleNav: Record<AppRole, NavItem[]> = {
   MANAGEMENT: [
     { label: "Dashboard", href: "/management/dashboard" },
     { label: "Profit/loss", href: "/management/profit-loss" },
+    { label: "Expenses", href: "/management/expenses" },
     { label: "Inventory", href: "/management/inventory" },
     { label: "Production", href: "/management/production" },
     { label: "Sales", href: "/management/sales" },

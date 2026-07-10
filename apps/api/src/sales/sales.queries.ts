@@ -20,6 +20,21 @@ export const userSelect = {
   email: true,
 } satisfies Prisma.UserSelect;
 
+export const retailerSelect = {
+  id: true,
+  name: true,
+  contactPerson: true,
+  phone: true,
+  email: true,
+  address: true,
+  creditLimit: true,
+  notes: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+  createdBy: { select: userSelect },
+} satisfies Prisma.RetailerSelect;
+
 export const batchSelect = {
   id: true,
   batchNumber: true,
@@ -48,6 +63,7 @@ export const inventoryInclude = {
 
 export const saleInclude = {
   createdBy: { select: userSelect },
+  retailer: { select: retailerSelect },
   items: {
     include: {
       product: { select: productSelect },
@@ -127,6 +143,7 @@ export const posSessionInclude = {
       displayToken: true,
     },
   },
+  retailer: { select: retailerSelect },
   completedSale: {
     select: {
       id: true,
@@ -153,6 +170,10 @@ export const posTerminalInclude = {
 
 export type ProductInventory = Prisma.ProductGetPayload<{
   include: typeof inventoryInclude;
+}>;
+
+export type RetailerWithCreatedBy = Prisma.RetailerGetPayload<{
+  select: typeof retailerSelect;
 }>;
 
 export type SaleWithIncludes = Prisma.SaleGetPayload<{

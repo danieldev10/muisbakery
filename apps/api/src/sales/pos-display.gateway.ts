@@ -9,6 +9,7 @@ import {
 } from "@nestjs/websockets";
 import type { Namespace, Socket } from "socket.io";
 
+import { getWebOrigin } from "../config/env";
 import {
   PosDisplayEvents,
   posDisplaySessionRoom,
@@ -32,7 +33,9 @@ function errorMessage(error: unknown) {
 @WebSocketGateway({
   namespace: "/sales/pos/display",
   cors: {
-    origin: true,
+    // Same origin the HTTP API trusts — the customer display pages are
+    // served from the web app, so nothing else needs socket access.
+    origin: getWebOrigin(),
     credentials: true,
   },
 })

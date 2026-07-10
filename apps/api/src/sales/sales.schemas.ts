@@ -1,4 +1,8 @@
-import { PaymentMethod, SalesReturnDisposition } from "@prisma/client";
+import {
+  CustomerType,
+  PaymentMethod,
+  SalesReturnDisposition,
+} from "@prisma/client";
 import { z } from "zod";
 
 const optionalText = (max = 300) =>
@@ -18,6 +22,17 @@ const optionalDate = z.preprocess(
   (value) =>
     typeof value === "string" && value.trim() === "" ? undefined : value,
   z.coerce.date().optional(),
+);
+
+const optionalId = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().min(1).optional(),
+);
+
+const nullableId = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+  z.string().trim().min(1).nullable().optional(),
 );
 
 const quantitySchema = z.coerce
@@ -60,6 +75,8 @@ const saleItemSchema = z.object({
 
 export const createSaleSchema = z
   .object({
+    customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
+    retailerId: optionalId,
     paymentMethod: z.enum(PaymentMethod),
     customerName: optionalText(160),
     soldAt: optionalDate,
@@ -81,6 +98,32 @@ export const createSaleSchema = z
       }
       productIds.add(item.productId);
     });
+
+    if (value.customerType === CustomerType.RETAILER) {
+      if (!value.retailerId) {
+        context.addIssue({
+          code: "custom",
+          message: "Select a retailer for retailer sales.",
+          path: ["retailerId"],
+        });
+      }
+
+      if (value.paymentMethod !== PaymentMethod.CREDIT) {
+        context.addIssue({
+          code: "custom",
+          message: "Retailer sales must use credit.",
+          path: ["paymentMethod"],
+        });
+      }
+    }
+
+    if (value.customerType === CustomerType.INDIVIDUAL && value.retailerId) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer can only be selected for retailer sales.",
+        path: ["retailerId"],
+      });
+    }
   });
 
 export const recordReturnSchema = z
@@ -126,11 +169,15 @@ export const createPosTerminalSchema = z.object({
 });
 
 export const createPosSessionSchema = z.object({
+  customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
+  retailerId: optionalId,
   customerName: optionalText(160),
   terminalId: optionalText(80),
 });
 
 export const updatePosSessionSchema = z.object({
+  customerType: z.enum(CustomerType).optional(),
+  retailerId: nullableId,
   customerName: nullableText(160),
   paymentMethod: z.enum(PaymentMethod).optional(),
   discount: optionalMoneySchema,
@@ -142,6 +189,27 @@ export const upsertPosSessionItemSchema = z.object({
   productId: z.string().trim().min(1),
   quantity: nonnegativeQuantitySchema,
   unitPrice: optionalMoneySchema,
+});
+
+export const createRetailerSchema = z.object({
+  name: z.string().trim().min(1, "Retailer name is required.").max(160),
+  contactPerson: optionalText(120),
+  phone: optionalText(40),
+  email: optionalText(160),
+  address: optionalText(300),
+  creditLimit: moneySchema.positive("Credit limit must be greater than zero."),
+  notes: optionalText(500),
+});
+
+export const updateRetailerSchema = z.object({
+  name: optionalText(160),
+  contactPerson: nullableText(120),
+  phone: nullableText(40),
+  email: nullableText(160),
+  address: nullableText(300),
+  creditLimit: optionalMoneySchema,
+  notes: nullableText(500),
+  isActive: z.coerce.boolean().optional(),
 });
 
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;

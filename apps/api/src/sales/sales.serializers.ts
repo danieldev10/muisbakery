@@ -4,6 +4,7 @@ import type {
   PosSessionWithIncludes,
   PosTerminalWithIncludes,
   ProductInventory,
+  RetailerWithCreatedBy,
   SaleItemOption,
   SalesReturnWithIncludes,
   SaleWithIncludes,
@@ -53,10 +54,39 @@ export function serializeInventoryItem(product: ProductInventory) {
   };
 }
 
+export function serializeRetailer(
+  retailer: RetailerWithCreatedBy,
+  credit: { outstandingBalance?: number; availableCredit?: number } = {},
+) {
+  const creditLimit = decimalToNumber(retailer.creditLimit);
+  const outstandingBalance = credit.outstandingBalance ?? 0;
+  const availableCredit =
+    credit.availableCredit ?? Math.max(0, creditLimit - outstandingBalance);
+
+  return {
+    id: retailer.id,
+    name: retailer.name,
+    contactPerson: retailer.contactPerson,
+    phone: retailer.phone,
+    email: retailer.email,
+    address: retailer.address,
+    creditLimit: retailer.creditLimit.toString(),
+    outstandingBalance: outstandingBalance.toFixed(2),
+    availableCredit: availableCredit.toFixed(2),
+    notes: retailer.notes,
+    isActive: retailer.isActive,
+    createdAt: retailer.createdAt.toISOString(),
+    updatedAt: retailer.updatedAt.toISOString(),
+    createdBy: retailer.createdBy,
+  };
+}
+
 export function serializeSale(sale: SaleWithIncludes) {
   return {
     id: sale.id,
     saleNumber: sale.saleNumber,
+    customerType: sale.customerType,
+    retailer: sale.retailer ? serializeRetailer(sale.retailer) : null,
     paymentMethod: sale.paymentMethod,
     customerName: sale.customerName,
     soldAt: sale.soldAt.toISOString(),
@@ -186,6 +216,8 @@ export function serializePosSession(session: PosSessionWithIncludes) {
     displayToken: session.displayToken,
     terminal: session.terminal,
     status: session.status,
+    customerType: session.customerType,
+    retailer: session.retailer ? serializeRetailer(session.retailer) : null,
     customerName: session.customerName,
     paymentMethod: session.paymentMethod,
     discount: session.discount.toString(),

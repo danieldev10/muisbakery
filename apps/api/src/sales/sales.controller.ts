@@ -34,6 +34,25 @@ export class SalesController {
     return this.sales.options();
   }
 
+  @Get("retailers")
+  retailers() {
+    return this.sales.listRetailers();
+  }
+
+  @Post("retailers")
+  createRetailer(@Body() body: unknown, @Req() request: Request) {
+    return this.sales.createRetailer(body, getRequestUser(request));
+  }
+
+  @Patch("retailers/:id")
+  updateRetailer(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.updateRetailer(id, body, getRequestUser(request));
+  }
+
   @Get("sales")
   salesList() {
     return this.sales.listSales();

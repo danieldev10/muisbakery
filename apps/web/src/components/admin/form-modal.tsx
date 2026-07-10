@@ -23,6 +23,7 @@ type ModalChildren = ReactNode | ((controls: ModalControls) => ReactNode);
 type AdminModalProps = {
   children: ModalChildren;
   description?: string;
+  eyebrow?: string;
   title: string;
   triggerLabel: string;
   triggerTitle?: string;
@@ -39,12 +40,14 @@ function renderModalChildren(children: ModalChildren, controls: ModalControls) {
 function ModalFrame({
   children,
   description,
+  eyebrow = "Admin",
   onClose,
   title,
   widthClassName = "max-w-2xl",
 }: {
   children: ReactNode;
   description?: string;
+  eyebrow?: string;
   onClose: () => void;
   title: string;
   widthClassName?: string;
@@ -73,7 +76,7 @@ function ModalFrame({
         <div className="flex items-start justify-between gap-4 border-b border-[color:var(--border-muted)] px-5 py-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--brand-burgundy)]">
-              Admin
+              {eyebrow}
             </p>
             <h2 className="mt-1 text-xl font-semibold leading-tight text-[var(--text-primary)]">
               {title}
@@ -124,6 +127,7 @@ function ModalTrigger({
 export function AdminModal({
   children,
   description,
+  eyebrow,
   title,
   triggerLabel,
   triggerTitle,
@@ -143,6 +147,7 @@ export function AdminModal({
       {open ? (
         <ModalFrame
           description={description}
+          eyebrow={eyebrow}
           onClose={controls.close}
           title={title}
           widthClassName={widthClassName}
@@ -197,6 +202,7 @@ export function AdminFormModal({
   action,
   children,
   description,
+  eyebrow,
   submitLabel,
   title,
   triggerLabel,
@@ -210,6 +216,7 @@ export function AdminFormModal({
   return (
     <AdminModal
       description={description}
+      eyebrow={eyebrow}
       title={title}
       triggerLabel={triggerLabel}
       triggerTitle={triggerTitle}

@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { hash } from "bcryptjs";
 import {
+  CustomerType,
   FinishedProductStockMovementType,
   MaterialRequestStatus,
   PaymentMethod,
@@ -42,6 +43,17 @@ const DEFAULT_SETTINGS: Record<string, boolean> = {
   requireMaterialRequestApproval: true,
   requireStockAdjustmentApproval: true,
 };
+
+const DEFAULT_EXPENSE_CATEGORIES = [
+  { name: "Rent", description: "Shop and bakery premises rent." },
+  { name: "Salaries & wages", description: "Staff pay and allowances." },
+  { name: "Utilities", description: "Electricity, water, and gas." },
+  { name: "Fuel & generator", description: "Diesel, petrol, and generator maintenance." },
+  { name: "Transport & delivery", description: "Delivery runs and logistics." },
+  { name: "Packaging", description: "Nylon, wrappers, and branded packaging." },
+  { name: "Equipment & maintenance", description: "Repairs and spare parts." },
+  { name: "Other", description: "Anything that does not fit another category." },
+];
 
 const DEMO_SUPPLIER = {
   name: "Muis Bakery Demo Supplier",
@@ -239,6 +251,70 @@ const DEMO_SALES = [
   },
 ] as const;
 
+const DEMO_RETAILERS = [
+  {
+    name: "Amina Stores",
+    contactPerson: "Amina Yusuf",
+    phone: "08030000001",
+    email: "amina.stores@muisbakery.local",
+    address: "Market Road retail kiosk",
+    creditLimit: 500000,
+    notes: "Seeded retailer account for credit-limit sales testing.",
+  },
+  {
+    name: "Neighbourhood Shop",
+    contactPerson: "Retail Desk",
+    phone: "08030000002",
+    email: "neighbourhood.shop@muisbakery.local",
+    address: "Neighbourhood estate store",
+    creditLimit: 350000,
+    notes: "Seeded retailer account for credit-limit sales testing.",
+  },
+] as const;
+
+const DEMO_EXPENSES = [
+  {
+    categoryName: "Rent",
+    amount: 150000,
+    incurredDaysAgo: 8,
+    vendor: "Muis Bakery Premises",
+    paymentMethod: PaymentMethod.TRANSFER,
+    note: "Monthly bakery premises rent.",
+  },
+  {
+    categoryName: "Salaries & wages",
+    amount: 220000,
+    incurredDaysAgo: 6,
+    vendor: "Staff payroll",
+    paymentMethod: PaymentMethod.TRANSFER,
+    note: "Weekly staff wage run.",
+  },
+  {
+    categoryName: "Utilities",
+    amount: 38500,
+    incurredDaysAgo: 4,
+    vendor: "Electricity and water",
+    paymentMethod: PaymentMethod.TRANSFER,
+    note: "Electricity and water payment.",
+  },
+  {
+    categoryName: "Fuel & generator",
+    amount: 52000,
+    incurredDaysAgo: 3,
+    vendor: "Generator fuel supplier",
+    paymentMethod: PaymentMethod.CASH,
+    note: "Generator fuel for production week.",
+  },
+  {
+    categoryName: "Packaging",
+    amount: 28000,
+    incurredDaysAgo: 2,
+    vendor: "Packaging supplier",
+    paymentMethod: PaymentMethod.POS,
+    note: "Bread wrappers and carry bags.",
+  },
+] as const;
+
 function toBatchDate(value: Date) {
   return new Date(
     Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()),
@@ -259,6 +335,15 @@ function decimalToNumber(value: Prisma.Decimal | number | string) {
 
 function hoursAgo(hours: number) {
   return new Date(Date.now() - hours * 60 * 60 * 1000);
+}
+
+function currentMonthDateDaysAgo(daysAgo: number) {
+  const today = new Date();
+  const dayOfMonth = Math.max(1, today.getUTCDate() - daysAgo);
+
+  return new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), dayOfMonth),
+  );
 }
 
 async function seedAdmin() {
@@ -403,9 +488,41 @@ async function seedReferenceData() {
     });
   }
 
+  for (const category of DEFAULT_EXPENSE_CATEGORIES) {
+    await prisma.expenseCategory.upsert({
+      where: { name: category.name },
+      create: category,
+      update: {},
+    });
+  }
+
   console.log(
-    `Ensured ${DEFAULT_UNITS.length} default units and approval settings.`,
+    `Ensured ${DEFAULT_UNITS.length} default units, ${DEFAULT_EXPENSE_CATEGORIES.length} expense categories, and approval settings.`,
   );
+}
+
+async function seedDemoRetailers(salesUserId: string) {
+  for (const retailer of DEMO_RETAILERS) {
+    await prisma.retailer.upsert({
+      where: { name: retailer.name },
+      create: {
+        ...retailer,
+        creditLimit: new Prisma.Decimal(retailer.creditLimit.toFixed(2)),
+        createdById: salesUserId,
+      },
+      update: {
+        contactPerson: retailer.contactPerson,
+        phone: retailer.phone,
+        email: retailer.email,
+        address: retailer.address,
+        creditLimit: new Prisma.Decimal(retailer.creditLimit.toFixed(2)),
+        notes: retailer.notes,
+        isActive: true,
+      },
+    });
+  }
+
+  console.log(`Ensured ${DEMO_RETAILERS.length} demo retailer accounts.`);
 }
 
 async function getUnitMap() {
@@ -1117,9 +1234,18 @@ async function createSaleForSeed(
       : totalAmount,
   );
   const balanceDue = roundMoney(totalAmount - amountPaid);
+  const retailer =
+    demoSale.paymentMethod === PaymentMethod.CREDIT
+      ? await tx.retailer.findUnique({
+          where: { name: demoSale.customerName },
+          select: { id: true, name: true },
+        })
+      : null;
   const sale = await tx.sale.create({
     data: {
-      customerName: demoSale.customerName,
+      customerType: retailer ? CustomerType.RETAILER : CustomerType.INDIVIDUAL,
+      retailerId: retailer?.id ?? null,
+      customerName: retailer?.name ?? demoSale.customerName,
       paymentMethod: demoSale.paymentMethod,
       soldAt,
       subtotal,
@@ -1425,10 +1551,85 @@ async function seedDamagedSalesStockForTesting(salesUserId: string) {
   console.log("Created demo damaged Sales stock record.");
 }
 
+async function seedOperatingExpensesForTesting(managementUserId: string) {
+  const categories = await prisma.expenseCategory.findMany({
+    where: {
+      name: { in: DEMO_EXPENSES.map((expense) => expense.categoryName) },
+    },
+    select: { id: true, name: true },
+  });
+  const categoryByName = new Map(
+    categories.map((category) => [category.name, category]),
+  );
+  let createdExpenses = 0;
+
+  for (const demoExpense of DEMO_EXPENSES) {
+    const category = categoryByName.get(demoExpense.categoryName);
+
+    if (!category) {
+      throw new Error(`Missing expense category ${demoExpense.categoryName}.`);
+    }
+
+    const notes = `${DEMO_WORKFLOW_MARKER}: ${demoExpense.note}`;
+    const existingExpense = await prisma.expense.findFirst({
+      where: {
+        notes,
+        categoryId: category.id,
+        voidedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (existingExpense) {
+      continue;
+    }
+
+    const amount = new Prisma.Decimal(roundMoney(demoExpense.amount).toFixed(2));
+    const incurredAt = currentMonthDateDaysAgo(demoExpense.incurredDaysAgo);
+    const expense = await prisma.expense.create({
+      data: {
+        categoryId: category.id,
+        amount,
+        incurredAt,
+        vendor: demoExpense.vendor,
+        paymentMethod: demoExpense.paymentMethod,
+        notes,
+        createdById: managementUserId,
+      },
+      select: { id: true, amount: true, incurredAt: true },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        action: "MANAGEMENT_EXPENSE_RECORDED",
+        entityType: "Expense",
+        entityId: expense.id,
+        actorId: managementUserId,
+        metadata: {
+          category: category.name,
+          amount: expense.amount.toString(),
+          incurredAt: expense.incurredAt.toISOString().slice(0, 10),
+          seeded: true,
+        },
+      },
+    });
+
+    createdExpenses += 1;
+  }
+
+  console.log(
+    createdExpenses === 0
+      ? "Demo operating expenses already exist."
+      : `Created ${createdExpenses} demo operating expenses for Management reporting.`,
+  );
+}
+
 async function main() {
   const admin = await seedAdmin();
   const demoUsers = await seedDemoRoleUsers(admin.id);
   await seedReferenceData();
+  await seedDemoRetailers(demoUsers.sales.id);
+  await seedOperatingExpensesForTesting(demoUsers.management.id);
   await seedDemoCatalogue();
   await topUpStoreStock(admin.id);
   await topUpProductionStockForTesting(

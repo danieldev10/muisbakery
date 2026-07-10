@@ -1,9 +1,4 @@
-import {
-  Card,
-  EmptyState,
-  PageHeader,
-  TableShell,
-} from "@/components/admin/layout";
+import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementSalesReport } from "@/lib/management/types";
@@ -25,6 +20,7 @@ import {
   formatMoney,
   formatQuantity,
   getMonthParam,
+  ManagementPageShell,
   MetricCard,
   MonthFilter,
   paymentLabels,
@@ -131,12 +127,7 @@ export default async function ManagementSalesPage({
   );
 
   return (
-    <>
-      <PageHeader
-        title="Sales report"
-        description={`Sales revenue, product movement, and returns for ${report.month.label}.`}
-      />
-
+    <ManagementPageShell>
       <MonthFilter month={report.month.value} />
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -400,6 +391,6 @@ export default async function ManagementSalesPage({
           {...returnsPagination}
         />
       </Card>
-    </>
+    </ManagementPageShell>
   );
 }

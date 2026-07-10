@@ -43,6 +43,11 @@ enum PaymentMethod {
   CREDIT
 }
 
+enum CustomerType {
+  INDIVIDUAL
+  RETAILER
+}
+
 enum SalesReturnDisposition {
   RETURN_TO_STOCK
   DAMAGED
@@ -96,8 +101,11 @@ model User {
   salesProductMovements       SalesProductStockMovement[]       @relation("SalesProductMovementActor")
   sales                       Sale[]                            @relation("SaleCreatedBy")
   salesReturns                SalesProductReturn[]              @relation("SalesReturnCreatedBy")
+  createdRetailers            Retailer[]                        @relation("RetailerCreatedBy")
   posSessions                 PosSession[]                      @relation("PosSessionCreatedBy")
   posTerminals                PosTerminal[]                     @relation("PosTerminalCreatedBy")
+  expenses                    Expense[]                         @relation("ExpenseCreatedBy")
+  voidedExpenses              Expense[]                         @relation("ExpenseVoidedBy")
 
   @@index([role])
   @@index([isActive])
@@ -225,7 +233,33 @@ model ExpenseCategory {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  expenses Expense[]
+
   @@index([isActive])
+}
+
+model Expense {
+  id            String        @id @default(cuid())
+  categoryId    String
+  amount        Decimal       @db.Decimal(14, 2)
+  incurredAt    DateTime      @db.Date
+  vendor        String?
+  paymentMethod PaymentMethod @default(CASH)
+  notes         String?
+  createdAt    DateTime  @default(now())
+  createdById  String?
+  // Expenses are voided, never deleted, so the books keep their trail.
+  voidedAt     DateTime?
+  voidedById   String?
+  voidReason   String?
+
+  category  ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdBy User?           @relation("ExpenseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy  User?           @relation("ExpenseVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  @@index([incurredAt])
+  @@index([categoryId])
+  @@index([createdById])
 }
 
 model Setting {
@@ -538,9 +572,33 @@ model SalesProductStockMovement {
   @@index([actorId])
 }
 
+model Retailer {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  contactPerson String?
+  phone         String?
+  email         String?
+  address       String?
+  creditLimit   Decimal  @db.Decimal(14, 2)
+  notes         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdById   String?
+
+  createdBy   User?        @relation("RetailerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  sales       Sale[]
+  posSessions PosSession[]
+
+  @@index([isActive])
+  @@index([createdById])
+}
+
 model Sale {
   id            String        @id @default(cuid())
   saleNumber    Int           @unique @default(autoincrement())
+  customerType  CustomerType   @default(INDIVIDUAL)
+  retailerId    String?
   paymentMethod PaymentMethod
   customerName  String?
   soldAt        DateTime
@@ -554,10 +612,13 @@ model Sale {
   createdById   String?
 
   createdBy  User?       @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  retailer   Retailer?   @relation(fields: [retailerId], references: [id], onDelete: Restrict)
   items      SaleItem[]
   posSession PosSession?
 
   @@index([soldAt])
+  @@index([customerType])
+  @@index([retailerId])
   @@index([paymentMethod])
   @@index([createdById])
 }
@@ -567,6 +628,8 @@ model PosSession {
   displayToken    String           @unique
   terminalId      String?
   status          PosSessionStatus @default(ACTIVE)
+  customerType    CustomerType     @default(INDIVIDUAL)
+  retailerId      String?
   customerName    String?
   paymentMethod   PaymentMethod    @default(CASH)
   discount        Decimal          @default(0) @db.Decimal(14, 2)
@@ -580,6 +643,7 @@ model PosSession {
   createdById     String?
 
   terminal           PosTerminal?     @relation("PosTerminalSessions", fields: [terminalId], references: [id], onDelete: SetNull)
+  retailer           Retailer?        @relation(fields: [retailerId], references: [id], onDelete: Restrict)
   currentForTerminal PosTerminal?     @relation("PosTerminalCurrentSession")
   createdBy          User?            @relation("PosSessionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   completedSale      Sale?            @relation(fields: [completedSaleId], references: [id], onDelete: SetNull)
@@ -587,6 +651,8 @@ model PosSession {
 
   @@index([status])
   @@index([terminalId])
+  @@index([customerType])
+  @@index([retailerId])
   @@index([createdById])
   @@index([createdAt])
 }

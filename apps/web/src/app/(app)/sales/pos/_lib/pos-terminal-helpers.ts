@@ -1,4 +1,5 @@
 import type {
+  CustomerType,
   PaymentMethod,
   PosSession,
   PosSessionItem,
@@ -21,6 +22,9 @@ export const iconButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-white text-[var(--text-secondary)] shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:bg-[var(--surface-warm)] hover:text-[var(--brand-burgundy)] disabled:cursor-not-allowed disabled:opacity-50";
 
 export type PosSessionPatch = {
+  customerType?: CustomerType;
+  retailerId?: string | null;
+  customerName?: string | null;
   paymentMethod?: PaymentMethod;
 };
 

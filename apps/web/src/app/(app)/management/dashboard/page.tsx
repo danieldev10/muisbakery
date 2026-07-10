@@ -1,4 +1,3 @@
-import { PageHeader } from "@/components/admin/layout";
 import type { ManagementDashboardReport } from "@/lib/management/types";
 import { apiGet } from "@/lib/server-api";
 
@@ -7,6 +6,7 @@ import {
   getMonthParam,
   formatMoney,
   formatQuantity,
+  ManagementPageShell,
   MetricCard,
   MonthFilter,
 } from "../_components";
@@ -23,12 +23,7 @@ export default async function ManagementDashboardPage({
   );
 
   return (
-    <>
-      <PageHeader
-        title="Management dashboard"
-        description={`Business overview for ${report.month.label}.`}
-      />
-
+    <ManagementPageShell>
       <MonthFilter month={report.month.value} />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -38,14 +33,14 @@ export default async function ManagementDashboardPage({
           detail={`${report.summary.productionRuns} production runs`}
         />
         <MetricCard
-          label="Estimated gross profit"
+          label="Estimated net profit"
           tone={
-            Number(report.summary.estimatedGrossProfit) < 0
+            Number(report.summary.estimatedNetProfit) < 0
               ? "warning"
               : "positive"
           }
-          value={formatMoney(report.summary.estimatedGrossProfit)}
-          detail={`Materials issued ${formatMoney(report.summary.estimatedMaterialCost)}`}
+          value={formatMoney(report.summary.estimatedNetProfit)}
+          detail={`Gross ${formatMoney(report.summary.estimatedGrossProfit)} | Expenses ${formatMoney(report.summary.operatingExpenses)}`}
         />
         <MetricCard
           label="Stock value"
@@ -66,7 +61,7 @@ export default async function ManagementDashboardPage({
       <div className="grid gap-4 lg:grid-cols-2">
         <DashboardChartCard
           title="Profitability"
-          description="Revenue, material cost, and estimated gross profit."
+          description="Revenue through net profit for the selected month."
           data={report.charts.profitability}
           mode="money"
           emptyText="No profit/loss data for this month."
@@ -93,6 +88,6 @@ export default async function ManagementDashboardPage({
           emptyText="No product sales for this month."
         />
       </div>
-    </>
+    </ManagementPageShell>
   );
 }

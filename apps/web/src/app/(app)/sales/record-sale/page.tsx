@@ -7,7 +7,12 @@ import {
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
-import type { PaymentMethod, Sale, SalesOptions } from "@/lib/operations/types";
+import type {
+  CustomerType,
+  PaymentMethod,
+  Sale,
+  SalesOptions,
+} from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
 import {
   pageNumber,
@@ -35,6 +40,11 @@ const paymentLabels: Record<PaymentMethod, string> = {
   TRANSFER: "Transfer",
   POS: "POS",
   CREDIT: "Credit",
+};
+
+const customerTypeLabels: Record<CustomerType, string> = {
+  INDIVIDUAL: "Individual",
+  RETAILER: "Retailer",
 };
 
 function formatDate(value: string) {
@@ -96,6 +106,9 @@ export default async function RecordSalePage({
     (sale) =>
       matchesSearch(query, [
         sale.saleNumber,
+        sale.customerType,
+        customerTypeLabels[sale.customerType],
+        sale.retailer?.name,
         sale.customerName,
         sale.paymentMethod,
         paymentLabels[sale.paymentMethod],
@@ -130,6 +143,43 @@ export default async function RecordSalePage({
         ) : (
           <AdminForm action={createSale} submitLabel="Record sale">
             <div className="grid gap-4 sm:grid-cols-4">
+              <div className="grid gap-1.5">
+                <label
+                  className="text-sm font-medium text-stone-700"
+                  htmlFor="customerType"
+                >
+                  Customer type <span className="text-red-700">*</span>
+                </label>
+                <select
+                  className={selectClass}
+                  defaultValue="INDIVIDUAL"
+                  id="customerType"
+                  name="customerType"
+                  required
+                >
+                  <option value="INDIVIDUAL">Individual</option>
+                  <option value="RETAILER">Retailer</option>
+                </select>
+              </div>
+              <div className="grid gap-1.5">
+                <label
+                  className="text-sm font-medium text-stone-700"
+                  htmlFor="retailerId"
+                >
+                  Retailer account
+                </label>
+                <select className={selectClass} id="retailerId" name="retailerId">
+                  <option value="">No retailer selected</option>
+                  {options.retailers.map((retailer) => (
+                    <option key={retailer.id} value={retailer.id}>
+                      {retailer.name} ({formatMoney(retailer.availableCredit)})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-stone-500">
+                  Retailer sales must use Credit.
+                </p>
+              </div>
               <div className="grid gap-1.5">
                 <label
                   className="text-sm font-medium text-stone-700"
@@ -282,7 +332,11 @@ export default async function RecordSalePage({
                   <p className="font-medium text-stone-900">
                     #{sale.saleNumber}
                   </p>
-                  {sale.customerName ? (
+                  {sale.customerType === "RETAILER" && sale.retailer ? (
+                    <p className="text-xs text-stone-500">
+                      {sale.retailer.name}
+                    </p>
+                  ) : sale.customerName ? (
                     <p className="text-xs text-stone-500">
                       {sale.customerName}
                     </p>

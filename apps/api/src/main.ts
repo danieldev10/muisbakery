@@ -4,10 +4,13 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 
 import { AppModule } from "./app.module";
+import { assertRequiredEnv, getWebOrigin } from "./config/env";
 
 async function bootstrap() {
+  assertRequiredEnv();
+
   const app = await NestFactory.create(AppModule);
-  const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
+  const webOrigin = getWebOrigin();
 
   app.enableCors({
     origin: webOrigin,

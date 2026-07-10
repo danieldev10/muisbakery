@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import {
+  CustomerType,
   FinishedProductStockMovementType,
   PaymentMethod,
   PosSessionStatus,
@@ -19,8 +21,10 @@ import { PosDisplayEvents } from "./pos-display-events";
 import {
   createPosSessionSchema,
   createPosTerminalSchema,
+  createRetailerSchema,
   createSaleSchema,
   recordReturnSchema,
+  updateRetailerSchema,
   updatePosSessionSchema,
   upsertPosSessionItemSchema,
   type CreateSaleInput,
@@ -30,6 +34,7 @@ import {
   posSessionInclude,
   posTerminalInclude,
   productSelect,
+  retailerSelect,
   returnInclude,
   saleInclude,
   saleItemOptionInclude,
@@ -41,6 +46,7 @@ import {
   serializeInventoryItem,
   serializePosSession,
   serializePosTerminal,
+  serializeRetailer,
   serializeReturn,
   serializeSale,
   serializeSaleItemOption,
@@ -82,7 +88,7 @@ export class SalesService {
   }
 
   async options() {
-    const [products, saleItems] = await Promise.all([
+    const [products, saleItems, retailers] = await Promise.all([
       this.prisma.product.findMany({
         where: {
           isActive: true,
@@ -96,6 +102,7 @@ export class SalesService {
         orderBy: { createdAt: "desc" },
         take: 80,
       }),
+      this.listRetailers(),
     ]);
 
     return {
@@ -103,9 +110,162 @@ export class SalesService {
       saleItems: saleItems
         .map(serializeSaleItemOption)
         .filter((item) => Number(item.returnableQuantity) > 0),
+      retailers: retailers.filter((retailer) => retailer.isActive),
       paymentMethods: Object.values(PaymentMethod),
       returnDispositions: Object.values(SalesReturnDisposition),
     };
+  }
+
+  async listRetailers() {
+    const retailers = await this.prisma.retailer.findMany({
+      select: retailerSelect,
+      orderBy: { name: "asc" },
+    });
+    const retailerIds = retailers.map((retailer) => retailer.id);
+    const balances =
+      retailerIds.length > 0
+        ? await this.prisma.sale.groupBy({
+            by: ["retailerId"],
+            where: {
+              retailerId: { in: retailerIds },
+              balanceDue: { gt: 0 },
+            },
+            _sum: { balanceDue: true },
+          })
+        : [];
+    const balanceByRetailer = new Map(
+      balances.map((entry) => [
+        entry.retailerId,
+        decimalToNumber(entry._sum.balanceDue ?? 0),
+      ]),
+    );
+
+    return retailers.map((retailer) => {
+      const creditLimit = decimalToNumber(retailer.creditLimit);
+      const outstandingBalance = balanceByRetailer.get(retailer.id) ?? 0;
+
+      return serializeRetailer(retailer, {
+        outstandingBalance,
+        availableCredit: Math.max(0, creditLimit - outstandingBalance),
+      });
+    });
+  }
+
+  async createRetailer(input: unknown, actor: AuthenticatedUser) {
+    const parsed = createRetailerSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const existing = await this.prisma.retailer.findUnique({
+      where: { name: parsed.data.name },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException("A retailer with this name already exists.");
+    }
+
+    const retailer = await this.prisma.retailer.create({
+      data: {
+        name: parsed.data.name,
+        contactPerson: parsed.data.contactPerson,
+        phone: parsed.data.phone,
+        email: parsed.data.email,
+        address: parsed.data.address,
+        creditLimit: new Prisma.Decimal(
+          roundMoney(parsed.data.creditLimit).toFixed(2),
+        ),
+        notes: parsed.data.notes,
+        createdById: actor.id,
+      },
+      select: retailerSelect,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "SALES_RETAILER_CREATED",
+      entityType: "Retailer",
+      entityId: retailer.id,
+      metadata: {
+        retailerName: retailer.name,
+        creditLimit: retailer.creditLimit.toString(),
+      },
+    });
+
+    return serializeRetailer(retailer);
+  }
+
+  async updateRetailer(
+    id: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = updateRetailerSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const target = await this.prisma.retailer.findUnique({
+      where: { id },
+      select: { id: true, name: true },
+    });
+
+    if (!target) {
+      throw new NotFoundException("Retailer not found.");
+    }
+
+    if (parsed.data.name && parsed.data.name !== target.name) {
+      const clash = await this.prisma.retailer.findUnique({
+        where: { name: parsed.data.name },
+        select: { id: true },
+      });
+
+      if (clash && clash.id !== target.id) {
+        throw new ConflictException("A retailer with this name already exists.");
+      }
+    }
+
+    if (
+      parsed.data.creditLimit !== undefined &&
+      parsed.data.creditLimit <= 0
+    ) {
+      throw new BadRequestException("Credit limit must be greater than zero.");
+    }
+
+    const retailer = await this.prisma.retailer.update({
+      where: { id },
+      data: {
+        name: parsed.data.name,
+        contactPerson: parsed.data.contactPerson,
+        phone: parsed.data.phone,
+        email: parsed.data.email,
+        address: parsed.data.address,
+        creditLimit:
+          parsed.data.creditLimit === undefined
+            ? undefined
+            : new Prisma.Decimal(roundMoney(parsed.data.creditLimit).toFixed(2)),
+        notes: parsed.data.notes,
+        isActive: parsed.data.isActive,
+      },
+      select: retailerSelect,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "SALES_RETAILER_UPDATED",
+      entityType: "Retailer",
+      entityId: retailer.id,
+      metadata: {
+        retailerName: retailer.name,
+        creditLimit: retailer.creditLimit.toString(),
+        isActive: retailer.isActive,
+      },
+    });
+
+    return serializeRetailer(retailer);
   }
 
   async createPosTerminal(input: unknown, actor: AuthenticatedUser) {
@@ -148,6 +308,28 @@ export class SalesService {
     }
 
     let terminalDisplayToken: string | null = null;
+    let retailer:
+      | { id: string; name: string; isActive: boolean }
+      | null = null;
+
+    if (parsed.data.customerType === CustomerType.RETAILER) {
+      if (!parsed.data.retailerId) {
+        throw new BadRequestException("Select a retailer for retailer sales.");
+      }
+
+      retailer = await this.prisma.retailer.findUnique({
+        where: { id: parsed.data.retailerId },
+        select: { id: true, name: true, isActive: true },
+      });
+
+      if (!retailer) {
+        throw new NotFoundException("Retailer not found.");
+      }
+
+      if (!retailer.isActive) {
+        throw new BadRequestException("That retailer account is inactive.");
+      }
+    }
 
     if (parsed.data.terminalId) {
       const terminal = await this.prisma.posTerminal.findUnique({
@@ -166,7 +348,10 @@ export class SalesService {
       data: {
         displayToken: generateDisplayToken(),
         terminalId: parsed.data.terminalId,
-        customerName: parsed.data.customerName,
+        customerType: parsed.data.customerType,
+        retailerId: retailer?.id ?? null,
+        customerName: retailer?.name ?? parsed.data.customerName,
+        paymentMethod: retailer ? PaymentMethod.CREDIT : PaymentMethod.CASH,
         createdById: actor.id,
         expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
       },
@@ -218,13 +403,54 @@ export class SalesService {
     const existing = await this.getPosSessionForActor(id, actor);
     this.assertActivePosSession(existing);
 
+    const nextCustomerType = parsed.data.customerType ?? existing.customerType;
+    const nextRetailerId =
+      nextCustomerType === CustomerType.RETAILER
+        ? parsed.data.retailerId === undefined
+          ? existing.retailerId
+          : parsed.data.retailerId
+        : null;
+    let retailer:
+      | { id: string; name: string; isActive: boolean }
+      | null = null;
+
+    if (nextCustomerType === CustomerType.RETAILER) {
+      if (!nextRetailerId) {
+        throw new BadRequestException("Select a retailer for retailer sales.");
+      }
+
+      retailer = await this.prisma.retailer.findUnique({
+        where: { id: nextRetailerId },
+        select: { id: true, name: true, isActive: true },
+      });
+
+      if (!retailer) {
+        throw new NotFoundException("Retailer not found.");
+      }
+
+      if (!retailer.isActive) {
+        throw new BadRequestException("That retailer account is inactive.");
+      }
+    }
+
     const session = await this.prisma.posSession.update({
       where: { id: existing.id },
       data: {
-        customerName: parsed.data.customerName,
-        paymentMethod: parsed.data.paymentMethod,
+        customerType: nextCustomerType,
+        retailerId: nextRetailerId,
+        customerName:
+          nextCustomerType === CustomerType.RETAILER
+            ? retailer?.name
+            : parsed.data.customerName,
+        paymentMethod:
+          nextCustomerType === CustomerType.RETAILER
+            ? PaymentMethod.CREDIT
+            : parsed.data.paymentMethod,
         discount: parsed.data.discount,
-        amountPaid: parsed.data.amountPaid,
+        amountPaid:
+          nextCustomerType === CustomerType.RETAILER
+            ? null
+            : parsed.data.amountPaid,
         notes: parsed.data.notes,
       },
       include: posSessionInclude,
@@ -337,10 +563,18 @@ export class SalesService {
     }
 
     const parsed = createSaleSchema.safeParse({
-      paymentMethod: session.paymentMethod,
+      customerType: session.customerType,
+      retailerId: session.retailerId ?? undefined,
+      paymentMethod:
+        session.customerType === CustomerType.RETAILER
+          ? PaymentMethod.CREDIT
+          : session.paymentMethod,
       customerName: session.customerName ?? undefined,
       discount: session.discount.toString(),
-      amountPaid: session.amountPaid?.toString(),
+      amountPaid:
+        session.customerType === CustomerType.RETAILER
+          ? undefined
+          : session.amountPaid?.toString(),
       notes: session.notes
         ? `POS checkout. ${session.notes}`
         : `POS checkout from session ${session.id}.`,
@@ -547,10 +781,48 @@ export class SalesService {
     }
 
     const totalAmount = roundMoney(subtotal - discount);
-    const amountPaid = roundMoney(
+    const customerType = data.customerType ?? CustomerType.INDIVIDUAL;
+    let retailer:
+      | { id: string; name: string; creditLimit: Prisma.Decimal; isActive: boolean }
+      | null = null;
+    let paymentMethod = data.paymentMethod;
+    let customerName = data.customerName;
+    let amountPaid = roundMoney(
       data.amountPaid ??
-        (data.paymentMethod === PaymentMethod.CREDIT ? 0 : totalAmount),
+        (paymentMethod === PaymentMethod.CREDIT ? 0 : totalAmount),
     );
+
+    if (customerType === CustomerType.RETAILER) {
+      if (!data.retailerId) {
+        throw new BadRequestException("Select a retailer for retailer sales.");
+      }
+
+      await tx.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "Retailer" WHERE "id" = ${data.retailerId} FOR UPDATE`,
+      );
+
+      retailer = await tx.retailer.findUnique({
+        where: { id: data.retailerId },
+        select: {
+          id: true,
+          name: true,
+          creditLimit: true,
+          isActive: true,
+        },
+      });
+
+      if (!retailer) {
+        throw new NotFoundException("Retailer not found.");
+      }
+
+      if (!retailer.isActive) {
+        throw new BadRequestException("That retailer account is inactive.");
+      }
+
+      paymentMethod = PaymentMethod.CREDIT;
+      customerName = retailer.name;
+      amountPaid = 0;
+    }
 
     if (amountPaid > totalAmount) {
       throw new BadRequestException("Amount paid cannot exceed total amount.");
@@ -559,10 +831,40 @@ export class SalesService {
     const balanceDue = roundMoney(totalAmount - amountPaid);
     const soldAt = data.soldAt ?? new Date();
 
+    if (retailer) {
+      const currentBalance = await tx.sale.aggregate({
+        where: {
+          retailerId: retailer.id,
+          balanceDue: { gt: 0 },
+        },
+        _sum: { balanceDue: true },
+      });
+      const outstandingBalance = decimalToNumber(
+        currentBalance._sum.balanceDue ?? 0,
+      );
+      const availableCredit = roundMoney(
+        decimalToNumber(retailer.creditLimit) - outstandingBalance,
+      );
+
+      if (balanceDue > availableCredit) {
+        throw new BadRequestException(
+          `Retailer credit limit exceeded. Available credit is ₦${Math.max(
+            0,
+            availableCredit,
+          ).toLocaleString("en", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}.`,
+        );
+      }
+    }
+
     const createdSale = await tx.sale.create({
       data: {
-        paymentMethod: data.paymentMethod,
-        customerName: data.customerName,
+        customerType,
+        retailerId: retailer?.id ?? null,
+        paymentMethod,
+        customerName,
         soldAt,
         subtotal,
         discount,
@@ -674,6 +976,8 @@ export class SalesService {
         saleNumber: sale.saleNumber,
         totalAmount: sale.totalAmount.toString(),
         paymentMethod: sale.paymentMethod,
+        customerType: sale.customerType,
+        retailerId: sale.retailerId,
       },
     });
   }

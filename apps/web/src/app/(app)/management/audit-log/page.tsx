@@ -1,9 +1,4 @@
-import {
-  Card,
-  EmptyState,
-  PageHeader,
-  TableShell,
-} from "@/components/admin/layout";
+import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementAuditReport } from "@/lib/management/types";
@@ -20,7 +15,11 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { formatAction, formatDateTime } from "../_components";
+import {
+  formatAction,
+  formatDateTime,
+  ManagementPageShell,
+} from "../_components";
 
 export default async function ManagementAuditLogPage({
   searchParams,
@@ -63,12 +62,7 @@ export default async function ManagementAuditLogPage({
   );
 
   return (
-    <>
-      <PageHeader
-        title="Audit log"
-        description="Recent workflow activity across Store, Production, Sales, and Management."
-      />
-
+    <ManagementPageShell>
       <Card title={`Latest events (${filteredEntries.length} of ${report.entries.length})`}>
         {report.entries.length > 0 ? (
           <TableToolbar
@@ -132,6 +126,6 @@ export default async function ManagementAuditLogPage({
           {...pagination}
         />
       </Card>
-    </>
+    </ManagementPageShell>
   );
 }

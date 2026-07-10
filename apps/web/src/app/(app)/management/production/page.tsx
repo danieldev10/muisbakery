@@ -1,9 +1,4 @@
-import {
-  Card,
-  EmptyState,
-  PageHeader,
-  TableShell,
-} from "@/components/admin/layout";
+import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementProductionReport } from "@/lib/management/types";
@@ -25,6 +20,7 @@ import {
   formatMoney,
   formatQuantity,
   getMonthParam,
+  ManagementPageShell,
   MetricCard,
   MonthFilter,
 } from "../_components";
@@ -108,12 +104,7 @@ export default async function ManagementProductionPage({
   );
 
   return (
-    <>
-      <PageHeader
-        title="Production report"
-        description={`Production output, raw material usage, and waste for ${report.month.label}.`}
-      />
-
+    <ManagementPageShell>
       <MonthFilter month={report.month.value} />
 
       <div className="grid gap-4 md:grid-cols-5">
@@ -418,6 +409,6 @@ export default async function ManagementProductionPage({
           {...runsPagination}
         />
       </Card>
-    </>
+    </ManagementPageShell>
   );
 }

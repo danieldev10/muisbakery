@@ -1,9 +1,4 @@
-import {
-  Card,
-  EmptyState,
-  PageHeader,
-  TableShell,
-} from "@/components/admin/layout";
+import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
@@ -22,7 +17,13 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { formatDate, formatMoney, formatQuantity, MetricCard } from "../_components";
+import {
+  formatDate,
+  formatMoney,
+  formatQuantity,
+  ManagementPageShell,
+  MetricCard,
+} from "../_components";
 import { updateRawMaterialUnitCost } from "./actions";
 
 export default async function ManagementInventoryPage({
@@ -140,12 +141,7 @@ export default async function ManagementInventoryPage({
   );
 
   return (
-    <>
-      <PageHeader
-        title="Inventory valuation"
-        description="Current raw material and finished product stock values."
-      />
-
+    <ManagementPageShell>
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard
           label="Raw materials"
@@ -470,6 +466,6 @@ export default async function ManagementInventoryPage({
           {...productsPagination}
         />
       </Card>
-    </>
+    </ManagementPageShell>
   );
 }

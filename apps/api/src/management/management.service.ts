@@ -15,6 +15,7 @@ import { z } from "zod";
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { PrismaService } from "../database/prisma.service";
+import { getMonthRange, type MonthRange } from "./month-range";
 
 const LOW_STOCK_THRESHOLD = 10;
 const WORKFLOW_AUDIT_ACTIONS = [
@@ -27,6 +28,8 @@ const WORKFLOW_AUDIT_ACTIONS = [
   "SALE_RECORDED",
   "SALES_RETURN_OR_DAMAGE_RECORDED",
   "MANAGEMENT_RAW_MATERIAL_UNIT_COST_UPDATED",
+  "MANAGEMENT_EXPENSE_RECORDED",
+  "MANAGEMENT_EXPENSE_VOIDED",
 ];
 
 const unitSelect = {
@@ -173,13 +176,6 @@ type RawMaterialWithUnit = {
   baseUnit: UnitRef;
 };
 
-type MonthRange = {
-  month: string;
-  label: string;
-  start: Date;
-  end: Date;
-};
-
 type RawMaterialInventoryItem = Prisma.RawMaterialGetPayload<{
   include: typeof rawMaterialInventoryInclude;
 }>;
@@ -242,42 +238,6 @@ const unitCostSchema = z.object({
       .max(99_999_999),
   ),
 });
-
-function getMonthRange(month?: string): MonthRange {
-  const target = month?.trim();
-  let year: number;
-  let monthIndex: number;
-
-  if (!target) {
-    const today = new Date();
-    year = today.getFullYear();
-    monthIndex = today.getMonth();
-  } else {
-    const match = /^(\d{4})-(\d{2})$/.exec(target);
-
-    if (!match) {
-      throw new BadRequestException("Month must use YYYY-MM format.");
-    }
-
-    year = Number(match[1]);
-    monthIndex = Number(match[2]) - 1;
-
-    if (monthIndex < 0 || monthIndex > 11) {
-      throw new BadRequestException("Month must use a valid month number.");
-    }
-  }
-
-  const start = new Date(Date.UTC(year, monthIndex, 1));
-  const end = new Date(Date.UTC(year, monthIndex + 1, 1));
-  const normalizedMonth = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
-  const label = new Intl.DateTimeFormat("en", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(start);
-
-  return { month: normalizedMonth, label, start, end };
-}
 
 function serializeProduct(product: ProductWithUnitPrice) {
   return {
@@ -476,6 +436,8 @@ export class ManagementService {
         totalRevenue: profitLoss.revenue.totalRevenue,
         estimatedMaterialCost: profitLoss.costs.materialIssuedCost,
         estimatedGrossProfit: profitLoss.profit.estimatedGrossProfit,
+        estimatedNetProfit: profitLoss.profit.estimatedNetProfit,
+        operatingExpenses: profitLoss.expenses.totalOperatingExpenses,
         rawMaterialStockValue: inventory.valuation.rawMaterials,
         finishedGoodsStockValue: inventory.valuation.finishedGoods,
         productionRuns: production.summary.runsCount,
@@ -501,6 +463,16 @@ export class ManagementService {
             value: profitLoss.profit.estimatedGrossProfit,
             detail: `${profitLoss.profit.grossMarginPercent}% margin`,
           },
+          {
+            label: "Operating expenses",
+            value: profitLoss.expenses.totalOperatingExpenses,
+            detail: `${profitLoss.expenses.count} expenses`,
+          },
+          {
+            label: "Net profit",
+            value: profitLoss.profit.estimatedNetProfit,
+            detail: `${profitLoss.profit.netMarginPercent}% margin`,
+          },
         ],
         stockValue: [
           {
@@ -524,8 +496,14 @@ export class ManagementService {
     const range = getMonthRange(month);
     const salesWhere = getSaleWhere(range);
 
-    const [sales, materialReceipts, materialIssues, productionWaste, returns] =
-      await Promise.all([
+    const [
+      sales,
+      materialReceipts,
+      materialIssues,
+      productionWaste,
+      returns,
+      expenses,
+    ] = await Promise.all([
         this.prisma.sale.findMany({
           where: salesWhere,
           include: saleInclude,
@@ -569,6 +547,16 @@ export class ManagementService {
           where: getRecordedAtWhere(range),
           include: {
             product: { select: productSelect },
+          },
+        }),
+        this.prisma.expense.findMany({
+          where: {
+            incurredAt: { gte: range.start, lt: range.end },
+            voidedAt: null,
+          },
+          select: {
+            amount: true,
+            category: { select: { id: true, name: true } },
           },
         }),
       ]);
@@ -642,11 +630,34 @@ export class ManagementService {
     );
     const totalEstimatedLoss =
       productionWasteEstimatedValue + damagedReturnsEstimatedValue;
+
+    const operatingExpensesTotal = expenses.reduce(
+      (sum, expense) => sum + decimalToNumber(expense.amount),
+      0,
+    );
+    const expensesByCategory = new Map<
+      string,
+      { category: { id: string; name: string }; count: number; amount: number }
+    >();
+
+    for (const expense of expenses) {
+      const entry = expensesByCategory.get(expense.category.id) ?? {
+        category: expense.category,
+        count: 0,
+        amount: 0,
+      };
+      entry.count += 1;
+      entry.amount += decimalToNumber(expense.amount);
+      expensesByCategory.set(expense.category.id, entry);
+    }
+
     const estimatedGrossProfit = totalRevenue - materialIssuedCost;
-    const estimatedNetAfterRecordedLosses =
-      estimatedGrossProfit - totalEstimatedLoss;
+    const estimatedNetProfit =
+      estimatedGrossProfit - operatingExpensesTotal - totalEstimatedLoss;
     const grossMarginPercent =
       totalRevenue > 0 ? (estimatedGrossProfit / totalRevenue) * 100 : 0;
+    const netMarginPercent =
+      totalRevenue > 0 ? (estimatedNetProfit / totalRevenue) * 100 : 0;
 
     return {
       month: {
@@ -667,6 +678,17 @@ export class ManagementService {
         materialPurchasedCost: moneyString(materialPurchasedCost),
         materialIssuedCost: moneyString(materialIssuedCost),
       },
+      expenses: {
+        count: expenses.length,
+        totalOperatingExpenses: moneyString(operatingExpensesTotal),
+        byCategory: [...expensesByCategory.values()]
+          .sort((a, b) => b.amount - a.amount)
+          .map((entry) => ({
+            category: entry.category,
+            count: entry.count,
+            amount: moneyString(entry.amount),
+          })),
+      },
       losses: {
         productionWasteQuantity: countString(productionWasteQuantity),
         productionWasteEstimatedValue: moneyString(
@@ -681,16 +703,16 @@ export class ManagementService {
       },
       profit: {
         estimatedGrossProfit: moneyString(estimatedGrossProfit),
-        estimatedNetAfterRecordedLosses: moneyString(
-          estimatedNetAfterRecordedLosses,
-        ),
         grossMarginPercent: percentString(grossMarginPercent),
+        estimatedNetProfit: moneyString(estimatedNetProfit),
+        netMarginPercent: percentString(netMarginPercent),
       },
       notes: [
-        "Material costs are estimated from issued raw material batches with unit costs.",
+        "Cost of goods sold is estimated from raw material batches issued to production this month, at their recorded unit costs.",
+        "Operating expenses are the expenses recorded under Management > Expenses (voided expenses are excluded).",
         "Waste and damaged-return losses use product selling price as estimated retail value.",
         "Waste returned to production is reused in later runs and is not counted as a loss.",
-        "Overheads, salaries, rent, utilities, and other operating expenses are not modeled yet.",
+        "Net profit = gross profit - operating expenses - recorded losses.",
       ],
     };
   }

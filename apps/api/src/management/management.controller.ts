@@ -5,6 +5,7 @@ import {
   Inject,
   Param,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -13,6 +14,7 @@ import type { Request } from "express";
 
 import { getRequestUser } from "../auth/auth.types";
 import { ManagementGuard } from "../auth/management.guard";
+import { ExpensesService } from "./expenses.service";
 import { ManagementService } from "./management.service";
 
 @UseGuards(ManagementGuard)
@@ -21,6 +23,8 @@ export class ManagementController {
   constructor(
     @Inject(ManagementService)
     private readonly management: ManagementService,
+    @Inject(ExpensesService)
+    private readonly expenses: ExpensesService,
   ) {}
 
   @Get("dashboard")
@@ -49,6 +53,25 @@ export class ManagementController {
       body,
       getRequestUser(request),
     );
+  }
+
+  @Get("expenses")
+  listExpenses(@Query("month") month?: string) {
+    return this.expenses.list(month);
+  }
+
+  @Post("expenses")
+  createExpense(@Body() body: unknown, @Req() request: Request) {
+    return this.expenses.create(body, getRequestUser(request));
+  }
+
+  @Post("expenses/:id/void")
+  voidExpense(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.expenses.void(id, body, getRequestUser(request));
   }
 
   @Get("production")

@@ -1,5 +1,7 @@
 import {
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   UnauthorizedException,
@@ -20,6 +22,13 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const FAILED_LOGIN_ACTION = "AUTH_LOGIN_FAILED";
+const FAILED_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+// Per-email is strict; per-IP is looser because the whole bakery usually
+// shares one router, and a low IP limit would lock every terminal at once.
+const MAX_FAILURES_PER_EMAIL = 5;
+const MAX_FAILURES_PER_IP = 30;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -37,11 +46,15 @@ export class AuthService {
     }
 
     const email = parsed.data.email.toLowerCase();
+
+    await this.assertNotThrottled(email, request.ip);
+
     const user = await this.prisma.user.findUnique({
       where: { email },
     });
 
     if (!user || !user.isActive) {
+      await this.recordFailedLogin(email, request);
       throw new UnauthorizedException("Invalid email or password.");
     }
 
@@ -51,6 +64,7 @@ export class AuthService {
     );
 
     if (!passwordMatches) {
+      await this.recordFailedLogin(email, request);
       throw new UnauthorizedException("Invalid email or password.");
     }
 
@@ -135,6 +149,54 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  /**
+   * Failed attempts are read back from the audit log, so lockouts survive
+   * API restarts and leave an investigation trail for Management.
+   */
+  private async assertNotThrottled(email: string, ip: string | undefined) {
+    const since = new Date(Date.now() - FAILED_LOGIN_WINDOW_MS);
+    const [emailFailures, ipFailures] = await Promise.all([
+      this.prisma.auditLog.count({
+        where: {
+          action: FAILED_LOGIN_ACTION,
+          createdAt: { gte: since },
+          metadata: { path: ["email"], equals: email },
+        },
+      }),
+      ip
+        ? this.prisma.auditLog.count({
+            where: {
+              action: FAILED_LOGIN_ACTION,
+              createdAt: { gte: since },
+              ipAddress: ip,
+            },
+          })
+        : Promise.resolve(0),
+    ]);
+
+    if (
+      emailFailures >= MAX_FAILURES_PER_EMAIL ||
+      ipFailures >= MAX_FAILURES_PER_IP
+    ) {
+      throw new HttpException(
+        "Too many failed login attempts. Try again in a few minutes.",
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async recordFailedLogin(email: string, request: Request) {
+    await this.prisma.auditLog.create({
+      data: {
+        action: FAILED_LOGIN_ACTION,
+        entityType: "User",
+        ipAddress: request.ip,
+        userAgent: request.headers["user-agent"],
+        metadata: { email },
+      },
+    });
   }
 
   private async getUserFromRequest(request: Request) {
