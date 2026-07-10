@@ -48,3 +48,13 @@ CLAUDE.md
 docs/
 /.claude/
 /awesome-design-md
+
+apps/api/package*
+apps/web/package*
+
+package-lock.json
+
+.npmrc
+
+.gitignore
+
