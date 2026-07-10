@@ -28,29 +28,17 @@ export async function createProduct(
   return { ok: true, error: null, token: Date.now() };
 }
 
-export async function setProductActive(
+export async function updateProduct(
   _state: FormState,
   formData: FormData,
 ): Promise<FormState> {
   const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
-    isActive: formData.get("isActive") === "true",
-  });
-
-  if (!result.ok) {
-    return { ok: false, error: result.message };
-  }
-
-  revalidatePath(PATH);
-  return { ok: true, error: null, token: Date.now() };
-}
-
-export async function updateProductDetails(
-  _state: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
+    name: getString(formData, "name"),
     size: getOptionalString(formData, "size") ?? "",
-    unitPrice: getOptionalString(formData, "unitPrice"),
+    description: getOptionalString(formData, "description") ?? null,
+    unitId: getString(formData, "unitId"),
+    unitPrice: getOptionalString(formData, "unitPrice") ?? null,
+    isActive: getString(formData, "isActive") === "true",
   });
 
   if (!result.ok) {

@@ -1,9 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 
-import { AdminForm } from "@/components/admin/admin-form";
-import { TextareaField } from "@/components/admin/form-controls";
+import {
+  FormFeedback,
+  SubmitButton,
+  TextareaField,
+} from "@/components/admin/form-controls";
+import { AdminModal } from "@/components/admin/form-modal";
+import { initialFormState } from "@/lib/admin/types";
 import type {
   ProductionMaterialInventoryItem,
   ProductionProductOption,
@@ -31,11 +36,23 @@ function formatQuantity(value: number | string, unit: string) {
 export function ProductionOutputForm({
   products,
   inventory,
+  onClose,
 }: {
   products: ProductionProductOption[];
   inventory: ProductionMaterialInventoryItem[];
+  onClose?: () => void;
 }) {
+  const [state, formAction] = useActionState(
+    createProductionRun,
+    initialFormState,
+  );
   const [productId, setProductId] = useState(products[0]?.id ?? "");
+
+  useEffect(() => {
+    if (state.ok) {
+      onClose?.();
+    }
+  }, [onClose, state.ok, state.token]);
   const [quantityProduced, setQuantityProduced] = useState("");
   const [usageOverrides, setUsageOverrides] = useState<Record<string, string>>(
     {},
@@ -135,11 +152,7 @@ export function ProductionOutputForm({
   }
 
   return (
-    <AdminForm
-      action={createProductionRun}
-      resetOnSuccess={false}
-      submitLabel="Save output"
-    >
+    <form action={formAction} className="grid gap-4">
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="grid gap-1.5">
           <label className={labelClass} htmlFor="productId">
@@ -334,6 +347,46 @@ export function ProductionOutputForm({
       ) : null}
 
       <TextareaField label="Notes" name="notes" placeholder="Optional" />
-    </AdminForm>
+
+      {state.error ? <FormFeedback state={state} /> : null}
+
+      <div className="flex justify-end gap-2">
+        {onClose ? (
+          <button
+            className="inline-flex h-10 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-white px-4 text-sm font-semibold text-[var(--text-secondary)] transition hover:bg-[var(--surface-warm)]"
+            onClick={onClose}
+            type="button"
+          >
+            Cancel
+          </button>
+        ) : null}
+        <SubmitButton>Save output</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export function ProductionOutputModal({
+  products,
+  inventory,
+}: {
+  products: ProductionProductOption[];
+  inventory: ProductionMaterialInventoryItem[];
+}) {
+  return (
+    <AdminModal
+      description="Record finished goods, the materials actually used, and what goes to Sales."
+      title="Record production output"
+      triggerLabel="Record output"
+      widthClassName="max-w-3xl"
+    >
+      {({ close }) => (
+        <ProductionOutputForm
+          inventory={inventory}
+          onClose={close}
+          products={products}
+        />
+      )}
+    </AdminModal>
   );
 }

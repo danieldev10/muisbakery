@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function ProductionPage() {
-  redirect("/production/dashboard");
+  redirect("/production/inventory");
 }

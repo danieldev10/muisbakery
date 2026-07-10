@@ -857,7 +857,7 @@ export class SalesService {
           include: { batch: true },
           orderBy: { createdAt: "asc" },
         },
-        returns: { select: { quantity: true } },
+        returns: { select: { batchId: true, quantity: true } },
       },
     });
 
@@ -879,35 +879,76 @@ export class SalesService {
       );
     }
 
-    if (input.disposition === SalesReturnDisposition.DAMAGED) {
-      const damaged = await tx.salesProductReturn.create({
-        data: {
-          saleItemId: saleItem.id,
-          productId: saleItem.productId,
-          disposition: SalesReturnDisposition.DAMAGED,
-          quantity: input.quantity,
-          reason: input.reason,
-          recordedAt: input.recordedAt,
-          createdById: input.actorId,
-        },
-        include: returnInclude,
-      });
-
-      return [damaged];
-    }
-
     let remainingToReturn = input.quantity;
     const createdReturns: SalesReturnWithIncludes[] = [];
+    const returnedByBatch = new Map<string, number>();
+    let unbatchedReturnedQuantity = 0;
+
+    for (const entry of saleItem.returns) {
+      const quantity = decimalToNumber(entry.quantity);
+
+      if (entry.batchId) {
+        returnedByBatch.set(
+          entry.batchId,
+          roundQuantity((returnedByBatch.get(entry.batchId) ?? 0) + quantity),
+        );
+      } else {
+        unbatchedReturnedQuantity = roundQuantity(
+          unbatchedReturnedQuantity + quantity,
+        );
+      }
+    }
 
     for (const issue of saleItem.batchIssues) {
       if (remainingToReturn <= 0) {
         break;
       }
 
-      const issueQuantity = decimalToNumber(issue.quantity);
-      const quantityToBatch = roundQuantity(
-        Math.min(issueQuantity, remainingToReturn),
+      const issueQuantity = roundQuantity(decimalToNumber(issue.quantity));
+      const alreadyReturned = returnedByBatch.get(issue.batchId) ?? 0;
+      let availableFromIssue = roundQuantity(
+        Math.max(issueQuantity - alreadyReturned, 0),
       );
+
+      if (unbatchedReturnedQuantity > 0) {
+        const historicalReturnQuantity = roundQuantity(
+          Math.min(availableFromIssue, unbatchedReturnedQuantity),
+        );
+        availableFromIssue = roundQuantity(
+          availableFromIssue - historicalReturnQuantity,
+        );
+        unbatchedReturnedQuantity = roundQuantity(
+          unbatchedReturnedQuantity - historicalReturnQuantity,
+        );
+      }
+
+      const quantityToBatch = roundQuantity(
+        Math.min(availableFromIssue, remainingToReturn),
+      );
+
+      if (quantityToBatch <= 0) {
+        continue;
+      }
+
+      if (input.disposition === SalesReturnDisposition.DAMAGED) {
+        const createdReturn = await tx.salesProductReturn.create({
+          data: {
+            saleItemId: saleItem.id,
+            productId: saleItem.productId,
+            batchId: issue.batchId,
+            disposition: SalesReturnDisposition.DAMAGED,
+            quantity: quantityToBatch,
+            reason: input.reason,
+            recordedAt: input.recordedAt,
+            createdById: input.actorId,
+          },
+          include: returnInclude,
+        });
+
+        createdReturns.push(createdReturn);
+        remainingToReturn = roundQuantity(remainingToReturn - quantityToBatch);
+        continue;
+      }
 
       await tx.$queryRaw(
         Prisma.sql`SELECT "id" FROM "SalesProductBatch" WHERE "id" = ${issue.batchId} FOR UPDATE`,
@@ -953,6 +994,14 @@ export class SalesService {
 
       createdReturns.push(createdReturn);
       remainingToReturn = roundQuantity(remainingToReturn - quantityToBatch);
+    }
+
+    if (remainingToReturn > 0) {
+      throw new BadRequestException(
+        `Only ${formatQuantity(
+          roundQuantity(input.quantity - remainingToReturn),
+        )} ${saleItem.product.unit.abbreviation} can be matched to the original sale batches.`,
+      );
     }
 
     return createdReturns;

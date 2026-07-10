@@ -25,7 +25,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useSyncExternalStore, type ComponentType } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ComponentType,
+} from "react";
 
 import type { NavItem } from "@/lib/navigation";
 
@@ -50,13 +55,11 @@ const iconByHref: Record<string, IconComponent> = {
   "/store/receiving": PackageCheck,
   "/store/requests": ClipboardList,
   "/production/requests": ClipboardList,
-  "/production/dashboard": LayoutDashboard,
   "/production/inventory": Boxes,
   "/production/output": Factory,
   "/production/runs": ClipboardList,
   "/production/waste": PackageX,
   "/sales/pos": ShoppingCart,
-  "/sales/dashboard": LayoutDashboard,
   "/sales/inventory": PackageOpen,
   "/sales/record-sale": ReceiptText,
   "/sales/daily-summary": ChartColumn,
@@ -119,16 +122,35 @@ function subscribeToSidebarCollapsed(onStoreChange: () => void) {
 
 export function SideNav({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const collapsed = useSyncExternalStore(
     subscribeToSidebarCollapsed,
     getSidebarCollapsedSnapshot,
     getSidebarCollapsedServerSnapshot,
   );
 
+  useEffect(() => {
+    if (!pendingHref || !isActive(pathname, pendingHref)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setPendingHref(null);
+    }, 180);
+
+    return () => window.clearTimeout(timer);
+  }, [pathname, pendingHref]);
+
   function toggleCollapsed() {
     const nextValue = !collapsed;
     window.localStorage.setItem(sidebarStorageKey, String(nextValue));
     window.dispatchEvent(new Event(sidebarStorageEvent));
+  }
+
+  function handleNavClick(href: string) {
+    if (!isActive(pathname, href)) {
+      setPendingHref(href);
+    }
   }
 
   return (
@@ -190,22 +212,30 @@ export function SideNav({ items }: { items: NavItem[] }) {
             );
           }
 
-          const active = isActive(pathname, item.href);
+          const href = item.href;
+          const active = isActive(pathname, href);
+          const pending = pendingHref === href && !active;
 
           return (
             <Link
               aria-current={active ? "page" : undefined}
+              aria-busy={pending ? "true" : undefined}
               className={
                 active
                   ? collapsed
-                    ? "inline-flex h-10 w-full items-center justify-center rounded-md bg-[var(--brand-burgundy)] text-white shadow-[var(--shadow-whisper)]"
-                    : "inline-flex h-10 w-full items-center gap-3 rounded-md bg-[var(--brand-burgundy)] px-3 text-sm font-semibold text-white shadow-[var(--shadow-whisper)]"
+                    ? "relative inline-flex h-10 w-full items-center justify-center rounded-md bg-[var(--brand-burgundy)] text-white shadow-[var(--shadow-whisper)]"
+                    : "relative inline-flex h-10 w-full items-center gap-3 rounded-md bg-[var(--brand-burgundy)] px-3 text-sm font-semibold text-white shadow-[var(--shadow-whisper)]"
+                  : pending
+                    ? collapsed
+                      ? "relative inline-flex h-10 w-full items-center justify-center rounded-md bg-[var(--brand-tint)] text-[var(--brand-burgundy)] ring-1 ring-[var(--brand-tint-strong)]"
+                      : "relative inline-flex h-10 w-full items-center gap-3 rounded-md bg-[var(--brand-tint)] px-3 text-sm font-semibold text-[var(--brand-burgundy)] ring-1 ring-[var(--brand-tint-strong)]"
                   : collapsed
-                    ? "inline-flex h-10 w-full items-center justify-center rounded-md text-[var(--text-secondary)] transition hover:bg-[var(--brand-tint)] hover:text-[var(--brand-burgundy)]"
-                    : "inline-flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--brand-tint)] hover:text-[var(--brand-burgundy)]"
+                    ? "relative inline-flex h-10 w-full items-center justify-center rounded-md text-[var(--text-secondary)] transition hover:bg-[var(--brand-tint)] hover:text-[var(--brand-burgundy)]"
+                    : "relative inline-flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-[var(--text-secondary)] transition hover:bg-[var(--brand-tint)] hover:text-[var(--brand-burgundy)]"
               }
-              href={item.href}
+              href={href}
               key={item.label}
+              onClick={() => handleNavClick(href)}
               title={item.label}
             >
               <Icon aria-hidden={true} className="size-5 shrink-0" />
@@ -216,6 +246,16 @@ export function SideNav({ items }: { items: NavItem[] }) {
                   {item.label}
                 </span>
               )}
+              {pending ? (
+                <span
+                  aria-hidden={true}
+                  className={
+                    collapsed
+                      ? "absolute right-1.5 top-1.5 size-2 rounded-full bg-[var(--brand-burgundy)] shadow-[0_0_0_3px_var(--brand-tint)]"
+                      : "ml-auto size-2 rounded-full bg-[var(--brand-burgundy)] shadow-[0_0_0_3px_var(--brand-tint-strong)]"
+                  }
+                />
+              ) : null}
             </Link>
           );
         })}

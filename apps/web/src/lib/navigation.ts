@@ -23,15 +23,13 @@ export const roleNav: Record<AppRole, NavItem[]> = {
     { label: "Material requests", href: "/store/requests" },
   ],
   PRODUCTION: [
-    { label: "Dashboard", href: "/production/dashboard" },
-    { label: "Material requests", href: "/production/requests" },
     { label: "Inventory", href: "/production/inventory" },
+    { label: "Material requests", href: "/production/requests" },
     { label: "Output", href: "/production/output" },
     { label: "Runs", href: "/production/runs" },
     { label: "Waste", href: "/production/waste" },
   ],
   SALES: [
-    { label: "Dashboard", href: "/sales/dashboard" },
     { label: "Point of sale", href: "/sales/pos" },
     { label: "Inventory", href: "/sales/inventory" },
     { label: "Daily summary", href: "/sales/daily-summary" },

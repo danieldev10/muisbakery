@@ -27,8 +27,8 @@ export const roleDescriptions: Record<AppRole, string> = {
 export const roleDashboards: Record<AppRole, string> = {
   ADMIN: "/admin/dashboard",
   STORE: "/store/dashboard",
-  PRODUCTION: "/production/dashboard",
-  SALES: "/sales/dashboard",
+  PRODUCTION: "/production/inventory",
+  SALES: "/sales/pos",
   MANAGEMENT: "/management/dashboard",
 };
 

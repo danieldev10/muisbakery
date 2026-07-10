@@ -1,7 +1,6 @@
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
@@ -20,6 +19,8 @@ import {
   matchesSearch,
   matchesSelect,
 } from "@/lib/table-filters";
+
+import { RunMaterialsButton } from "./run-materials-modal";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -89,11 +90,6 @@ export default async function ProductionRunsPage({
 
   return (
     <>
-      <PageHeader
-        title="Production runs"
-        description="Finished goods produced by Production and transferred to Sales."
-      />
-
       <Card title={`Runs (${filteredRuns.length} of ${runs.length})`}>
         {runs.length > 0 ? (
           <TableToolbar
@@ -193,25 +189,12 @@ export default async function ProductionRunsPage({
                     run.product.unit.abbreviation,
                   )}
                 </td>
-                <td className="py-3 pr-4 text-stone-600">
-                  {run.materialUsages.length === 0 ? (
-                    "-"
-                  ) : (
-                    <ul className="grid gap-1">
-                      {run.materialUsages.map((usage) => (
-                        <li key={usage.id}>
-                          {usage.rawMaterial.name}: {usage.actualQuantity}{" "}
-                          {usage.rawMaterial.baseUnit.abbreviation}
-                          {usage.expectedQuantity ? (
-                            <span className="text-stone-400">
-                              {" "}
-                              expected {usage.expectedQuantity}
-                            </span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                <td className="py-3 pr-4">
+                  <RunMaterialsButton
+                    producedAt={formatDate(run.producedAt)}
+                    productLabel={formatProductName(run.product)}
+                    run={run}
+                  />
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatDate(run.producedAt)}

@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { NavigationProgress } from "@/components/layout/navigation-progress";
 import { NotificationsBell } from "@/components/layout/notifications-bell";
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import { SideNav } from "@/components/layout/side-nav";
@@ -38,6 +39,7 @@ export async function AppShell({ children, user }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-[var(--app-bg)] text-[var(--text-primary)]">
+      <NavigationProgress />
       <header className="sticky top-0 z-30 border-b border-[color:var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-whisper)]">
         <div className="flex min-h-16 w-full items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
           <Link className="flex items-center gap-3" href={getRoleHome(user.role)}>

@@ -3,7 +3,6 @@ import { Field, TextareaField } from "@/components/admin/form-controls";
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
@@ -125,11 +124,6 @@ export default async function RecordSalePage({
 
   return (
     <>
-      <PageHeader
-        title="Record sale"
-        description="Sell finished goods from Sales stock and reduce inventory by oldest batch first."
-      />
-
       <Card title="New sale">
         {stockedProducts.length === 0 ? (
           <EmptyState>No finished goods are available for sale.</EmptyState>

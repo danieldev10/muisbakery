@@ -1,13 +1,6 @@
-import { AdminForm } from "@/components/admin/admin-form";
-import {
-  Field,
-  SelectField,
-  TextareaField,
-} from "@/components/admin/form-controls";
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
@@ -32,6 +25,7 @@ import {
 } from "@/lib/table-filters";
 
 import { recordCustomerReturn, recordDamagedStock } from "./actions";
+import { CustomerReturnModal, DamagedStockModal } from "./return-modals";
 
 const dispositionLabels: Record<SalesReturnDisposition, string> = {
   RETURN_TO_STOCK: "Return to stock",
@@ -113,114 +107,33 @@ export default async function SalesReturnsPage({
       )})`,
     }));
 
-  const saleItemOptions = options.saleItems.map((item) => ({
-    value: item.id,
-    label: `#${item.sale.saleNumber} - ${formatProductName(item.product)} (${formatQuantity(
-      item.returnableQuantity,
-      item.product.unit.abbreviation,
-    )})`,
-  }));
+  const dispositionOptions = Object.entries(dispositionLabels).map(
+    ([value, label]) => ({
+      value: value as SalesReturnDisposition,
+      label,
+    }),
+  );
 
   return (
     <>
-      <PageHeader
-        title="Returns and damage"
-        description="Record customer returns and remove damaged stock from Sales inventory."
-      />
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Damaged stock">
-          {productOptions.length === 0 ? (
-            <EmptyState>No Sales stock is available to mark as damaged.</EmptyState>
-          ) : (
-            <AdminForm
+      <Card>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+            Recent returns and damage ({filteredReturns.length} of{" "}
+            {returns.length})
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            <DamagedStockModal
               action={recordDamagedStock}
-              submitLabel="Record damage"
-            >
-              <div className="grid gap-4 sm:grid-cols-2">
-                <SelectField
-                  label="Product"
-                  name="productId"
-                  options={productOptions}
-                  placeholder="Select product"
-                  required
-                />
-                <Field
-                  label="Quantity"
-                  min="0"
-                  name="quantity"
-                  required
-                  step="1"
-                  type="number"
-                />
-                <Field
-                  label="Recorded at"
-                  name="recordedAt"
-                  type="datetime-local"
-                />
-              </div>
-              <TextareaField
-                label="Reason"
-                name="reason"
-                placeholder="Optional"
-              />
-            </AdminForm>
-          )}
-        </Card>
-
-        <Card title="Customer return">
-          {saleItemOptions.length === 0 ? (
-            <EmptyState>No returnable sale items are available.</EmptyState>
-          ) : (
-            <AdminForm
+              productOptions={productOptions}
+            />
+            <CustomerReturnModal
               action={recordCustomerReturn}
-              submitLabel="Record return"
-            >
-              <SelectField
-                label="Sale item"
-                name="saleItemId"
-                options={saleItemOptions}
-                placeholder="Select sale item"
-                required
-              />
-              <div className="grid gap-4 sm:grid-cols-3">
-                <SelectField
-                  label="Outcome"
-                  name="disposition"
-                  options={[
-                    {
-                      value: "RETURN_TO_STOCK",
-                      label: dispositionLabels.RETURN_TO_STOCK,
-                    },
-                    { value: "DAMAGED", label: dispositionLabels.DAMAGED },
-                  ]}
-                  required
-                />
-                <Field
-                  label="Quantity"
-                  min="0"
-                  name="quantity"
-                  required
-                  step="1"
-                  type="number"
-                />
-                <Field
-                  label="Recorded at"
-                  name="recordedAt"
-                  type="datetime-local"
-                />
-              </div>
-              <TextareaField
-                label="Reason"
-                name="reason"
-                placeholder="Optional"
-              />
-            </AdminForm>
-          )}
-        </Card>
-      </div>
-
-      <Card title={`Recent returns and damage (${filteredReturns.length} of ${returns.length})`}>
+              dispositionOptions={dispositionOptions}
+              saleItems={options.saleItems}
+            />
+          </div>
+        </div>
         {returns.length > 0 ? (
           <TableToolbar
             basePath="/sales/returns"
@@ -239,9 +152,7 @@ export default async function SalesReturnsPage({
               {
                 label: "Outcome",
                 name: "disposition",
-                options: Object.entries(dispositionLabels).map(
-                  ([value, label]) => ({ label, value }),
-                ),
+                options: dispositionOptions,
               },
             ]}
           />

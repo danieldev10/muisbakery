@@ -1,14 +1,13 @@
-import { AdminForm } from "@/components/admin/admin-form";
 import {
   Field,
   SelectField,
   TextareaField,
 } from "@/components/admin/form-controls";
+import { AdminFormModal, AdminModal } from "@/components/admin/form-modal";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
@@ -130,55 +129,60 @@ export default async function ProductionRequestsPage({
 
   return (
     <>
-      <PageHeader
-        title="Material requests"
-        description="Request raw materials from Store and track issued quantities."
-      />
-
-      <Card title="New material request">
-        {materialOptions.length === 0 ? (
-          <EmptyState>
-            Active raw materials are required before Production can create
-            requests.
-          </EmptyState>
-        ) : (
-          <AdminForm
-            action={createMaterialRequest}
-            submitLabel="Request material"
-          >
-            <div className="grid gap-4 sm:grid-cols-3">
-              <SelectField
-                label="Raw material"
-                name="rawMaterialId"
-                options={materialOptions}
-                placeholder="Select material"
-                required
+      <Card>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+            Material requests ({filteredRequests.length} of {requests.length})
+          </h2>
+          {materialOptions.length === 0 ? (
+            <AdminModal
+              description="Active raw materials are required before Production can create requests."
+              title="New request"
+              triggerLabel="New request"
+            >
+              <EmptyState>
+                Ask an Admin to add raw materials before requesting stock.
+              </EmptyState>
+            </AdminModal>
+          ) : (
+            <AdminFormModal
+              action={createMaterialRequest}
+              description="Ask Store to issue raw materials from FIFO stock."
+              submitLabel="Request material"
+              title="New material request"
+              triggerLabel="New request"
+            >
+              <div className="grid gap-4 sm:grid-cols-3">
+                <SelectField
+                  label="Raw material"
+                  name="rawMaterialId"
+                  options={materialOptions}
+                  placeholder="Select material"
+                  required
+                />
+                <Field
+                  label="Quantity"
+                  min="1"
+                  name="requestedQuantity"
+                  placeholder="0"
+                  required
+                  step="1"
+                  type="number"
+                />
+                <Field
+                  label="Needed by"
+                  name="neededBy"
+                  type="datetime-local"
+                />
+              </div>
+              <TextareaField
+                label="Notes"
+                name="notes"
+                placeholder="Optional context for Store"
               />
-              <Field
-                label="Quantity"
-                min="1"
-                name="requestedQuantity"
-                placeholder="0"
-                required
-                step="1"
-                type="number"
-              />
-              <Field
-                label="Needed by"
-                name="neededBy"
-                type="datetime-local"
-              />
-            </div>
-            <TextareaField
-              label="Notes"
-              name="notes"
-              placeholder="Optional context for Store"
-            />
-          </AdminForm>
-        )}
-      </Card>
-
-      <Card title={`Requests (${filteredRequests.length} of ${requests.length})`}>
+            </AdminFormModal>
+          )}
+        </div>
         {requests.length > 0 ? (
           <TableToolbar
             basePath="/production/requests"

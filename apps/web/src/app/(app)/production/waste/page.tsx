@@ -1,7 +1,6 @@
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
@@ -102,11 +101,6 @@ export default async function ProductionWastePage({
 
   return (
     <>
-      <PageHeader
-        title="Production waste"
-        description="Waste and spoilage recorded during production runs."
-      />
-
       <Card title={`Waste records (${filteredWaste.length} of ${waste.length})`}>
         {waste.length > 0 ? (
           <TableToolbar

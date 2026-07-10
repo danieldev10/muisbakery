@@ -1,7 +1,6 @@
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TableToolbar } from "@/components/admin/table-toolbar";
@@ -20,7 +19,9 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { ProductionOutputForm } from "./production-output-form";
+import { AdminModal } from "@/components/admin/form-modal";
+
+import { ProductionOutputModal } from "./production-output-form";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -80,26 +81,29 @@ export default async function ProductionOutputPage({
 
   return (
     <>
-      <PageHeader
-        title="Production output"
-        description="Record finished goods and send available output directly to Sales."
-      />
-
-      <Card title="New production run">
-        {productsWithRecipes.length === 0 ? (
-          <EmptyState>
-            Active finished products with recipes are required before Production
-            can record output.
-          </EmptyState>
-        ) : (
-          <ProductionOutputForm
-            inventory={inventory}
-            products={productsWithRecipes}
-          />
-        )}
-      </Card>
-
-      <Card title={`Recent output (${filteredRuns.length} of ${runs.length})`}>
+      <Card>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+            Recent output ({filteredRuns.length} of {runs.length})
+          </h2>
+          {productsWithRecipes.length === 0 ? (
+            <AdminModal
+              description="Products need an active recipe before output can be recorded."
+              title="Record output"
+              triggerLabel="Record output"
+            >
+              <EmptyState>
+                Active finished products with recipes are required before
+                Production can record output.
+              </EmptyState>
+            </AdminModal>
+          ) : (
+            <ProductionOutputModal
+              inventory={inventory}
+              products={productsWithRecipes}
+            />
+          )}
+        </div>
         {runs.length > 0 ? (
           <TableToolbar
             basePath="/production/output"

@@ -27,6 +27,11 @@ export class ProductsController {
     return this.products.list();
   }
 
+  @Get("stats")
+  stats() {
+    return this.products.stats();
+  }
+
   @Post()
   create(@Body() body: unknown, @Req() request: Request) {
     return this.products.create(body, getRequestUser(request));

@@ -1,11 +1,10 @@
+import { ArrowRight, BookOpen, Layers3 } from "lucide-react";
 import Link from "next/link";
 
 import { AdminModal } from "@/components/admin/form-modal";
-import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
-  StatusBadge,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
@@ -23,7 +22,6 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { deleteRecipe } from "./actions";
 import { RecipeFormModal } from "./recipe-form";
 
 export default async function RecipesPage({
@@ -160,49 +158,65 @@ export default async function RecipesPage({
         ) : filteredRecipes.length === 0 ? (
           <EmptyState>No recipes match the current filters.</EmptyState>
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {pageItems.map((recipe) => (
-              <div
-                className="rounded-md border border-stone-200 p-4"
+              <Link
+                className={`group flex min-h-48 flex-col justify-between rounded-lg border border-[color:var(--border-muted)] bg-white p-4 shadow-[var(--shadow-whisper)] transition hover:-translate-y-0.5 hover:border-[var(--brand-burgundy)] hover:shadow-[var(--shadow-panel)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-burgundy)] ${
+                  recipe.isActive ? "" : "opacity-60"
+                }`}
+                href={`/admin/recipes/${recipe.id}`}
                 key={recipe.id}
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-stone-900">
-                        {formatProductName(recipe.product)}
-                      </h3>
-                      <StatusBadge active={recipe.isActive} />
-                    </div>
-                    <p className="mt-0.5 text-xs text-stone-500">
-                      Yields {recipe.yieldQuantity} per batch
-                    </p>
-                  </div>
-                  <InlineActionForm
-                    action={deleteRecipe}
-                    buttonClassName="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 transition hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-50"
-                    submitLabel="Delete"
-                  >
-                    <input name="id" type="hidden" value={recipe.id} />
-                  </InlineActionForm>
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="mt-1 text-lg font-semibold leading-tight text-[var(--text-primary)]">
+                    {formatProductName(recipe.product)}
+                  </h3>
+                  <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-warm)] text-[var(--brand-burgundy)] transition group-hover:border-[var(--brand-burgundy)] group-hover:bg-[var(--brand-tint)]">
+                    <BookOpen aria-hidden className="size-5" />
+                  </span>
                 </div>
-                <ul className="mt-3 grid gap-1 text-sm text-stone-700">
-                  {recipe.items.map((item) => (
-                    <li
-                      className="flex justify-between border-t border-stone-100 py-1"
-                      key={item.id}
-                    >
-                      <span>{item.rawMaterial.name}</span>
-                      <span className="text-stone-500">
-                        {item.quantity} {item.unit.abbreviation}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                {recipe.notes ? (
-                  <p className="mt-2 text-xs text-stone-500">{recipe.notes}</p>
-                ) : null}
-              </div>
+
+                <div className="mt-6">
+                  <p className="text-2xl font-semibold tracking-tight text-[var(--brand-burgundy)]">
+                    {Number(recipe.yieldQuantity).toLocaleString("en")}
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--text-muted)]">
+                    Yield per batch
+                  </p>
+                </div>
+
+                <div className="mt-5 grid gap-2 border-t border-[color:var(--border-muted)] pt-4 text-sm text-[var(--text-secondary)]">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="inline-flex items-center gap-1.5 text-[var(--text-muted)]">
+                      <Layers3 aria-hidden className="size-4" />
+                      Ingredients
+                    </span>
+                    <span className="font-semibold text-[var(--text-primary)]">
+                      {recipe.items.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[var(--text-muted)]">Status</span>
+                    <span className="inline-flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
+                      <span
+                        aria-hidden
+                        className={`size-2 rounded-full ${
+                          recipe.isActive ? "bg-emerald-500" : "bg-stone-300"
+                        }`}
+                      />
+                      {recipe.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                </div>
+
+                <span className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--brand-burgundy)]">
+                  View recipe
+                  <ArrowRight
+                    aria-hidden
+                    className="size-4 transition group-hover:translate-x-0.5"
+                  />
+                </span>
+              </Link>
             ))}
           </div>
         )}

@@ -64,6 +64,37 @@ export class ProductsService {
     return products.map(serialize);
   }
 
+  /** All-time produced and sold totals per product, for the admin overview chart. */
+  async stats() {
+    const [products, produced, sold] = await Promise.all([
+      this.prisma.product.findMany({
+        select: { id: true, name: true, size: true },
+        orderBy: { name: "asc" },
+      }),
+      this.prisma.productionRun.groupBy({
+        by: ["productId"],
+        _sum: { quantityProduced: true },
+      }),
+      this.prisma.saleItem.groupBy({
+        by: ["productId"],
+        _sum: { quantity: true },
+      }),
+    ]);
+
+    const producedById = new Map(
+      produced.map((entry) => [entry.productId, entry._sum.quantityProduced ?? 0]),
+    );
+    const soldById = new Map(
+      sold.map((entry) => [entry.productId, entry._sum.quantity ?? 0]),
+    );
+
+    return products.map((product) => ({
+      product,
+      totalProduced: producedById.get(product.id) ?? 0,
+      totalSold: soldById.get(product.id) ?? 0,
+    }));
+  }
+
   private async assertUnitExists(unitId: string) {
     const unit = await this.prisma.unit.findUnique({
       where: { id: unitId },

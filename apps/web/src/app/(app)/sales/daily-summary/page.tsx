@@ -1,7 +1,6 @@
 import {
   Card,
   EmptyState,
-  PageHeader,
   TableShell,
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
@@ -19,6 +18,8 @@ import {
   matchesSearch,
   matchesSelect,
 } from "@/lib/table-filters";
+
+import { SaleItemsSummary } from "./sale-items-summary";
 
 const paymentLabels: Record<PaymentMethod, string> = {
   CASH: "Cash",
@@ -134,11 +135,6 @@ export default async function SalesDailySummaryPage({
 
   return (
     <>
-      <PageHeader
-        title="Daily sales summary"
-        description="Sales revenue, payment mix, returns, and damaged stock for the selected day."
-      />
-
       <Card>
         <form className="flex flex-col gap-3 sm:flex-row sm:items-end" method="GET">
           <div className="grid gap-1.5">
@@ -325,17 +321,10 @@ export default async function SalesDailySummaryPage({
                   #{sale.saleNumber}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
-                  <ul className="grid gap-1">
-                    {sale.items.map((item) => (
-                      <li key={item.id}>
-                        {formatProductName(item.product)}:{" "}
-                        {formatQuantity(
-                          item.quantity,
-                          item.product.unit.abbreviation,
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                  <SaleItemsSummary
+                    items={sale.items}
+                    saleNumber={sale.saleNumber}
+                  />
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {paymentLabels[sale.paymentMethod]}
