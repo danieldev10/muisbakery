@@ -212,4 +212,15 @@ export const updateRetailerSchema = z.object({
   isActive: z.coerce.boolean().optional(),
 });
 
+export const recordRetailerPaymentSchema = z.object({
+  amount: moneySchema.positive("Payment amount must be greater than zero."),
+  paymentMethod: z.enum(PaymentMethod).refine(
+    (method) => method !== PaymentMethod.CREDIT,
+    "Retailer repayments must be received by cash, transfer, or POS.",
+  ),
+  paidAt: optionalDate,
+  reference: optionalText(120),
+  notes: optionalText(500),
+});
+
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;

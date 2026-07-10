@@ -102,6 +102,7 @@ model User {
   sales                       Sale[]                            @relation("SaleCreatedBy")
   salesReturns                SalesProductReturn[]              @relation("SalesReturnCreatedBy")
   createdRetailers            Retailer[]                        @relation("RetailerCreatedBy")
+  retailerPayments            RetailerPayment[]                 @relation("RetailerPaymentCreatedBy")
   posSessions                 PosSession[]                      @relation("PosSessionCreatedBy")
   posTerminals                PosTerminal[]                     @relation("PosTerminalCreatedBy")
   expenses                    Expense[]                         @relation("ExpenseCreatedBy")
@@ -589,9 +590,44 @@ model Retailer {
   createdBy   User?        @relation("RetailerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   sales       Sale[]
   posSessions PosSession[]
+  payments    RetailerPayment[]
 
   @@index([isActive])
   @@index([createdById])
+}
+
+model RetailerPayment {
+  id            String        @id @default(cuid())
+  retailerId    String
+  amount        Decimal       @db.Decimal(14, 2)
+  paymentMethod PaymentMethod
+  paidAt        DateTime      @default(now())
+  reference     String?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  createdById   String?
+
+  retailer    Retailer                    @relation(fields: [retailerId], references: [id], onDelete: Restrict)
+  createdBy   User?                       @relation("RetailerPaymentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  allocations RetailerPaymentAllocation[]
+
+  @@index([retailerId, paidAt])
+  @@index([paymentMethod])
+  @@index([createdById])
+}
+
+model RetailerPaymentAllocation {
+  id        String   @id @default(cuid())
+  paymentId String
+  saleId    String
+  amount    Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+
+  payment RetailerPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  sale    Sale            @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, saleId])
+  @@index([saleId])
 }
 
 model Sale {
@@ -615,6 +651,7 @@ model Sale {
   retailer   Retailer?   @relation(fields: [retailerId], references: [id], onDelete: Restrict)
   items      SaleItem[]
   posSession PosSession?
+  retailerPaymentAllocations RetailerPaymentAllocation[]
 
   @@index([soldAt])
   @@index([customerType])

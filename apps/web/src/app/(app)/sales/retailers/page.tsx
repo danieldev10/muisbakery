@@ -1,5 +1,9 @@
 import { AdminFormModal } from "@/components/admin/form-modal";
-import { Field, TextareaField } from "@/components/admin/form-controls";
+import {
+  Field,
+  SelectField,
+  TextareaField,
+} from "@/components/admin/form-controls";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
@@ -9,7 +13,11 @@ import {
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
-import type { Retailer } from "@/lib/operations/types";
+import type {
+  PaymentMethod,
+  Retailer,
+  RetailerPayment,
+} from "@/lib/operations/types";
 import {
   pageNumber,
   paginate,
@@ -22,7 +30,24 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { createRetailer, setRetailerActive } from "./actions";
+import {
+  createRetailer,
+  recordRetailerPayment,
+  setRetailerActive,
+} from "./actions";
+
+const paymentLabels: Record<PaymentMethod, string> = {
+  CASH: "Cash",
+  TRANSFER: "Transfer",
+  POS: "POS",
+  CREDIT: "Credit",
+};
+
+const retailerPaymentOptions = [
+  { value: "CASH", label: paymentLabels.CASH },
+  { value: "TRANSFER", label: paymentLabels.TRANSFER },
+  { value: "POS", label: paymentLabels.POS },
+];
 
 function formatMoney(value: string | number) {
   return `₦${Number(value).toLocaleString("en", {
@@ -31,15 +56,27 @@ function formatMoney(value: string | number) {
   })}`;
 }
 
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
 export default async function SalesRetailersPage({
   searchParams,
 }: {
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const retailers = await apiGet<Retailer[]>("/sales/retailers");
+  const [retailers, payments] = await Promise.all([
+    apiGet<Retailer[]>("/sales/retailers"),
+    apiGet<RetailerPayment[]>("/sales/retailer-payments"),
+  ]);
   const query = firstParam(params, "q");
   const status = firstParam(params, "status");
+  const paymentQuery = firstParam(params, "paymentQ");
+  const paymentMethod = firstParam(params, "paymentMethod");
   const filteredRetailers = retailers.filter(
     (retailer) =>
       matchesSearch(query, [
@@ -58,8 +95,23 @@ export default async function SalesRetailersPage({
     filteredRetailers,
     pageNumber(params.page),
   );
+  const filteredPayments = payments.filter(
+    (payment) =>
+      matchesSearch(paymentQuery, [
+        payment.retailer.name,
+        payment.amount,
+        payment.paymentMethod,
+        paymentLabels[payment.paymentMethod],
+        payment.reference,
+        payment.notes,
+        ...payment.allocations.map(
+          (allocation) => `#${allocation.sale.saleNumber}`,
+        ),
+      ]) && matchesSelect(paymentMethod, payment.paymentMethod),
+  );
 
   return (
+    <>
     <Card>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -162,17 +214,60 @@ export default async function SalesRetailersPage({
                 <StatusBadge active={retailer.isActive} />
               </td>
               <td className="py-3 pr-4">
-                <InlineActionForm
-                  action={setRetailerActive}
-                  submitLabel={retailer.isActive ? "Deactivate" : "Activate"}
-                >
-                  <input name="id" type="hidden" value={retailer.id} />
-                  <input
-                    name="isActive"
-                    type="hidden"
-                    value={retailer.isActive ? "false" : "true"}
-                  />
-                </InlineActionForm>
+                <div className="flex flex-wrap items-start gap-2">
+                  {Number(retailer.outstandingBalance) > 0 ? (
+                    <AdminFormModal
+                      action={recordRetailerPayment}
+                      description={`Outstanding balance: ${formatMoney(
+                        retailer.outstandingBalance,
+                      )}`}
+                      eyebrow="Sales"
+                      submitLabel="Record payment"
+                      title={`Record payment - ${retailer.name}`}
+                      triggerLabel="Payment"
+                    >
+                      <input name="retailerId" type="hidden" value={retailer.id} />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field
+                          label="Amount"
+                          max={retailer.outstandingBalance}
+                          min="0.01"
+                          name="amount"
+                          required
+                          step="0.01"
+                          type="number"
+                        />
+                        <SelectField
+                          defaultValue="TRANSFER"
+                          label="Payment method"
+                          name="paymentMethod"
+                          options={retailerPaymentOptions}
+                          required
+                        />
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field
+                          label="Paid at"
+                          name="paidAt"
+                          type="datetime-local"
+                        />
+                        <Field label="Reference" name="reference" />
+                      </div>
+                      <TextareaField label="Notes" name="notes" />
+                    </AdminFormModal>
+                  ) : null}
+                  <InlineActionForm
+                    action={setRetailerActive}
+                    submitLabel={retailer.isActive ? "Deactivate" : "Activate"}
+                  >
+                    <input name="id" type="hidden" value={retailer.id} />
+                    <input
+                      name="isActive"
+                      type="hidden"
+                      value={retailer.isActive ? "false" : "true"}
+                    />
+                  </InlineActionForm>
+                </div>
               </td>
             </tr>
           ))}
@@ -185,5 +280,72 @@ export default async function SalesRetailersPage({
         {...pagination}
       />
     </Card>
+    <Card
+      description="Recent retailer repayments and the credit sales they settled."
+      title={`Recent payments (${filteredPayments.length} of ${payments.length})`}
+    >
+      {payments.length > 0 ? (
+        <TableToolbar
+          basePath="/sales/retailers"
+          pageParams={[]}
+          searchParam="paymentQ"
+          searchParams={params}
+          searchPlaceholder="Search retailer, reference, sale number, or amount"
+          selectFilters={[
+            {
+              label: "Method",
+              name: "paymentMethod",
+              options: retailerPaymentOptions,
+            },
+          ]}
+        />
+      ) : null}
+      {payments.length === 0 ? (
+        <EmptyState>No retailer payments have been recorded yet.</EmptyState>
+      ) : filteredPayments.length === 0 ? (
+        <EmptyState>No retailer payments match the current filters.</EmptyState>
+      ) : (
+        <TableShell
+          head={
+            <>
+              <th className="py-2 pr-4">Retailer</th>
+              <th className="py-2 pr-4">Amount</th>
+              <th className="py-2 pr-4">Method</th>
+              <th className="py-2 pr-4">Settled sales</th>
+              <th className="py-2 pr-4">Reference</th>
+              <th className="py-2 pr-4">Paid at</th>
+            </>
+          }
+        >
+          {filteredPayments.map((payment) => (
+            <tr className="align-top" key={payment.id}>
+              <td className="py-3 pr-4 font-medium text-stone-900">
+                {payment.retailer.name}
+              </td>
+              <td className="py-3 pr-4 font-semibold text-emerald-700">
+                {formatMoney(payment.amount)}
+              </td>
+              <td className="py-3 pr-4 text-stone-600">
+                {paymentLabels[payment.paymentMethod]}
+              </td>
+              <td className="py-3 pr-4 text-stone-600">
+                {payment.allocations.length > 0
+                  ? payment.allocations
+                      .map((allocation) => `#${allocation.sale.saleNumber}`)
+                      .join(", ")
+                  : "-"}
+              </td>
+              <td className="py-3 pr-4 text-stone-600">
+                {payment.reference ?? "-"}
+              </td>
+              <td className="py-3 pr-4 text-stone-600">
+                {formatDateTime(payment.paidAt)}
+              </td>
+            </tr>
+          ))}
+        </TableShell>
+      )}
+    </Card>
+    </>
   );
 }

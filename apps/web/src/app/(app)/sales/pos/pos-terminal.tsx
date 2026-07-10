@@ -550,8 +550,8 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-      <section className="rounded-md border border-stone-200 bg-white p-4 shadow-sm">
+    <div className="grid min-w-0 max-w-full gap-4 2xl:grid-cols-[minmax(0,1fr)_380px]">
+      <section className="min-w-0 rounded-md border border-stone-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative max-w-md flex-1">
             <Search
@@ -613,7 +613,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         )}
       </section>
 
-      <aside className="rounded-md border border-stone-200 bg-white p-4 shadow-sm">
+      <aside className="min-w-0 rounded-md border border-stone-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-stone-950">Current sale</h2>

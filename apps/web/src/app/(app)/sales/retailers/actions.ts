@@ -13,6 +13,8 @@ function revalidateRetailerViews() {
   revalidatePath("/sales/pos");
   revalidatePath("/sales/record-sale");
   revalidatePath("/sales/daily-summary");
+  revalidatePath("/management/sales");
+  revalidatePath("/management/profit-loss");
 }
 
 export async function createRetailer(
@@ -46,6 +48,30 @@ export async function setRetailerActive(
     "PATCH",
     {
       isActive: formData.get("isActive") === "true",
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateRetailerViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function recordRetailerPayment(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = await apiSend(
+    `/sales/retailers/${getString(formData, "retailerId")}/payments`,
+    "POST",
+    {
+      amount: getString(formData, "amount"),
+      paymentMethod: getString(formData, "paymentMethod"),
+      paidAt: getOptionalString(formData, "paidAt"),
+      reference: getOptionalString(formData, "reference"),
+      notes: getOptionalString(formData, "notes"),
     },
   );
 

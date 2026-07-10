@@ -326,3 +326,79 @@ test("StoreService.issueMaterialRequest issues stock FIFO across raw material ba
   assert.equal(result.status, MaterialRequestStatus.PARTIALLY_ISSUED);
   assert.equal(result.issuedQuantity, "8");
 });
+
+test("StoreService.rejectMaterialRequest rejects the remaining quantity on partially issued requests", async () => {
+  const now = new Date("2026-07-10T10:30:00.000Z");
+  const rawMaterial = {
+    id: "raw-1",
+    name: "Flour",
+    baseUnit: { id: "unit-1", name: "Kilogram", abbreviation: "kg" },
+  };
+  const requester = {
+    id: "requester-1",
+    name: "Production User",
+    email: "production@muisbakery.local",
+  };
+  const issuer = { id: actor.id, name: actor.name, email: actor.email };
+  const request = {
+    id: "request-1",
+    rawMaterialId: rawMaterial.id,
+    requestedQuantity: 10,
+    issuedQuantity: 4,
+    status: MaterialRequestStatus.PARTIALLY_ISSUED,
+    neededBy: null,
+    notes: null,
+    responseNotes: null,
+    fulfilledAt: null,
+    createdAt: now,
+    updatedAt: now,
+    rawMaterial,
+    requestedBy: requester,
+    issuedBy: issuer,
+    issues: [],
+  };
+  let updateManyArgs: {
+    where?: { status?: { in?: MaterialRequestStatus[] } };
+    data?: Record<string, unknown>;
+  } | null = null;
+  const { audit, records } = createAuditMock();
+  const service = new StoreService(
+    {
+      materialRequest: {
+        findUnique: async () => ({
+          id: request.id,
+          status: request.status,
+        }),
+        updateMany: async (args: {
+          where: { status: { in: MaterialRequestStatus[] } };
+          data: Record<string, unknown>;
+        }) => {
+          updateManyArgs = args;
+          return { count: 1 };
+        },
+        findUniqueOrThrow: async () => ({
+          ...request,
+          status: MaterialRequestStatus.REJECTED,
+          responseNotes: "Not needed again this week",
+        }),
+      },
+    } as never,
+    audit as never,
+  );
+
+  const result = await service.rejectMaterialRequest(
+    request.id,
+    { notes: "Not needed again this week" },
+    actor,
+  );
+
+  assert.equal(result.status, MaterialRequestStatus.REJECTED);
+  assert.equal(result.issuedQuantity, "4");
+  assert.equal(result.remainingQuantity, "6.000");
+  assert.deepEqual(updateManyArgs?.where?.status?.in, [
+    MaterialRequestStatus.PENDING,
+    MaterialRequestStatus.PARTIALLY_ISSUED,
+  ]);
+  assert.equal(updateManyArgs?.data?.status, MaterialRequestStatus.REJECTED);
+  assert.equal(records.length, 1);
+});

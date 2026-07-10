@@ -98,7 +98,7 @@ export function TableToolbar({
           />
         ),
       )}
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+      <div className="flex flex-col gap-3">
         <label className="grid min-w-0 flex-1 gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
           Search
           <span className="relative">
@@ -116,7 +116,7 @@ export function TableToolbar({
           </span>
         </label>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:flex xl:items-end">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:flex xl:flex-wrap xl:items-end">
           {selectFilters.map((filter) => (
             <label
               className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]"
@@ -154,7 +154,7 @@ export function TableToolbar({
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 xl:ml-auto">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand-burgundy)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--brand-burgundy-dark)]"
             type="submit"

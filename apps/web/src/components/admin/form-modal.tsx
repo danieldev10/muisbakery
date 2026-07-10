@@ -67,13 +67,13 @@ function ModalFrame({
   return (
     <div
       aria-modal="true"
-      className="fixed inset-0 z-50 grid place-items-center bg-[var(--brand-near-black)]/60 px-4 py-6 backdrop-blur-sm"
+      className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[var(--brand-near-black)]/60 px-4 py-6 backdrop-blur-sm"
       role="dialog"
     >
       <div
-        className={`w-full overflow-hidden rounded-lg border border-white/10 bg-white shadow-[var(--shadow-panel)] ${widthClassName}`}
+        className={`flex max-h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden rounded-lg border border-white/10 bg-white shadow-[var(--shadow-panel)] ${widthClassName}`}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-[color:var(--border-muted)] px-5 py-4">
+        <div className="shrink-0 flex items-start justify-between gap-4 border-b border-[color:var(--border-muted)] px-5 py-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--brand-burgundy)]">
               {eyebrow}
@@ -96,7 +96,9 @@ function ModalFrame({
             <X aria-hidden className="size-4" />
           </button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain p-5">
+          {children}
+        </div>
       </div>
     </div>
   );

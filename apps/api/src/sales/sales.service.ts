@@ -23,6 +23,7 @@ import {
   createPosTerminalSchema,
   createRetailerSchema,
   createSaleSchema,
+  recordRetailerPaymentSchema,
   recordReturnSchema,
   updateRetailerSchema,
   updatePosSessionSchema,
@@ -34,6 +35,7 @@ import {
   posSessionInclude,
   posTerminalInclude,
   productSelect,
+  retailerPaymentSelect,
   retailerSelect,
   returnInclude,
   saleInclude,
@@ -47,6 +49,7 @@ import {
   serializePosSession,
   serializePosTerminal,
   serializeRetailer,
+  serializeRetailerPayment,
   serializeReturn,
   serializeSale,
   serializeSaleItemOption,
@@ -266,6 +269,169 @@ export class SalesService {
     });
 
     return serializeRetailer(retailer);
+  }
+
+  async listRetailerPayments(retailerId?: string) {
+    const payments = await this.prisma.retailerPayment.findMany({
+      where: retailerId ? { retailerId } : undefined,
+      select: retailerPaymentSelect,
+      orderBy: [{ paidAt: "desc" }, { createdAt: "desc" }],
+      take: 120,
+    });
+
+    return payments.map(serializeRetailerPayment);
+  }
+
+  async recordRetailerPayment(
+    retailerId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = recordRetailerPaymentSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const payment = await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "Retailer" WHERE "id" = ${retailerId} FOR UPDATE`,
+        );
+
+        const retailer = await tx.retailer.findUnique({
+          where: { id: retailerId },
+          select: { id: true, name: true },
+        });
+
+        if (!retailer) {
+          throw new NotFoundException("Retailer not found.");
+        }
+
+        const lockedSaleIds = await tx.$queryRaw<Array<{ id: string }>>(
+          Prisma.sql`
+            SELECT "id"
+            FROM "Sale"
+            WHERE "retailerId" = ${retailer.id}
+              AND "balanceDue" > 0
+            ORDER BY "soldAt" ASC, "saleNumber" ASC
+            FOR UPDATE
+          `,
+        );
+        const sales =
+          lockedSaleIds.length > 0
+            ? await tx.sale.findMany({
+                where: { id: { in: lockedSaleIds.map((sale) => sale.id) } },
+                select: {
+                  id: true,
+                  saleNumber: true,
+                  amountPaid: true,
+                  balanceDue: true,
+                },
+                orderBy: [{ soldAt: "asc" }, { saleNumber: "asc" }],
+              })
+            : [];
+        const outstandingBalance = roundMoney(
+          sales.reduce(
+            (sum, sale) => sum + decimalToNumber(sale.balanceDue),
+            0,
+          ),
+        );
+        const amount = roundMoney(parsed.data.amount);
+
+        if (outstandingBalance <= 0) {
+          throw new BadRequestException(
+            "This retailer does not have any outstanding credit balance.",
+          );
+        }
+
+        if (amount > outstandingBalance) {
+          throw new BadRequestException(
+            `Payment cannot exceed outstanding balance of ₦${outstandingBalance.toLocaleString(
+              "en",
+              {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              },
+            )}.`,
+          );
+        }
+
+        const createdPayment = await tx.retailerPayment.create({
+          data: {
+            retailerId: retailer.id,
+            amount: new Prisma.Decimal(amount.toFixed(2)),
+            paymentMethod: parsed.data.paymentMethod,
+            paidAt: parsed.data.paidAt ?? new Date(),
+            reference: parsed.data.reference,
+            notes: parsed.data.notes,
+            createdById: actor.id,
+          },
+        });
+        let remaining = amount;
+
+        for (const sale of sales) {
+          if (remaining <= 0) {
+            break;
+          }
+
+          const saleBalance = decimalToNumber(sale.balanceDue);
+          const allocationAmount = roundMoney(Math.min(saleBalance, remaining));
+
+          if (allocationAmount <= 0) {
+            continue;
+          }
+
+          await tx.sale.update({
+            where: { id: sale.id },
+            data: {
+              amountPaid: new Prisma.Decimal(
+                roundMoney(
+                  decimalToNumber(sale.amountPaid) + allocationAmount,
+                ).toFixed(2),
+              ),
+              balanceDue: new Prisma.Decimal(
+                roundMoney(saleBalance - allocationAmount).toFixed(2),
+              ),
+            },
+          });
+
+          await tx.retailerPaymentAllocation.create({
+            data: {
+              paymentId: createdPayment.id,
+              saleId: sale.id,
+              amount: new Prisma.Decimal(allocationAmount.toFixed(2)),
+            },
+          });
+
+          remaining = roundMoney(remaining - allocationAmount);
+        }
+
+        return tx.retailerPayment.findUniqueOrThrow({
+          where: { id: createdPayment.id },
+          select: retailerPaymentSelect,
+        });
+      },
+      { timeout: 15000, maxWait: 15000 },
+    );
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "SALES_RETAILER_PAYMENT_RECORDED",
+      entityType: "RetailerPayment",
+      entityId: payment.id,
+      metadata: {
+        retailerId: payment.retailer.id,
+        retailerName: payment.retailer.name,
+        amount: payment.amount.toString(),
+        paymentMethod: payment.paymentMethod,
+        settledSales: payment.allocations.map(
+          (allocation) => allocation.sale.saleNumber,
+        ),
+      },
+    });
+
+    return serializeRetailerPayment(payment);
   }
 
   async createPosTerminal(input: unknown, actor: AuthenticatedUser) {

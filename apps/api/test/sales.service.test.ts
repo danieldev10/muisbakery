@@ -516,6 +516,198 @@ test("SalesService.createSale rejects retailer sales above available credit", as
   assert.equal(saleCreated, false);
 });
 
+test("SalesService.recordRetailerPayment settles oldest retailer balances first", async () => {
+  const paidAt = new Date("2026-07-10T13:20:00.000Z");
+  const createdAt = new Date("2026-07-10T13:20:01.000Z");
+  const retailer = { id: "retailer-1", name: "Amina Stores" };
+  const sales = [
+    {
+      id: "sale-old",
+      saleNumber: 10,
+      soldAt: new Date("2026-07-09T08:00:00.000Z"),
+      totalAmount: 7000,
+      amountPaid: 0,
+      balanceDue: 7000,
+    },
+    {
+      id: "sale-new",
+      saleNumber: 11,
+      soldAt: new Date("2026-07-10T08:00:00.000Z"),
+      totalAmount: 6000,
+      amountPaid: 1000,
+      balanceDue: 5000,
+    },
+  ];
+  const saleUpdates: Array<{
+    id: string;
+    amountPaid: unknown;
+    balanceDue: unknown;
+  }> = [];
+  const allocations: Array<{ paymentId: string; saleId: string; amount: unknown }> =
+    [];
+  const { audit, records } = createAuditMock();
+  const tx = {
+    $queryRaw: async () => sales.map((sale) => ({ id: sale.id })),
+    retailer: {
+      findUnique: async () => retailer,
+    },
+    sale: {
+      findMany: async () => sales,
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: { amountPaid: unknown; balanceDue: unknown };
+      }) => {
+        saleUpdates.push({
+          id: where.id,
+          amountPaid: data.amountPaid,
+          balanceDue: data.balanceDue,
+        });
+      },
+    },
+    retailerPayment: {
+      create: async () => ({
+        id: "payment-1",
+      }),
+      findUniqueOrThrow: async () => ({
+        id: "payment-1",
+        amount: 9000,
+        paymentMethod: PaymentMethod.TRANSFER,
+        paidAt,
+        reference: "TRF-123",
+        notes: "Weekly settlement",
+        createdAt,
+        retailer: {
+          ...retailer,
+          creditLimit: 500000,
+        },
+        createdBy: {
+          id: actor.id,
+          name: actor.name,
+          email: actor.email,
+        },
+        allocations: allocations.map((allocation, index) => {
+          const sale = sales.find((entry) => entry.id === allocation.saleId);
+
+          assert.ok(sale);
+
+          return {
+            id: `allocation-${index + 1}`,
+            amount: allocation.amount,
+            sale: {
+              id: sale.id,
+              saleNumber: sale.saleNumber,
+              soldAt: sale.soldAt,
+              totalAmount: sale.totalAmount,
+              balanceDue: saleUpdates.find((entry) => entry.id === sale.id)
+                ?.balanceDue,
+            },
+          };
+        }),
+      }),
+    },
+    retailerPaymentAllocation: {
+      create: async ({ data }: { data: typeof allocations[number] }) => {
+        allocations.push(data);
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    audit,
+  );
+
+  const result = await service.recordRetailerPayment(
+    retailer.id,
+    {
+      amount: "9000",
+      paymentMethod: PaymentMethod.TRANSFER,
+      paidAt: paidAt.toISOString(),
+      reference: "TRF-123",
+      notes: "Weekly settlement",
+    },
+    actor,
+  );
+
+  assert.deepEqual(
+    saleUpdates.map((entry) => ({
+      id: entry.id,
+      amountPaid: String(entry.amountPaid),
+      balanceDue: String(entry.balanceDue),
+    })),
+    [
+      { id: "sale-old", amountPaid: "7000", balanceDue: "0" },
+      { id: "sale-new", amountPaid: "3000", balanceDue: "3000" },
+    ],
+  );
+  assert.deepEqual(
+    allocations.map((entry) => ({
+      saleId: entry.saleId,
+      amount: String(entry.amount),
+    })),
+    [
+      { saleId: "sale-old", amount: "7000" },
+      { saleId: "sale-new", amount: "2000" },
+    ],
+  );
+  assert.equal(result.amount, "9000");
+  assert.deepEqual(
+    result.allocations.map((allocation) => allocation.sale.saleNumber),
+    [10, 11],
+  );
+  assert.equal(records.length, 1);
+});
+
+test("SalesService.recordRetailerPayment rejects payments above outstanding balance", async () => {
+  let paymentCreated = false;
+  const tx = {
+    $queryRaw: async () => [{ id: "sale-1" }],
+    retailer: {
+      findUnique: async () => ({ id: "retailer-1", name: "Amina Stores" }),
+    },
+    sale: {
+      findMany: async () => [
+        {
+          id: "sale-1",
+          saleNumber: 10,
+          amountPaid: 1000,
+          balanceDue: 4000,
+        },
+      ],
+    },
+    retailerPayment: {
+      create: async () => {
+        paymentCreated = true;
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.recordRetailerPayment(
+      "retailer-1",
+      {
+        amount: "5000",
+        paymentMethod: PaymentMethod.CASH,
+      },
+      actor,
+    ),
+    /cannot exceed outstanding balance/i,
+  );
+  assert.equal(paymentCreated, false);
+});
+
 test("SalesService.checkoutPosSession rejects already-claimed sessions before creating a sale", async () => {
   let saleCreated = false;
   const { audit } = createAuditMock();

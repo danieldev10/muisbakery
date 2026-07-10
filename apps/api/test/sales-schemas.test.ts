@@ -7,7 +7,11 @@ import {
   SalesReturnDisposition,
 } from "@prisma/client";
 
-import { createSaleSchema, recordReturnSchema } from "../src/sales/sales.schemas";
+import {
+  createSaleSchema,
+  recordRetailerPaymentSchema,
+  recordReturnSchema,
+} from "../src/sales/sales.schemas";
 
 test("createSaleSchema accepts valid whole-number sales", () => {
   const result = createSaleSchema.safeParse({
@@ -99,4 +103,17 @@ test("recordReturnSchema allows unsold damaged stock with a product", () => {
   });
 
   assert.equal(result.success, true);
+});
+
+test("recordRetailerPaymentSchema rejects credit repayments", () => {
+  const result = recordRetailerPaymentSchema.safeParse({
+    amount: "5000",
+    paymentMethod: PaymentMethod.CREDIT,
+  });
+
+  assert.equal(result.success, false);
+  assert.match(
+    result.success ? "" : result.error.issues[0]?.message ?? "",
+    /cash, transfer, or pos/i,
+  );
 });

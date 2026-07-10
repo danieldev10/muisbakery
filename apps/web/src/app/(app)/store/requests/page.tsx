@@ -171,7 +171,10 @@ export default async function StoreRequestsPage({
                   <td className="py-3 pr-4 whitespace-nowrap">
                     <MaterialRequestActions
                       canIssue={canIssue}
-                      canReject={request.status === "PENDING"}
+                      canReject={
+                        request.status === "PENDING" ||
+                        request.status === "PARTIALLY_ISSUED"
+                      }
                       request={request}
                       unit={unit}
                     />

@@ -39,9 +39,23 @@ export class SalesController {
     return this.sales.listRetailers();
   }
 
+  @Get("retailer-payments")
+  retailerPayments(@Query("retailerId") retailerId?: string) {
+    return this.sales.listRetailerPayments(retailerId);
+  }
+
   @Post("retailers")
   createRetailer(@Body() body: unknown, @Req() request: Request) {
     return this.sales.createRetailer(body, getRequestUser(request));
+  }
+
+  @Post("retailers/:id/payments")
+  recordRetailerPayment(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.recordRetailerPayment(id, body, getRequestUser(request));
   }
 
   @Patch("retailers/:id")

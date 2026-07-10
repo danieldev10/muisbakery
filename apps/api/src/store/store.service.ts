@@ -694,13 +694,20 @@ export class StoreService {
       throw new NotFoundException("Material request not found.");
     }
 
-    if (existing.status !== MaterialRequestStatus.PENDING) {
-      throw new BadRequestException("Only pending requests can be rejected.");
+    const rejectableStatuses: MaterialRequestStatus[] = [
+      MaterialRequestStatus.PENDING,
+      MaterialRequestStatus.PARTIALLY_ISSUED,
+    ];
+
+    if (!rejectableStatuses.includes(existing.status)) {
+      throw new BadRequestException(
+        "Only pending or partially issued requests can be rejected.",
+      );
     }
 
     // Conditional update so a concurrent issue/reject cannot both win.
     const rejected = await this.prisma.materialRequest.updateMany({
-      where: { id: requestId, status: MaterialRequestStatus.PENDING },
+      where: { id: requestId, status: { in: rejectableStatuses } },
       data: {
         status: MaterialRequestStatus.REJECTED,
         issuedById: actor.id,

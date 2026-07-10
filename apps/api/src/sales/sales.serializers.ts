@@ -4,6 +4,7 @@ import type {
   PosSessionWithIncludes,
   PosTerminalWithIncludes,
   ProductInventory,
+  RetailerPaymentWithIncludes,
   RetailerWithCreatedBy,
   SaleItemOption,
   SalesReturnWithIncludes,
@@ -78,6 +79,35 @@ export function serializeRetailer(
     createdAt: retailer.createdAt.toISOString(),
     updatedAt: retailer.updatedAt.toISOString(),
     createdBy: retailer.createdBy,
+  };
+}
+
+export function serializeRetailerPayment(payment: RetailerPaymentWithIncludes) {
+  return {
+    id: payment.id,
+    amount: payment.amount.toString(),
+    paymentMethod: payment.paymentMethod,
+    paidAt: payment.paidAt.toISOString(),
+    reference: payment.reference,
+    notes: payment.notes,
+    createdAt: payment.createdAt.toISOString(),
+    retailer: {
+      id: payment.retailer.id,
+      name: payment.retailer.name,
+      creditLimit: payment.retailer.creditLimit.toString(),
+    },
+    createdBy: payment.createdBy,
+    allocations: payment.allocations.map((allocation) => ({
+      id: allocation.id,
+      amount: allocation.amount.toString(),
+      sale: {
+        id: allocation.sale.id,
+        saleNumber: allocation.sale.saleNumber,
+        soldAt: allocation.sale.soldAt.toISOString(),
+        totalAmount: allocation.sale.totalAmount.toString(),
+        balanceDue: allocation.sale.balanceDue.toString(),
+      },
+    })),
   };
 }
 

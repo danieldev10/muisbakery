@@ -30,6 +30,7 @@ export function Field({
   hint,
   step,
   min,
+  max,
 }: BaseFieldProps & {
   type?:
     | "date"
@@ -41,6 +42,7 @@ export function Field({
     | "text";
   step?: string;
   min?: string;
+  max?: string;
 }) {
   return (
     <div className="grid gap-1.5">
@@ -52,6 +54,7 @@ export function Field({
         className={fieldClass}
         defaultValue={defaultValue}
         id={name}
+        max={max}
         min={min}
         name={name}
         placeholder={placeholder}

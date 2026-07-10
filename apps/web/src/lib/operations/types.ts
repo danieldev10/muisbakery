@@ -271,6 +271,33 @@ export type Retailer = {
   createdBy: UserRef | null;
 };
 
+export type RetailerPayment = {
+  id: string;
+  amount: string;
+  paymentMethod: PaymentMethod;
+  paidAt: string;
+  reference: string | null;
+  notes: string | null;
+  createdAt: string;
+  retailer: {
+    id: string;
+    name: string;
+    creditLimit: string;
+  };
+  createdBy: UserRef | null;
+  allocations: Array<{
+    id: string;
+    amount: string;
+    sale: {
+      id: string;
+      saleNumber: number;
+      soldAt: string;
+      totalAmount: string;
+      balanceDue: string;
+    };
+  }>;
+};
+
 export type SaleItemBatch = {
   id: string;
   quantity: string;

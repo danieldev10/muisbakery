@@ -35,6 +35,40 @@ export const retailerSelect = {
   createdBy: { select: userSelect },
 } satisfies Prisma.RetailerSelect;
 
+export const retailerPaymentSelect = {
+  id: true,
+  amount: true,
+  paymentMethod: true,
+  paidAt: true,
+  reference: true,
+  notes: true,
+  createdAt: true,
+  retailer: {
+    select: {
+      id: true,
+      name: true,
+      creditLimit: true,
+    },
+  },
+  createdBy: { select: userSelect },
+  allocations: {
+    select: {
+      id: true,
+      amount: true,
+      sale: {
+        select: {
+          id: true,
+          saleNumber: true,
+          soldAt: true,
+          totalAmount: true,
+          balanceDue: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  },
+} satisfies Prisma.RetailerPaymentSelect;
+
 export const batchSelect = {
   id: true,
   batchNumber: true,
@@ -174,6 +208,10 @@ export type ProductInventory = Prisma.ProductGetPayload<{
 
 export type RetailerWithCreatedBy = Prisma.RetailerGetPayload<{
   select: typeof retailerSelect;
+}>;
+
+export type RetailerPaymentWithIncludes = Prisma.RetailerPaymentGetPayload<{
+  select: typeof retailerPaymentSelect;
 }>;
 
 export type SaleWithIncludes = Prisma.SaleGetPayload<{
