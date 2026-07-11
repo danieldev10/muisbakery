@@ -6,41 +6,49 @@ import { getOptionalString, getString } from "@/lib/admin/form-data";
 import type { FormState } from "@/lib/admin/types";
 import { apiSend } from "@/lib/server-api";
 
-const PATH = "/admin/raw-materials";
+const PATH = "/admin/expense-categories";
 
-export async function createRawMaterial(
+function revalidateExpenseCategoryViews() {
+  revalidatePath(PATH);
+  revalidatePath("/management/expenses");
+  revalidatePath("/management/profit-loss");
+}
+
+export async function createExpenseCategory(
   _state: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const result = await apiSend(PATH, "POST", {
+  const result = await apiSend("/admin/expense-categories", "POST", {
     name: getString(formData, "name"),
     description: getOptionalString(formData, "description"),
-    baseUnitId: getString(formData, "baseUnitId"),
   });
 
   if (!result.ok) {
     return { ok: false, error: result.message };
   }
 
-  revalidatePath(PATH);
+  revalidateExpenseCategoryViews();
   return { ok: true, error: null, token: Date.now() };
 }
 
-export async function updateRawMaterial(
+export async function updateExpenseCategory(
   _state: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
-    name: getString(formData, "name"),
-    description: getOptionalString(formData, "description") ?? null,
-    baseUnitId: getString(formData, "baseUnitId"),
-    isActive: getString(formData, "isActive") === "true",
-  });
+  const result = await apiSend(
+    `/admin/expense-categories/${getString(formData, "id")}`,
+    "PATCH",
+    {
+      name: getString(formData, "name"),
+      description: getOptionalString(formData, "description") ?? null,
+      isActive: getString(formData, "isActive") === "true",
+    },
+  );
 
   if (!result.ok) {
     return { ok: false, error: result.message };
   }
 
-  revalidatePath(PATH);
+  revalidateExpenseCategoryViews();
   return { ok: true, error: null, token: Date.now() };
 }

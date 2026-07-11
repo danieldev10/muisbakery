@@ -31,6 +31,7 @@ const createSchema = z.object({
 const updateSchema = z
   .object({
     name: z.string().trim().min(1).max(120).nullish(),
+    email: z.string().trim().toLowerCase().email().optional(),
     role: roleEnum.optional(),
     isActive: z.boolean().optional(),
     password: z.string().min(8).max(200).optional(),
@@ -127,10 +128,22 @@ export class UsersService {
       }
     }
 
+    if (parsed.data.email) {
+      const clash = await this.prisma.user.findFirst({
+        where: { email: parsed.data.email, NOT: { id } },
+        select: { id: true },
+      });
+
+      if (clash) {
+        throw new ConflictException("A user with that email already exists.");
+      }
+    }
+
     const user = await this.prisma.user.update({
       where: { id },
       data: {
         ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+        ...(parsed.data.email ? { email: parsed.data.email } : {}),
         ...(parsed.data.role ? { role: parsed.data.role } : {}),
         ...(parsed.data.isActive !== undefined
           ? { isActive: parsed.data.isActive }
@@ -148,6 +161,7 @@ export class UsersService {
       entityType: "User",
       entityId: user.id,
       metadata: {
+        email: user.email,
         role: user.role,
         isActive: user.isActive,
         passwordChanged: Boolean(parsed.data.password),

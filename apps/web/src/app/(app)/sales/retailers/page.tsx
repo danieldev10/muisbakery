@@ -4,7 +4,6 @@ import {
   SelectField,
   TextareaField,
 } from "@/components/admin/form-controls";
-import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
@@ -30,11 +29,7 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import {
-  createRetailer,
-  recordRetailerPayment,
-  setRetailerActive,
-} from "./actions";
+import { recordRetailerPayment } from "./actions";
 
 const paymentLabels: Record<PaymentMethod, string> = {
   CASH: "Cash",
@@ -48,6 +43,9 @@ const retailerPaymentOptions = [
   { value: "TRANSFER", label: paymentLabels.TRANSFER },
   { value: "POS", label: paymentLabels.POS },
 ];
+
+const paymentButtonClass =
+  "inline-flex h-7 items-center justify-center rounded-[5px] border border-[var(--brand-burgundy)] bg-[var(--brand-burgundy)] px-2.5 text-xs font-semibold leading-none text-white shadow-[var(--shadow-whisper)] transition hover:bg-[var(--brand-burgundy-dark)]";
 
 function formatMoney(value: string | number) {
   return `₦${Number(value).toLocaleString("en", {
@@ -119,36 +117,9 @@ export default async function SalesRetailersPage({
             Retailers ({filteredRetailers.length} of {retailers.length})
           </h2>
           <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">
-            Retail customer accounts with controlled credit limits.
+            Retail customer accounts and credit balances for payment follow-up.
           </p>
         </div>
-        <AdminFormModal
-          action={createRetailer}
-          description="Create a retailer account for credit-limit sales."
-          eyebrow="Sales"
-          submitLabel="Create retailer"
-          title="Create retailer"
-          triggerLabel="Create retailer"
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Retailer name" name="name" required />
-            <Field label="Contact person" name="contactPerson" />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Phone" name="phone" type="tel" />
-            <Field label="Email" name="email" type="email" />
-            <Field
-              label="Credit limit"
-              min="0.01"
-              name="creditLimit"
-              required
-              step="0.01"
-              type="number"
-            />
-          </div>
-          <TextareaField label="Address" name="address" />
-          <TextareaField label="Notes" name="notes" />
-        </AdminFormModal>
       </div>
 
       {retailers.length > 0 ? (
@@ -224,6 +195,8 @@ export default async function SalesRetailersPage({
                       eyebrow="Sales"
                       submitLabel="Record payment"
                       title={`Record payment - ${retailer.name}`}
+                      triggerClassName={paymentButtonClass}
+                      triggerIcon={null}
                       triggerLabel="Payment"
                     >
                       <input name="retailerId" type="hidden" value={retailer.id} />
@@ -255,18 +228,9 @@ export default async function SalesRetailersPage({
                       </div>
                       <TextareaField label="Notes" name="notes" />
                     </AdminFormModal>
-                  ) : null}
-                  <InlineActionForm
-                    action={setRetailerActive}
-                    submitLabel={retailer.isActive ? "Deactivate" : "Activate"}
-                  >
-                    <input name="id" type="hidden" value={retailer.id} />
-                    <input
-                      name="isActive"
-                      type="hidden"
-                      value={retailer.isActive ? "false" : "true"}
-                    />
-                  </InlineActionForm>
+                  ) : (
+                    <span className="text-sm text-[var(--text-muted)]">-</span>
+                  )}
                 </div>
               </td>
             </tr>

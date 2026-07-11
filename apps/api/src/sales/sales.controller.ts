@@ -44,11 +44,6 @@ export class SalesController {
     return this.sales.listRetailerPayments(retailerId);
   }
 
-  @Post("retailers")
-  createRetailer(@Body() body: unknown, @Req() request: Request) {
-    return this.sales.createRetailer(body, getRequestUser(request));
-  }
-
   @Post("retailers/:id/payments")
   recordRetailerPayment(
     @Param("id") id: string,
@@ -56,15 +51,6 @@ export class SalesController {
     @Req() request: Request,
   ) {
     return this.sales.recordRetailerPayment(id, body, getRequestUser(request));
-  }
-
-  @Patch("retailers/:id")
-  updateRetailer(
-    @Param("id") id: string,
-    @Body() body: unknown,
-    @Req() request: Request,
-  ) {
-    return this.sales.updateRetailer(id, body, getRequestUser(request));
   }
 
   @Get("sales")

@@ -34,6 +34,7 @@ export async function updateUser(
   const password = getOptionalString(formData, "password");
   const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
     name: getOptionalString(formData, "name"),
+    email: getString(formData, "email"),
     role: getString(formData, "role"),
     isActive: getString(formData, "isActive") === "true",
     ...(password ? { password } : {}),

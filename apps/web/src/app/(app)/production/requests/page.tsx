@@ -31,6 +31,7 @@ import {
 } from "@/lib/table-filters";
 
 import { cancelMaterialRequest, createMaterialRequest } from "./actions";
+import { RequestStatusBadge } from "./request-status-badge";
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -54,34 +55,6 @@ function statusLabel(status: MaterialRequestStatus) {
     .split("_")
     .map((part) => part[0] + part.slice(1).toLowerCase())
     .join(" ");
-}
-
-function statusClass(status: MaterialRequestStatus) {
-  if (status === "FULFILLED") {
-    return "bg-emerald-50 text-emerald-800";
-  }
-  if (status === "PARTIALLY_ISSUED") {
-    return "bg-amber-50 text-amber-800";
-  }
-  if (status === "CANCELLED") {
-    return "bg-stone-100 text-stone-500";
-  }
-  if (status === "REJECTED") {
-    return "bg-red-800 text-red-50";
-  }
-  return "bg-red-50 text-red-800";
-}
-
-function RequestStatusBadge({ status }: { status: MaterialRequestStatus }) {
-  return (
-    <span
-      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${statusClass(
-        status,
-      )}`}
-    >
-      {statusLabel(status)}
-    </span>
-  );
 }
 
 export default async function ProductionRequestsPage({
@@ -249,12 +222,10 @@ export default async function ProductionRequestsPage({
                     </p>
                   </td>
                   <td className="py-3 pr-4">
-                    <RequestStatusBadge status={request.status} />
-                    {request.responseNotes ? (
-                      <p className="mt-1 max-w-48 text-xs text-stone-500">
-                        Store: {request.responseNotes}
-                      </p>
-                    ) : null}
+                    <RequestStatusBadge
+                      reason={request.responseNotes}
+                      status={request.status}
+                    />
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {formatDate(request.neededBy)}

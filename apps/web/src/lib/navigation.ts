@@ -13,8 +13,10 @@ export const roleNav: Record<AppRole, NavItem[]> = {
     { label: "Raw materials", href: "/admin/raw-materials" },
     { label: "Products", href: "/admin/products" },
     { label: "Suppliers", href: "/admin/suppliers" },
+    { label: "Retailers", href: "/admin/retailers" },
     { label: "Recipes", href: "/admin/recipes" },
-    { label: "Settings", href: "/admin/settings" },
+    { label: "Units", href: "/admin/units" },
+    { label: "Expense categories", href: "/admin/expense-categories" },
   ],
   STORE: [
     { label: "Dashboard", href: "/store/dashboard" },

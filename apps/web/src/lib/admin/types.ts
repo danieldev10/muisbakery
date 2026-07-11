@@ -84,11 +84,6 @@ export type ExpenseCategory = {
   isActive: boolean;
 };
 
-export type AppSettings = {
-  requireMaterialRequestApproval: boolean;
-  requireStockAdjustmentApproval: boolean;
-};
-
 export type FormState = {
   ok: boolean;
   error: string | null;

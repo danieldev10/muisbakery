@@ -7,7 +7,7 @@ import { ExpenseCategoriesController } from "../src/admin/expense-categories/exp
 import { ProductsController } from "../src/admin/products/products.controller";
 import { RawMaterialsController } from "../src/admin/raw-materials/raw-materials.controller";
 import { RecipesController } from "../src/admin/recipes/recipes.controller";
-import { SettingsController } from "../src/admin/settings/settings.controller";
+import { AdminRetailersController } from "../src/admin/retailers/retailers.controller";
 import { SuppliersController } from "../src/admin/suppliers/suppliers.controller";
 import { UnitsController } from "../src/admin/units/units.controller";
 import { UsersController } from "../src/admin/users/users.controller";
@@ -32,9 +32,9 @@ const EXPECTED_GUARDS: Array<[string, unknown, unknown]> = [
   ["ProductsController", ProductsController, AdminGuard],
   ["RawMaterialsController", RawMaterialsController, AdminGuard],
   ["SuppliersController", SuppliersController, AdminGuard],
+  ["AdminRetailersController", AdminRetailersController, AdminGuard],
   ["RecipesController", RecipesController, AdminGuard],
   ["UnitsController", UnitsController, AdminGuard],
-  ["SettingsController", SettingsController, AdminGuard],
   ["ExpenseCategoriesController", ExpenseCategoriesController, AdminGuard],
 ];
 

@@ -82,9 +82,9 @@ export default async function ProductsPage({
                 Add at least one unit in{" "}
                 <Link
                   className="font-medium text-red-800 underline"
-                  href="/admin/settings"
+                  href="/admin/units"
                 >
-                  Settings
+                  Units
                 </Link>{" "}
                 before creating products.
               </EmptyState>

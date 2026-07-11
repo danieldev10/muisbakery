@@ -48,18 +48,34 @@ function EditUserForm({
     <form action={formAction} className="grid gap-4">
       <input name="id" type="hidden" value={user.id} />
 
-      <div className="grid gap-1.5">
-        <label className={labelClass} htmlFor={`edit-name-${user.id}`}>
-          Name
-        </label>
-        <input
-          className={fieldClass}
-          defaultValue={user.name ?? ""}
-          id={`edit-name-${user.id}`}
-          name="name"
-          placeholder="Full name"
-          type="text"
-        />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <label className={labelClass} htmlFor={`edit-name-${user.id}`}>
+            Name
+          </label>
+          <input
+            className={fieldClass}
+            defaultValue={user.name ?? ""}
+            id={`edit-name-${user.id}`}
+            name="name"
+            placeholder="Full name"
+            type="text"
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <label className={labelClass} htmlFor={`edit-email-${user.id}`}>
+            Email
+          </label>
+          <input
+            className={fieldClass}
+            defaultValue={user.email}
+            id={`edit-email-${user.id}`}
+            name="email"
+            required
+            type="email"
+          />
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

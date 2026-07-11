@@ -1,6 +1,9 @@
 import { AdminFormModal } from "@/components/admin/form-modal";
-import { Field, TextareaField } from "@/components/admin/form-controls";
-import { InlineActionForm } from "@/components/admin/inline-action-form";
+import {
+  Field,
+  SelectField,
+  TextareaField,
+} from "@/components/admin/form-controls";
 import {
   Card,
   EmptyState,
@@ -22,7 +25,15 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { createSupplier, setSupplierActive } from "./actions";
+import { createSupplier, updateSupplier } from "./actions";
+
+const secondaryButtonClass =
+  "inline-flex h-8 items-center justify-center rounded-[5px] border border-[color:var(--border-strong)] bg-white px-3 text-xs font-semibold text-[var(--text-secondary)] shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:text-[var(--brand-burgundy)]";
+
+const statusOptions = [
+  { value: "true", label: "Active" },
+  { value: "false", label: "Inactive" },
+];
 
 export default async function SuppliersPage({
   searchParams,
@@ -126,17 +137,62 @@ export default async function SuppliersPage({
                   <StatusBadge active={supplier.isActive} />
                 </td>
                 <td className="py-3 pr-4">
-                  <InlineActionForm
-                    action={setSupplierActive}
-                    submitLabel={supplier.isActive ? "Deactivate" : "Activate"}
-                  >
-                    <input name="id" type="hidden" value={supplier.id} />
-                    <input
-                      name="isActive"
-                      type="hidden"
-                      value={supplier.isActive ? "false" : "true"}
-                    />
-                  </InlineActionForm>
+                  <div className="flex flex-wrap items-start gap-2">
+                    <AdminFormModal
+                      action={updateSupplier}
+                      description={supplier.name}
+                      submitLabel="Save changes"
+                      title="Edit supplier"
+                      triggerClassName={secondaryButtonClass}
+                      triggerIcon={null}
+                      triggerLabel="Edit"
+                    >
+                      <input name="id" type="hidden" value={supplier.id} />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field
+                          defaultValue={supplier.name}
+                          label="Name"
+                          name="name"
+                          required
+                        />
+                        <Field
+                          defaultValue={supplier.contactName ?? ""}
+                          label="Contact person"
+                          name="contactName"
+                        />
+                        <Field
+                          defaultValue={supplier.phone ?? ""}
+                          label="Phone"
+                          name="phone"
+                          type="tel"
+                        />
+                        <Field
+                          defaultValue={supplier.email ?? ""}
+                          label="Email"
+                          name="email"
+                          type="email"
+                        />
+                      </div>
+                      <Field
+                        defaultValue={supplier.address ?? ""}
+                        label="Address"
+                        name="address"
+                      />
+                      <TextareaField
+                        defaultValue={supplier.notes ?? ""}
+                        label="Notes"
+                        name="notes"
+                      />
+                      <SelectField
+                        defaultValue={supplier.isActive ? "true" : "false"}
+                        hint="Inactive suppliers disappear from new receiving selections but keep history."
+                        label="Status"
+                        name="isActive"
+                        options={statusOptions}
+                        required
+                      />
+                    </AdminFormModal>
+                  </div>
                 </td>
               </tr>
             ))}

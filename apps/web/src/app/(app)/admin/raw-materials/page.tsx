@@ -2,7 +2,6 @@ import Link from "next/link";
 
 import { AdminFormModal, AdminModal } from "@/components/admin/form-modal";
 import { Field, SelectField } from "@/components/admin/form-controls";
-import { InlineActionForm } from "@/components/admin/inline-action-form";
 import {
   Card,
   EmptyState,
@@ -24,7 +23,18 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { createRawMaterial, setRawMaterialActive } from "./actions";
+import {
+  createRawMaterial,
+  updateRawMaterial,
+} from "./actions";
+
+const secondaryButtonClass =
+  "inline-flex h-8 items-center justify-center rounded-[5px] border border-[color:var(--border-strong)] bg-white px-3 text-xs font-semibold text-[var(--text-secondary)] shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:text-[var(--brand-burgundy)]";
+
+const statusOptions = [
+  { value: "true", label: "Active" },
+  { value: "false", label: "Inactive" },
+];
 
 export default async function RawMaterialsPage({
   searchParams,
@@ -55,12 +65,16 @@ export default async function RawMaterialsPage({
     pageNumber(params.page),
   );
 
-  const unitOptions = units
+  const activeUnitOptions = units
     .filter((unit) => unit.isActive)
     .map((unit) => ({
       value: unit.id,
       label: `${unit.name} (${unit.abbreviation})`,
     }));
+  const unitOptions = units.map((unit) => ({
+    value: unit.id,
+    label: `${unit.name} (${unit.abbreviation})`,
+  }));
 
   return (
     <Card>
@@ -68,7 +82,7 @@ export default async function RawMaterialsPage({
         <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
           All raw materials ({filteredMaterials.length} of {materials.length})
         </h2>
-        {unitOptions.length === 0 ? (
+        {activeUnitOptions.length === 0 ? (
           <AdminModal
             description="A base unit is required before a raw material can be created."
             title="Add raw material"
@@ -78,9 +92,9 @@ export default async function RawMaterialsPage({
               Add at least one unit in{" "}
               <Link
                 className="font-medium text-red-800 underline"
-                href="/admin/settings"
+                href="/admin/units"
               >
-                Settings
+                Units
               </Link>{" "}
               before creating raw materials.
             </EmptyState>
@@ -103,7 +117,7 @@ export default async function RawMaterialsPage({
               <SelectField
                 label="Base unit"
                 name="baseUnitId"
-                options={unitOptions}
+                options={activeUnitOptions}
                 placeholder="Select unit"
                 required
               />
@@ -175,17 +189,47 @@ export default async function RawMaterialsPage({
                   <StatusBadge active={material.isActive} />
                 </td>
                 <td className="py-3 pr-4">
-                  <InlineActionForm
-                    action={setRawMaterialActive}
-                    submitLabel={material.isActive ? "Deactivate" : "Activate"}
-                  >
-                    <input name="id" type="hidden" value={material.id} />
-                    <input
-                      name="isActive"
-                      type="hidden"
-                      value={material.isActive ? "false" : "true"}
-                    />
-                  </InlineActionForm>
+                  <div className="flex flex-wrap items-start gap-2">
+                    <AdminFormModal
+                      action={updateRawMaterial}
+                      description={material.name}
+                      submitLabel="Save changes"
+                      title="Edit raw material"
+                      triggerClassName={secondaryButtonClass}
+                      triggerIcon={null}
+                      triggerLabel="Edit"
+                    >
+                      <input name="id" type="hidden" value={material.id} />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field
+                          defaultValue={material.name}
+                          label="Name"
+                          name="name"
+                          required
+                        />
+                        <SelectField
+                          defaultValue={material.baseUnit.id}
+                          label="Base unit"
+                          name="baseUnitId"
+                          options={unitOptions}
+                          required
+                        />
+                      </div>
+                      <Field
+                        defaultValue={material.description ?? ""}
+                        label="Description"
+                        name="description"
+                      />
+                      <SelectField
+                        defaultValue={material.isActive ? "true" : "false"}
+                        hint="Inactive materials disappear from new Store and Production selections but keep history."
+                        label="Status"
+                        name="isActive"
+                        options={statusOptions}
+                        required
+                      />
+                    </AdminFormModal>
+                  </div>
                 </td>
               </tr>
             ))}

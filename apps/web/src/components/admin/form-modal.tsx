@@ -25,6 +25,8 @@ type AdminModalProps = {
   description?: string;
   eyebrow?: string;
   title: string;
+  triggerClassName?: string;
+  triggerIcon?: ReactNode | null;
   triggerLabel: string;
   triggerTitle?: string;
   widthClassName?: string;
@@ -107,20 +109,24 @@ function ModalFrame({
 function ModalTrigger({
   onClick,
   title,
+  triggerClassName = triggerButtonClass,
+  triggerIcon = <Plus aria-hidden className="size-4" />,
   triggerLabel,
 }: {
   onClick: () => void;
   title?: string;
+  triggerClassName?: string;
+  triggerIcon?: ReactNode | null;
   triggerLabel: string;
 }) {
   return (
     <button
-      className={triggerButtonClass}
+      className={triggerClassName}
       onClick={onClick}
       title={title}
       type="button"
     >
-      <Plus aria-hidden className="size-4" />
+      {triggerIcon}
       {triggerLabel}
     </button>
   );
@@ -131,6 +137,8 @@ export function AdminModal({
   description,
   eyebrow,
   title,
+  triggerClassName,
+  triggerIcon,
   triggerLabel,
   triggerTitle,
   widthClassName,
@@ -143,6 +151,8 @@ export function AdminModal({
       <ModalTrigger
         onClick={() => setOpen(true)}
         title={triggerTitle}
+        triggerClassName={triggerClassName}
+        triggerIcon={triggerIcon}
         triggerLabel={triggerLabel}
       />
 
@@ -207,6 +217,8 @@ export function AdminFormModal({
   eyebrow,
   submitLabel,
   title,
+  triggerClassName,
+  triggerIcon,
   triggerLabel,
   triggerTitle,
   widthClassName,
@@ -220,6 +232,8 @@ export function AdminFormModal({
       description={description}
       eyebrow={eyebrow}
       title={title}
+      triggerClassName={triggerClassName}
+      triggerIcon={triggerIcon}
       triggerLabel={triggerLabel}
       triggerTitle={triggerTitle}
       widthClassName={widthClassName}
