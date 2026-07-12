@@ -100,6 +100,7 @@ export function serializeRetailerOrderApproval(
     id: approval.id,
     approvedAmount: approval.approvedAmount.toString(),
     status: approval.status,
+    terminal: approval.terminal,
     reason: approval.reason,
     expiresAt: approval.expiresAt?.toISOString() ?? null,
     usedAt: approval.usedAt?.toISOString() ?? null,
@@ -147,6 +148,7 @@ export function serializeSale(sale: SaleWithIncludes) {
     retailerApproval: sale.retailerApproval
       ? serializeRetailerOrderApproval(sale.retailerApproval)
       : null,
+    terminal: sale.terminal,
     paymentMethod: sale.paymentMethod,
     customerName: sale.customerName,
     soldAt: sale.soldAt.toISOString(),
@@ -309,6 +311,16 @@ export function serializePosTerminal(terminal: PosTerminalWithIncludes) {
     id: terminal.id,
     name: terminal.name,
     displayToken: terminal.displayToken,
+    pairable: Boolean(
+      terminal.pairingCodeHash &&
+        (!terminal.pairingCodeExpiresAt ||
+          terminal.pairingCodeExpiresAt.getTime() > Date.now()),
+    ),
+    pairingCodeExpiresAt: terminal.pairingCodeExpiresAt?.toISOString() ?? null,
+    pairedAt: terminal.pairedAt?.toISOString() ?? null,
+    pairedBy: terminal.pairedBy,
+    deviceSecretIssuedAt:
+      terminal.deviceSecretIssuedAt?.toISOString() ?? null,
     isActive: terminal.isActive,
     offlineEnabled: terminal.offlineEnabled,
     lastSeenAt: terminal.lastSeenAt?.toISOString() ?? null,
@@ -318,5 +330,44 @@ export function serializePosTerminal(terminal: PosTerminalWithIncludes) {
     currentSession: terminal.currentSession
       ? serializePosSession(terminal.currentSession)
       : null,
+    stockAllocations: terminal.stockAllocations.map((allocation) => ({
+      id: allocation.id,
+      allocatedQuantity: allocation.allocatedQuantity.toString(),
+      soldQuantity: allocation.soldQuantity.toString(),
+      remainingQuantity: Math.max(
+        0,
+        allocation.allocatedQuantity - allocation.soldQuantity,
+      ).toString(),
+      product: allocation.product,
+      createdAt: allocation.createdAt.toISOString(),
+      updatedAt: allocation.updatedAt.toISOString(),
+    })),
+    retailerCreditAllocations: terminal.retailerCreditAllocations.map(
+      (allocation) => {
+        const allocatedAmount = Number(allocation.allocatedAmount);
+        const usedAmount = Number(allocation.usedAmount);
+
+        return {
+          id: allocation.id,
+          allocatedAmount: allocation.allocatedAmount.toString(),
+          usedAmount: allocation.usedAmount.toString(),
+          remainingAmount: Math.max(0, allocatedAmount - usedAmount).toFixed(2),
+          isActive: allocation.isActive,
+          retailer: allocation.retailer,
+          createdAt: allocation.createdAt.toISOString(),
+          updatedAt: allocation.updatedAt.toISOString(),
+        };
+      },
+    ),
+  };
+}
+
+export function serializePairedPosTerminal(
+  terminal: PosTerminalWithIncludes,
+  deviceSecret: string,
+) {
+  return {
+    ...serializePosTerminal(terminal),
+    deviceSecret,
   };
 }

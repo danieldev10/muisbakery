@@ -88,6 +88,15 @@ export type PosTerminal = {
   id: string;
   name: string | null;
   displayToken: string;
+  pairable: boolean;
+  pairingCodeExpiresAt: string | null;
+  pairedAt: string | null;
+  pairedBy: {
+    id: string;
+    name: string | null;
+    email: string;
+  } | null;
+  deviceSecretIssuedAt: string | null;
   isActive: boolean;
   offlineEnabled: boolean;
   lastSeenAt: string | null;
@@ -99,6 +108,35 @@ export type PosTerminal = {
     status: string;
     createdAt: string;
   } | null;
+  stockAllocations: Array<{
+    id: string;
+    allocatedQuantity: string;
+    soldQuantity: string;
+    remainingQuantity: string;
+    product: {
+      id: string;
+      name: string;
+      size: string;
+      unitPrice: string | null;
+      unit: UnitRef;
+    };
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  retailerCreditAllocations: Array<{
+    id: string;
+    allocatedAmount: string;
+    usedAmount: string;
+    remainingAmount: string;
+    isActive: boolean;
+    retailer: {
+      id: string;
+      name: string;
+      contactPerson: string | null;
+    };
+    createdAt: string;
+    updatedAt: string;
+  }>;
 };
 
 export type FormState = {

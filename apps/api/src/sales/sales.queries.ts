@@ -24,6 +24,7 @@ export const retailerOrderApprovalSelect = {
   id: true,
   approvedAmount: true,
   status: true,
+  terminal: { select: { id: true, name: true } },
   reason: true,
   expiresAt: true,
   usedAt: true,
@@ -114,6 +115,7 @@ export const inventoryInclude = {
 
 export const saleInclude = {
   createdBy: { select: userSelect },
+  terminal: { select: { id: true, name: true } },
   retailer: { select: retailerSelect },
   retailerApproval: { select: retailerOrderApprovalSelect },
   items: {
@@ -193,6 +195,7 @@ export const posSessionInclude = {
     select: {
       id: true,
       displayToken: true,
+      offlineEnabled: true,
     },
   },
   retailer: { select: retailerSelect },
@@ -218,6 +221,25 @@ export const posTerminalInclude = {
   currentSession: {
     include: posSessionInclude,
   },
+  stockAllocations: {
+    include: {
+      product: { select: productSelect },
+    },
+    orderBy: { product: { name: "asc" } },
+  },
+  retailerCreditAllocations: {
+    include: {
+      retailer: {
+        select: {
+          id: true,
+          name: true,
+          contactPerson: true,
+        },
+      },
+    },
+    orderBy: { retailer: { name: "asc" } },
+  },
+  pairedBy: { select: userSelect },
 } satisfies Prisma.PosTerminalInclude;
 
 export type ProductInventory = Prisma.ProductGetPayload<{

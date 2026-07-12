@@ -43,11 +43,19 @@ export function formatQuantity(value: string | number, unit: string) {
 }
 
 export async function apiJson<T>(path: string, init?: RequestInit) {
+  const terminalSecret =
+    typeof window === "undefined"
+      ? null
+      : window.localStorage.getItem("muisbakery.posTerminalSecret");
+
   const response = await fetch(`/api/sales/pos${path}`, {
     ...init,
     cache: "no-store",
     headers: {
       "Content-Type": "application/json",
+      ...(terminalSecret
+        ? { "x-muisbakery-pos-terminal-secret": terminalSecret }
+        : {}),
       ...(init?.headers ?? {}),
     },
   });

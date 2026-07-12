@@ -299,6 +299,10 @@ export type RetailerOrderApproval = {
   id: string;
   approvedAmount: string;
   status: "PENDING" | "APPROVED" | "USED" | "REVOKED";
+  terminal: {
+    id: string;
+    name: string | null;
+  } | null;
   reason: string | null;
   expiresAt: string | null;
   usedAt: string | null;
@@ -357,6 +361,10 @@ export type Sale = {
   id: string;
   saleNumber: number;
   customerType: CustomerType;
+  terminal: {
+    id: string;
+    name: string | null;
+  } | null;
   retailer: Retailer | null;
   retailerApproval: RetailerOrderApproval | null;
   paymentMethod: PaymentMethod;
@@ -460,6 +468,7 @@ export type PosSession = {
   terminal: {
     id: string;
     displayToken: string;
+    offlineEnabled: boolean;
   } | null;
   status: PosSessionStatus;
   customerType: CustomerType;
@@ -491,6 +500,11 @@ export type PosTerminal = {
   id: string;
   name: string | null;
   displayToken: string;
+  pairable: boolean;
+  pairingCodeExpiresAt: string | null;
+  pairedAt: string | null;
+  pairedBy: UserRef | null;
+  deviceSecretIssuedAt: string | null;
   isActive: boolean;
   offlineEnabled: boolean;
   lastSeenAt: string | null;
@@ -498,6 +512,33 @@ export type PosTerminal = {
   createdAt: string;
   updatedAt: string;
   currentSession: PosSession | null;
+  stockAllocations: Array<{
+    id: string;
+    allocatedQuantity: string;
+    soldQuantity: string;
+    remainingQuantity: string;
+    product: SalesProductRef;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  retailerCreditAllocations: Array<{
+    id: string;
+    allocatedAmount: string;
+    usedAmount: string;
+    remainingAmount: string;
+    isActive: boolean;
+    retailer: {
+      id: string;
+      name: string;
+      contactPerson: string | null;
+    };
+    createdAt: string;
+    updatedAt: string;
+  }>;
+};
+
+export type PairedPosTerminal = PosTerminal & {
+  deviceSecret: string;
 };
 
 export type DayCloseStatus = "SUBMITTED" | "APPROVED";

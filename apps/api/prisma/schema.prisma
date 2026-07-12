@@ -115,6 +115,7 @@ model User {
   retailerPayments            RetailerPayment[]                 @relation("RetailerPaymentCreatedBy")
   posSessions                 PosSession[]                      @relation("PosSessionCreatedBy")
   posTerminals                PosTerminal[]                     @relation("PosTerminalCreatedBy")
+  pairedPosTerminals          PosTerminal[]                     @relation("PosTerminalPairedBy")
   expenses                    Expense[]                         @relation("ExpenseCreatedBy")
   voidedExpenses              Expense[]                         @relation("ExpenseVoidedBy")
   dayClosesSubmitted          SalesDayClose[]                   @relation("DayCloseSubmittedBy")
@@ -204,6 +205,7 @@ model Product {
   saleItems           SaleItem[]
   salesReturns        SalesProductReturn[]
   posSessionItems     PosSessionItem[]
+  posTerminalStockAllocations PosTerminalStockAllocation[]
 
   @@unique([name, size])
   @@index([isActive])
@@ -633,6 +635,7 @@ model Retailer {
   posSessions PosSession[]
   payments    RetailerPayment[]
   orderApprovals RetailerOrderApproval[]
+  posTerminalCreditAllocations PosTerminalRetailerCreditAllocation[]
 
   @@index([isActive])
   @@index([createdById])
@@ -641,6 +644,7 @@ model Retailer {
 model RetailerOrderApproval {
   id             String                      @id @default(cuid())
   retailerId     String
+  terminalId     String?
   approvedAmount Decimal                     @db.Decimal(14, 2)
   status         RetailerOrderApprovalStatus @default(PENDING)
   reason         String?
@@ -652,11 +656,13 @@ model RetailerOrderApproval {
   approvedById   String?
 
   retailer   Retailer @relation(fields: [retailerId], references: [id], onDelete: Restrict)
+  terminal   PosTerminal? @relation(fields: [terminalId], references: [id], onDelete: SetNull)
   sale       Sale?
   requestedBy User?    @relation("RetailerOrderApprovalRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
   approvedBy User?    @relation("RetailerOrderApprovalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
 
   @@index([retailerId, status])
+  @@index([terminalId])
   @@index([expiresAt])
   @@index([requestedById])
   @@index([approvedById])
@@ -734,6 +740,8 @@ model RetailerPaymentAllocation {
 model Sale {
   id            String        @id @default(cuid())
   saleNumber    Int           @unique @default(autoincrement())
+  clientRequestId String?      @unique
+  terminalId    String?
   customerType  CustomerType   @default(INDIVIDUAL)
   retailerId    String?
   retailerApprovalId String?      @unique
@@ -750,6 +758,7 @@ model Sale {
   createdById   String?
 
   createdBy  User?       @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  terminal   PosTerminal? @relation("SaleTerminal", fields: [terminalId], references: [id], onDelete: SetNull)
   retailer   Retailer?   @relation(fields: [retailerId], references: [id], onDelete: Restrict)
   retailerApproval RetailerOrderApproval? @relation(fields: [retailerApprovalId], references: [id], onDelete: SetNull)
   items      SaleItem[]
@@ -757,6 +766,7 @@ model Sale {
   retailerPaymentAllocations RetailerPaymentAllocation[]
 
   @@index([soldAt])
+  @@index([terminalId])
   @@index([customerType])
   @@index([retailerId])
   @@index([retailerApprovalId])
@@ -804,6 +814,12 @@ model PosTerminal {
   name             String?
   displayToken     String   @unique
   currentSessionId String?  @unique
+  pairingCodeHash  String?
+  pairingCodeExpiresAt DateTime?
+  pairedAt         DateTime?
+  pairedById       String?
+  deviceSecretHash String?
+  deviceSecretIssuedAt DateTime?
   isActive         Boolean  @default(true)
   offlineEnabled   Boolean  @default(false)
   lastSeenAt       DateTime?
@@ -813,13 +829,53 @@ model PosTerminal {
   createdById      String?
 
   createdBy      User?        @relation("PosTerminalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  pairedBy       User?        @relation("PosTerminalPairedBy", fields: [pairedById], references: [id], onDelete: SetNull)
   currentSession PosSession?  @relation("PosTerminalCurrentSession", fields: [currentSessionId], references: [id], onDelete: SetNull)
   sessions       PosSession[] @relation("PosTerminalSessions")
+  sales          Sale[]       @relation("SaleTerminal")
+  stockAllocations PosTerminalStockAllocation[]
+  retailerCreditAllocations PosTerminalRetailerCreditAllocation[]
+  retailerOrderApprovals RetailerOrderApproval[]
 
   @@index([isActive])
   @@index([offlineEnabled])
+  @@index([pairedById])
   @@index([createdById])
   @@index([createdAt])
+}
+
+model PosTerminalStockAllocation {
+  id                String   @id @default(cuid())
+  terminalId        String
+  productId         String
+  allocatedQuantity Int
+  soldQuantity      Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  terminal PosTerminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+  product  Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([terminalId, productId])
+  @@index([productId])
+}
+
+model PosTerminalRetailerCreditAllocation {
+  id              String   @id @default(cuid())
+  terminalId      String
+  retailerId      String
+  allocatedAmount Decimal  @db.Decimal(14, 2)
+  usedAmount      Decimal  @default(0) @db.Decimal(14, 2)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  terminal PosTerminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+  retailer Retailer    @relation(fields: [retailerId], references: [id], onDelete: Restrict)
+
+  @@unique([terminalId, retailerId])
+  @@index([retailerId])
+  @@index([isActive])
 }
 
 model PosSessionItem {

@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   CustomerType,
   FinishedProductStockMovementType,
@@ -32,11 +33,14 @@ import { PosDisplayEvents } from "./pos-display-events";
 import {
   createPosSessionSchema,
   createPosTerminalSchema,
+  pairPosTerminalSchema,
   createRetailerOrderApprovalSchema,
   createRetailerSchema,
   createSaleSchema,
   recordRetailerPaymentSchema,
   requestRetailerOrderApprovalSchema,
+  setTerminalRetailerCreditAllocationSchema,
+  setTerminalStockAllocationSchema,
   updateRetailerOrderApprovalSchema,
   recordReturnSchema,
   updateRetailerSchema,
@@ -61,6 +65,7 @@ import {
 } from "./sales.queries";
 import {
   serializeInventoryItem,
+  serializePairedPosTerminal,
   serializePosSession,
   serializePosTerminal,
   serializeRetailer,
@@ -86,6 +91,25 @@ function numericSearch(value: string | undefined) {
 
   const parsed = Number.parseInt(value.replace(/^#/, ""), 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function hashSecret(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function secretsMatch(value: string | undefined, hash: string | null) {
+  if (!value || !hash) {
+    return false;
+  }
+
+  const candidate = Buffer.from(hashSecret(value), "hex");
+  const stored = Buffer.from(hash, "hex");
+
+  return candidate.length === stored.length && timingSafeEqual(candidate, stored);
+}
+
+function generateDeviceSecret() {
+  return randomBytes(32).toString("base64url");
 }
 
 function saleWhere(query: QueryParams | undefined) {
@@ -443,9 +467,25 @@ export class SalesService {
       throw new BadRequestException("That retailer account is inactive.");
     }
 
+    if (parsed.data.terminalId) {
+      const terminal = await this.prisma.posTerminal.findUnique({
+        where: { id: parsed.data.terminalId },
+        select: { id: true, isActive: true },
+      });
+
+      if (!terminal) {
+        throw new NotFoundException("POS terminal not found.");
+      }
+
+      if (!terminal.isActive) {
+        throw new BadRequestException("That POS terminal is inactive.");
+      }
+    }
+
     const approval = await this.prisma.retailerOrderApproval.create({
       data: {
         retailerId: retailer.id,
+        terminalId: parsed.data.terminalId,
         approvedAmount: new Prisma.Decimal(
           roundMoney(parsed.data.approvedAmount).toFixed(2),
         ),
@@ -464,6 +504,7 @@ export class SalesService {
         usedAt: true,
         createdAt: true,
         reviewedAt: true,
+        terminal: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, name: true, email: true } },
         approvedBy: { select: { id: true, name: true, email: true } },
       },
@@ -477,6 +518,7 @@ export class SalesService {
       metadata: {
         retailerId: retailer.id,
         retailerName: retailer.name,
+        terminalId: parsed.data.terminalId ?? null,
         approvedAmount: approval.approvedAmount.toString(),
         expiresAt: approval.expiresAt?.toISOString() ?? null,
       },
@@ -487,6 +529,7 @@ export class SalesService {
       approvedAmount: approval.approvedAmount.toString(),
       status: approval.status,
       reason: approval.reason,
+      terminal: approval.terminal,
       expiresAt: approval.expiresAt?.toISOString() ?? null,
       usedAt: approval.usedAt?.toISOString() ?? null,
       createdAt: approval.createdAt.toISOString(),
@@ -535,9 +578,25 @@ export class SalesService {
       );
     }
 
+    if (parsed.data.terminalId) {
+      const terminal = await this.prisma.posTerminal.findUnique({
+        where: { id: parsed.data.terminalId },
+        select: { id: true, isActive: true },
+      });
+
+      if (!terminal) {
+        throw new NotFoundException("POS terminal not found.");
+      }
+
+      if (!terminal.isActive) {
+        throw new BadRequestException("That POS terminal is inactive.");
+      }
+    }
+
     const approval = await this.prisma.retailerOrderApproval.create({
       data: {
         retailerId: retailer.id,
+        terminalId: parsed.data.terminalId,
         approvedAmount: new Prisma.Decimal(
           roundMoney(parsed.data.requestedAmount).toFixed(2),
         ),
@@ -554,6 +613,7 @@ export class SalesService {
         usedAt: true,
         createdAt: true,
         reviewedAt: true,
+        terminal: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, name: true, email: true } },
         approvedBy: { select: { id: true, name: true, email: true } },
       },
@@ -567,6 +627,7 @@ export class SalesService {
       metadata: {
         retailerId: retailer.id,
         retailerName: retailer.name,
+        terminalId: parsed.data.terminalId ?? null,
         requestedAmount: approval.approvedAmount.toString(),
         outstandingBalance: outstandingBalance.toFixed(2),
       },
@@ -577,6 +638,7 @@ export class SalesService {
       approvedAmount: approval.approvedAmount.toString(),
       status: approval.status,
       reason: approval.reason,
+      terminal: approval.terminal,
       expiresAt: approval.expiresAt?.toISOString() ?? null,
       usedAt: approval.usedAt?.toISOString() ?? null,
       createdAt: approval.createdAt.toISOString(),
@@ -645,6 +707,7 @@ export class SalesService {
         usedAt: true,
         createdAt: true,
         reviewedAt: true,
+        terminal: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, name: true, email: true } },
         approvedBy: { select: { id: true, name: true, email: true } },
       },
@@ -667,6 +730,7 @@ export class SalesService {
       approvedAmount: approval.approvedAmount.toString(),
       status: approval.status,
       reason: approval.reason,
+      terminal: approval.terminal,
       expiresAt: approval.expiresAt?.toISOString() ?? null,
       usedAt: approval.usedAt?.toISOString() ?? null,
       createdAt: approval.createdAt.toISOString(),
@@ -729,6 +793,7 @@ export class SalesService {
                 where: { id: { in: lockedSaleIds.map((sale) => sale.id) } },
                 select: {
                   id: true,
+                  terminalId: true,
                   saleNumber: true,
                   amountPaid: true,
                   balanceDue: true,
@@ -809,6 +874,44 @@ export class SalesService {
             },
           });
 
+          if (sale.terminalId) {
+            const lockedAllocationIds = await tx.$queryRaw<
+              Array<{ id: string }>
+            >(
+              Prisma.sql`
+                SELECT "id"
+                FROM "PosTerminalRetailerCreditAllocation"
+                WHERE "terminalId" = ${sale.terminalId}
+                  AND "retailerId" = ${retailer.id}
+                FOR UPDATE
+              `,
+            );
+            const lockedAllocationId = lockedAllocationIds[0]?.id;
+            const creditAllocation = lockedAllocationId
+              ? await tx.posTerminalRetailerCreditAllocation.findUnique({
+                  where: { id: lockedAllocationId },
+                  select: { id: true, usedAmount: true },
+                })
+              : null;
+
+            if (creditAllocation) {
+              const nextUsedAmount = roundMoney(
+                Math.max(
+                  0,
+                  decimalToNumber(creditAllocation.usedAmount) -
+                    allocationAmount,
+                ),
+              );
+
+              await tx.posTerminalRetailerCreditAllocation.update({
+                where: { id: creditAllocation.id },
+                data: {
+                  usedAmount: new Prisma.Decimal(nextUsedAmount.toFixed(2)),
+                },
+              });
+            }
+          }
+
           remaining = roundMoney(remaining - allocationAmount);
         }
 
@@ -850,6 +953,8 @@ export class SalesService {
       data: {
         name: parsed.data.name,
         displayToken: generateDisplayToken(),
+        pairingCodeHash: hashSecret(parsed.data.pairingCode),
+        pairingCodeExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         offlineEnabled: parsed.data.offlineEnabled ?? false,
         createdById: actor.id,
       },
@@ -864,6 +969,7 @@ export class SalesService {
       metadata: {
         name: terminal.name,
         offlineEnabled: terminal.offlineEnabled,
+        pairingCodeExpiresAt: terminal.pairingCodeExpiresAt?.toISOString() ?? null,
       },
     });
 
@@ -905,6 +1011,18 @@ export class SalesService {
         name: parsed.data.name,
         isActive: parsed.data.isActive,
         offlineEnabled: parsed.data.offlineEnabled,
+        ...(parsed.data.pairingCode
+          ? {
+              pairingCodeHash: hashSecret(parsed.data.pairingCode),
+              pairingCodeExpiresAt: new Date(
+                Date.now() + 7 * 24 * 60 * 60 * 1000,
+              ),
+              pairedAt: null,
+              pairedById: null,
+              deviceSecretHash: null,
+              deviceSecretIssuedAt: null,
+            }
+          : {}),
         // Rotation invalidates a leaked customer-display URL without
         // recreating the terminal.
         ...(parsed.data.rotateDisplayToken
@@ -924,16 +1042,28 @@ export class SalesService {
         isActive: terminal.isActive,
         offlineEnabled: terminal.offlineEnabled,
         displayTokenRotated: Boolean(parsed.data.rotateDisplayToken),
+        pairingCodeRotated: Boolean(parsed.data.pairingCode),
       },
     });
 
     return serializePosTerminal(terminal);
   }
 
-  async getPosTerminal(id: string) {
+  async pairPosTerminal(input: unknown, actor: AuthenticatedUser) {
+    const parsed = pairPosTerminalSchema.safeParse(input ?? {});
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
     const existing = await this.prisma.posTerminal.findUnique({
-      where: { id },
-      include: posTerminalInclude,
+      where: { id: parsed.data.terminalId },
+      select: {
+        id: true,
+        isActive: true,
+        pairingCodeHash: true,
+        pairingCodeExpiresAt: true,
+      },
     });
 
     if (!existing) {
@@ -944,6 +1074,86 @@ export class SalesService {
       throw new BadRequestException("This POS terminal has been deactivated.");
     }
 
+    if (
+      !existing.pairingCodeHash ||
+      !secretsMatch(parsed.data.pairingCode, existing.pairingCodeHash)
+    ) {
+      throw new BadRequestException("Invalid POS terminal pairing code.");
+    }
+
+    if (
+      existing.pairingCodeExpiresAt &&
+      existing.pairingCodeExpiresAt.getTime() <= Date.now()
+    ) {
+      throw new BadRequestException(
+        "This POS terminal pairing code has expired. Ask Admin to rotate it.",
+      );
+    }
+
+    const deviceSecret = generateDeviceSecret();
+    const terminal = await this.prisma.posTerminal.update({
+      where: { id: existing.id },
+      data: {
+        pairedAt: new Date(),
+        pairedById: actor.id,
+        deviceSecretHash: hashSecret(deviceSecret),
+        deviceSecretIssuedAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+      include: posTerminalInclude,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "SALES_POS_TERMINAL_PAIRED",
+      entityType: "PosTerminal",
+      entityId: terminal.id,
+      metadata: {
+        terminalName: terminal.name,
+      },
+    });
+
+    return serializePairedPosTerminal(terminal, deviceSecret);
+  }
+
+  private async assertTerminalDevice(
+    id: string | undefined | null,
+    deviceSecret: string | undefined,
+  ) {
+    if (!id) {
+      return null;
+    }
+
+    const existing = await this.prisma.posTerminal.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        displayToken: true,
+        isActive: true,
+        deviceSecretHash: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("POS terminal not found.");
+    }
+
+    if (!existing.isActive) {
+      throw new BadRequestException("This POS terminal has been deactivated.");
+    }
+
+    if (!secretsMatch(deviceSecret, existing.deviceSecretHash)) {
+      throw new BadRequestException(
+        "This device is not paired to that POS terminal.",
+      );
+    }
+
+    return existing;
+  }
+
+  async getPosTerminal(id: string, deviceSecret: string | undefined) {
+    await this.assertTerminalDevice(id, deviceSecret);
+
     const terminal = await this.prisma.posTerminal.update({
       where: { id },
       data: { lastSeenAt: new Date() },
@@ -953,7 +1163,162 @@ export class SalesService {
     return serializePosTerminal(terminal);
   }
 
-  async createPosSession(input: unknown, actor: AuthenticatedUser) {
+  async setPosTerminalStockAllocation(
+    terminalId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = setTerminalStockAllocationSchema.safeParse(input ?? {});
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const [terminal, product] = await Promise.all([
+      this.prisma.posTerminal.findUnique({
+        where: { id: terminalId },
+        select: { id: true, name: true },
+      }),
+      this.prisma.product.findUnique({
+        where: { id: parsed.data.productId },
+        select: productSelect,
+      }),
+    ]);
+
+    if (!terminal) {
+      throw new NotFoundException("POS terminal not found.");
+    }
+
+    if (!product) {
+      throw new NotFoundException("Product not found.");
+    }
+
+    const allocation = await this.prisma.posTerminalStockAllocation.upsert({
+      where: {
+        terminalId_productId: {
+          terminalId,
+          productId: product.id,
+        },
+      },
+      create: {
+        terminalId,
+        productId: product.id,
+        allocatedQuantity: parsed.data.allocatedQuantity,
+      },
+      update: {
+        allocatedQuantity: parsed.data.allocatedQuantity,
+      },
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_POS_TERMINAL_STOCK_ALLOCATED",
+      entityType: "PosTerminalStockAllocation",
+      entityId: allocation.id,
+      metadata: {
+        terminalId,
+        terminalName: terminal.name,
+        productId: product.id,
+        productName: productLabel(product),
+        allocatedQuantity: allocation.allocatedQuantity,
+      },
+    });
+
+    const updated = await this.prisma.posTerminal.findUniqueOrThrow({
+      where: { id: terminalId },
+      include: posTerminalInclude,
+    });
+
+    return serializePosTerminal(updated);
+  }
+
+  async setPosTerminalRetailerCreditAllocation(
+    terminalId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = setTerminalRetailerCreditAllocationSchema.safeParse(
+      input ?? {},
+    );
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const [terminal, retailer] = await Promise.all([
+      this.prisma.posTerminal.findUnique({
+        where: { id: terminalId },
+        select: { id: true, name: true },
+      }),
+      this.prisma.retailer.findUnique({
+        where: { id: parsed.data.retailerId },
+        select: { id: true, name: true, isActive: true },
+      }),
+    ]);
+
+    if (!terminal) {
+      throw new NotFoundException("POS terminal not found.");
+    }
+
+    if (!retailer) {
+      throw new NotFoundException("Retailer not found.");
+    }
+
+    if (!retailer.isActive) {
+      throw new BadRequestException("That retailer account is inactive.");
+    }
+
+    const allocatedAmount = new Prisma.Decimal(
+      roundMoney(parsed.data.allocatedAmount).toFixed(2),
+    );
+    const allocation =
+      await this.prisma.posTerminalRetailerCreditAllocation.upsert({
+        where: {
+          terminalId_retailerId: {
+            terminalId,
+            retailerId: retailer.id,
+          },
+        },
+        create: {
+          terminalId,
+          retailerId: retailer.id,
+          allocatedAmount,
+          isActive: parsed.data.isActive,
+        },
+        update: {
+          allocatedAmount,
+          isActive: parsed.data.isActive,
+        },
+      });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_POS_TERMINAL_RETAILER_CREDIT_ALLOCATED",
+      entityType: "PosTerminalRetailerCreditAllocation",
+      entityId: allocation.id,
+      metadata: {
+        terminalId,
+        terminalName: terminal.name,
+        retailerId: retailer.id,
+        retailerName: retailer.name,
+        allocatedAmount: allocation.allocatedAmount.toString(),
+        isActive: allocation.isActive,
+      },
+    });
+
+    const updated = await this.prisma.posTerminal.findUniqueOrThrow({
+      where: { id: terminalId },
+      include: posTerminalInclude,
+    });
+
+    return serializePosTerminal(updated);
+  }
+
+  async createPosSession(
+    input: unknown,
+    actor: AuthenticatedUser,
+    deviceSecret?: string,
+  ) {
     const parsed = createPosSessionSchema.safeParse(input ?? {});
 
     if (!parsed.success) {
@@ -985,19 +1350,13 @@ export class SalesService {
     }
 
     if (parsed.data.terminalId) {
-      const terminal = await this.prisma.posTerminal.findUnique({
-        where: { id: parsed.data.terminalId },
-        select: { id: true, displayToken: true, isActive: true },
-      });
-
+      const terminal = await this.assertTerminalDevice(
+        parsed.data.terminalId,
+        deviceSecret,
+      );
       if (!terminal) {
         throw new NotFoundException("POS terminal not found.");
       }
-
-      if (!terminal.isActive) {
-        throw new BadRequestException("This POS terminal has been deactivated.");
-      }
-
       terminalDisplayToken = terminal.displayToken;
     }
 
@@ -1045,8 +1404,13 @@ export class SalesService {
     return serializedSession;
   }
 
-  async getPosSession(id: string, actor: AuthenticatedUser) {
+  async getPosSession(
+    id: string,
+    actor: AuthenticatedUser,
+    deviceSecret?: string,
+  ) {
     const session = await this.getPosSessionForActor(id, actor);
+    await this.assertPosSessionDevice(session, deviceSecret);
     return serializePosSession(session);
   }
 
@@ -1054,6 +1418,7 @@ export class SalesService {
     id: string,
     input: unknown,
     actor: AuthenticatedUser,
+    deviceSecret?: string,
   ) {
     const parsed = updatePosSessionSchema.safeParse(input ?? {});
 
@@ -1062,6 +1427,7 @@ export class SalesService {
     }
 
     const existing = await this.getPosSessionForActor(id, actor);
+    await this.assertPosSessionDevice(existing, deviceSecret);
     this.assertActivePosSession(existing);
 
     const nextCustomerType = parsed.data.customerType ?? existing.customerType;
@@ -1135,6 +1501,7 @@ export class SalesService {
     id: string,
     input: unknown,
     actor: AuthenticatedUser,
+    deviceSecret?: string,
   ) {
     const parsed = upsertPosSessionItemSchema.safeParse(input);
 
@@ -1143,6 +1510,7 @@ export class SalesService {
     }
 
     const existing = await this.getPosSessionForActor(id, actor);
+    await this.assertPosSessionDevice(existing, deviceSecret);
     this.assertActivePosSession(existing);
 
     const product = await this.prisma.product.findUnique({
@@ -1217,8 +1585,13 @@ export class SalesService {
     return serializedSession;
   }
 
-  async checkoutPosSession(id: string, actor: AuthenticatedUser) {
+  async checkoutPosSession(
+    id: string,
+    actor: AuthenticatedUser,
+    deviceSecret?: string,
+  ) {
     const session = await this.getPosSessionForActor(id, actor);
+    await this.assertPosSessionDevice(session, deviceSecret);
     this.assertActivePosSession(session);
 
     if (session.items.length === 0) {
@@ -1236,6 +1609,8 @@ export class SalesService {
       notes: session.notes
         ? `POS checkout. ${session.notes}`
         : `POS checkout from session ${session.id}.`,
+      terminalId: session.terminalId ?? undefined,
+      clientRequestId: `pos:${session.id}`,
       items: session.items.map((item) => ({
         productId: item.productId,
         quantity: item.quantity.toString(),
@@ -1306,8 +1681,13 @@ export class SalesService {
     return serializedSession;
   }
 
-  async cancelPosSession(id: string, actor: AuthenticatedUser) {
+  async cancelPosSession(
+    id: string,
+    actor: AuthenticatedUser,
+    deviceSecret?: string,
+  ) {
     const existing = await this.getPosSessionForActor(id, actor);
+    await this.assertPosSessionDevice(existing, deviceSecret);
 
     if (existing.status !== PosSessionStatus.ACTIVE) {
       return serializePosSession(existing);
@@ -1438,6 +1818,17 @@ export class SalesService {
       throw new BadRequestException(parsed.error.issues[0]?.message);
     }
 
+    if (parsed.data.clientRequestId) {
+      const existing = await this.prisma.sale.findUnique({
+        where: { clientRequestId: parsed.data.clientRequestId },
+        include: saleInclude,
+      });
+
+      if (existing) {
+        return serializeSale(existing);
+      }
+    }
+
     const sale = await this.prisma.$transaction(
       async (tx) => this.createSaleInTransaction(tx, parsed.data, actor),
       { timeout: 15000, maxWait: 15000 },
@@ -1503,16 +1894,42 @@ export class SalesService {
 
     const totalAmount = roundMoney(subtotal - discount);
     const customerType = data.customerType ?? CustomerType.INDIVIDUAL;
+    let terminal:
+      | {
+          id: string;
+          name: string | null;
+          isActive: boolean;
+          offlineEnabled: boolean;
+        }
+      | null = null;
     let retailer:
       | { id: string; name: string; isActive: boolean }
       | null = null;
     let retailerApprovalId: string | null = null;
+    let terminalRetailerCreditAllocation:
+      | { id: string; usedAmount: number }
+      | null = null;
     let paymentMethod = data.paymentMethod;
     let customerName = data.customerName;
     let amountPaid = roundMoney(
       data.amountPaid ??
         (paymentMethod === PaymentMethod.CREDIT ? 0 : totalAmount),
     );
+
+    if (data.terminalId) {
+      terminal = await tx.posTerminal.findUnique({
+        where: { id: data.terminalId },
+        select: { id: true, name: true, isActive: true, offlineEnabled: true },
+      });
+
+      if (!terminal) {
+        throw new NotFoundException("POS terminal not found.");
+      }
+
+      if (!terminal.isActive) {
+        throw new BadRequestException("This POS terminal has been deactivated.");
+      }
+    }
 
     if (customerType === CustomerType.RETAILER) {
       if (!data.retailerId) {
@@ -1578,6 +1995,7 @@ export class SalesService {
           select: {
             id: true,
             retailerId: true,
+            terminalId: true,
             approvedAmount: true,
             status: true,
             expiresAt: true,
@@ -1588,6 +2006,12 @@ export class SalesService {
         if (!approval || approval.retailerId !== retailer.id) {
           throw new BadRequestException(
             "Select a valid Admin approval for this retailer.",
+          );
+        }
+
+        if (approval.terminalId && approval.terminalId !== terminal?.id) {
+          throw new BadRequestException(
+            "This Admin approval is assigned to another POS terminal.",
           );
         }
 
@@ -1619,8 +2043,112 @@ export class SalesService {
       }
     }
 
+    if (
+      terminal?.offlineEnabled &&
+      retailer &&
+      paymentMethod === PaymentMethod.CREDIT &&
+      balanceDue > 0
+    ) {
+      const lockedCreditAllocationIds = await tx.$queryRaw<
+        Array<{ id: string }>
+      >(
+        Prisma.sql`
+          SELECT "id"
+          FROM "PosTerminalRetailerCreditAllocation"
+          WHERE "terminalId" = ${terminal.id}
+            AND "retailerId" = ${retailer.id}
+          FOR UPDATE
+        `,
+      );
+      const lockedCreditAllocationId = lockedCreditAllocationIds[0]?.id;
+      const creditAllocation = lockedCreditAllocationId
+        ? await tx.posTerminalRetailerCreditAllocation.findUnique({
+            where: { id: lockedCreditAllocationId },
+            select: {
+              id: true,
+              allocatedAmount: true,
+              usedAmount: true,
+              isActive: true,
+            },
+          })
+        : null;
+
+      if (!creditAllocation || !creditAllocation.isActive) {
+        throw new BadRequestException(
+          `${retailer.name} has no active retailer credit allocation for this POS terminal.`,
+        );
+      }
+
+      const remainingCredit = roundMoney(
+        decimalToNumber(creditAllocation.allocatedAmount) -
+          decimalToNumber(creditAllocation.usedAmount),
+      );
+
+      if (remainingCredit < balanceDue) {
+        throw new BadRequestException(
+          `Only ₦${remainingCredit.toLocaleString("en", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })} retailer credit is allocated to this POS terminal for ${retailer.name}.`,
+        );
+      }
+
+      terminalRetailerCreditAllocation = {
+        id: creditAllocation.id,
+        usedAmount: decimalToNumber(creditAllocation.usedAmount),
+      };
+    }
+
+    const terminalAllocations = new Map<
+      string,
+      { id: string; allocatedQuantity: number; soldQuantity: number }
+    >();
+
+    if (terminal?.offlineEnabled) {
+      for (const item of items) {
+        const lockedAllocationIds = await tx.$queryRaw<Array<{ id: string }>>(
+          Prisma.sql`
+            SELECT "id"
+            FROM "PosTerminalStockAllocation"
+            WHERE "terminalId" = ${terminal.id}
+              AND "productId" = ${item.productId}
+            FOR UPDATE
+          `,
+        );
+        const lockedAllocationId = lockedAllocationIds[0]?.id;
+        const allocation = lockedAllocationId
+          ? await tx.posTerminalStockAllocation.findUnique({
+              where: { id: lockedAllocationId },
+            })
+          : null;
+
+        if (!allocation) {
+          throw new BadRequestException(
+            `${productLabel(item.product)} has not been allocated to this POS terminal.`,
+          );
+        }
+
+        const remainingAllocation =
+          allocation.allocatedQuantity - allocation.soldQuantity;
+
+        if (remainingAllocation < item.quantity) {
+          throw new BadRequestException(
+            `Only ${formatQuantity(remainingAllocation)} ${item.product.unit.abbreviation} of ${productLabel(item.product)} is allocated to this POS terminal.`,
+          );
+        }
+
+        terminalAllocations.set(item.productId, {
+          id: allocation.id,
+          allocatedQuantity: allocation.allocatedQuantity,
+          soldQuantity: allocation.soldQuantity,
+        });
+      }
+    }
+
     const createdSale = await tx.sale.create({
       data: {
+        clientRequestId: data.clientRequestId,
+        terminalId: terminal?.id ?? null,
         customerType,
         retailerId: retailer?.id ?? null,
         retailerApprovalId,
@@ -1647,7 +2175,31 @@ export class SalesService {
       });
     }
 
+    if (terminalRetailerCreditAllocation) {
+      await tx.posTerminalRetailerCreditAllocation.update({
+        where: { id: terminalRetailerCreditAllocation.id },
+        data: {
+          usedAmount: new Prisma.Decimal(
+            roundMoney(
+              terminalRetailerCreditAllocation.usedAmount + balanceDue,
+            ).toFixed(2),
+          ),
+        },
+      });
+    }
+
     for (const item of items) {
+      const allocation = terminalAllocations.get(item.productId);
+
+      if (allocation) {
+        await tx.posTerminalStockAllocation.update({
+          where: { id: allocation.id },
+          data: {
+            soldQuantity: { increment: item.quantity },
+          },
+        });
+      }
+
       const lockedBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
         Prisma.sql`
           SELECT "id"
@@ -2200,6 +2752,17 @@ export class SalesService {
     }
 
     return session;
+  }
+
+  private async assertPosSessionDevice(
+    session: PosSessionWithIncludes,
+    deviceSecret?: string,
+  ) {
+    if (!session.terminalId) {
+      return;
+    }
+
+    await this.assertTerminalDevice(session.terminalId, deviceSecret);
   }
 
   private assertActivePosSession(session: PosSessionWithIncludes) {

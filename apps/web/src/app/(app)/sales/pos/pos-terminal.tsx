@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CustomerType,
   PaymentMethod,
+  PairedPosTerminal,
   PosSession,
   PosTerminal as PosTerminalRecord,
   Retailer,
@@ -56,6 +57,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       ? ""
       : (window.localStorage.getItem("muisbakery.posTerminalId") ?? ""),
   );
+  const [terminalPairingCode, setTerminalPairingCode] = useState("");
   const [customerType, setCustomerType] =
     useState<CustomerType>("INDIVIDUAL");
   const [retailerId, setRetailerId] = useState("");
@@ -114,8 +116,11 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
     terminalLoadPromiseRef.current = (async () => {
       const existingId = window.localStorage.getItem("muisbakery.posTerminalId");
+      const existingSecret = window.localStorage.getItem(
+        "muisbakery.posTerminalSecret",
+      );
 
-      if (existingId) {
+      if (existingId && existingSecret) {
         try {
           const loaded = await apiJson<PosTerminalRecord>(
             `/terminals/${existingId}`,
@@ -124,12 +129,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           return loaded;
         } catch {
           window.localStorage.removeItem("muisbakery.posTerminalId");
+          window.localStorage.removeItem("muisbakery.posTerminalSecret");
           setTerminalSetupId("");
         }
       }
 
       throw new Error(
-        "This device is not paired to a POS terminal. Ask Admin to create a terminal, then enter its setup ID here.",
+        "This device is not paired to a POS terminal. Ask Admin for the terminal setup ID and pairing code.",
       );
     })();
 
@@ -154,9 +160,15 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
   async function claimTerminal() {
     const setupId = terminalSetupId.trim();
+    const pairingCode = terminalPairingCode.trim();
 
     if (!setupId) {
       setError("Enter the POS terminal setup ID from Admin.");
+      return;
+    }
+
+    if (!pairingCode) {
+      setError("Enter the POS terminal pairing code from Admin.");
       return;
     }
 
@@ -164,13 +176,22 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     setError(null);
 
     try {
-      const loaded = await apiJson<PosTerminalRecord>(`/terminals/${setupId}`);
+      const loaded = await apiJson<PairedPosTerminal>("/terminals/pair", {
+        method: "POST",
+        body: JSON.stringify({ terminalId: setupId, pairingCode }),
+      });
 
       window.localStorage.setItem("muisbakery.posTerminalId", loaded.id);
+      window.localStorage.setItem(
+        "muisbakery.posTerminalSecret",
+        loaded.deviceSecret,
+      );
       setTerminalSetupId(loaded.id);
+      setTerminalPairingCode("");
       applyTerminal(loaded);
     } catch (caught) {
       window.localStorage.removeItem("muisbakery.posTerminalId");
+      window.localStorage.removeItem("muisbakery.posTerminalSecret");
       applyTerminal(null);
       setError(
         caught instanceof Error ? caught.message : "Unable to pair terminal.",
@@ -215,11 +236,39 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     };
   }, [applySession, ensureTerminal]);
 
+  const terminalStockByProductId = useMemo(() => {
+    return new Map(
+      terminal?.stockAllocations.map((allocation) => [
+        allocation.product.id,
+        allocation,
+      ]) ?? [],
+    );
+  }, [terminal]);
+
+  const productAvailability = useCallback(
+    (item: SalesInventoryItem) => {
+      const globalAvailable = productAvailable(item);
+
+      if (!terminal?.offlineEnabled) {
+        return globalAvailable;
+      }
+
+      const allocation = terminalStockByProductId.get(item.product.id);
+
+      if (!allocation) {
+        return 0;
+      }
+
+      return Math.min(globalAvailable, Number(allocation.remainingQuantity));
+    },
+    [terminal?.offlineEnabled, terminalStockByProductId],
+  );
+
   const filteredProducts = useMemo(() => {
     const search = query.trim().toLowerCase();
 
     return options.products.filter((item) => {
-      if (productAvailable(item) <= 0) {
+      if (productAvailability(item) <= 0) {
         return false;
       }
       if (!search) {
@@ -227,7 +276,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       }
       return formatProductName(item.product).toLowerCase().includes(search);
     });
-  }, [options.products, query]);
+  }, [options.products, productAvailability, query]);
 
   const active = session?.status === "ACTIVE";
   const selectedRetailer: Retailer | null =
@@ -404,6 +453,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         method: "POST",
         body: JSON.stringify({
           requestedAmount: session.totalAmount,
+          terminalId: terminal?.id,
           reason: `POS request for retailer credit sale of ${formatMoney(
             session.totalAmount,
           )}.`,
@@ -536,7 +586,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       return;
     }
 
-    const available = productAvailable(item);
+    const available = productAvailability(item);
     const nextQuantity = roundCount(Math.min(quantity, available));
 
     if (quantity > available) {
@@ -674,6 +724,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                 type="text"
                 value={terminalSetupId}
               />
+              <input
+                className="h-10 min-w-0 flex-1 rounded-md border border-amber-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+                onChange={(event) => setTerminalPairingCode(event.target.value)}
+                placeholder="Pairing code"
+                type="password"
+                value={terminalPairingCode}
+              />
               <button
                 className="inline-flex h-10 items-center justify-center rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
                 disabled={busy}
@@ -706,7 +763,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                   </span>
                   <span className="mt-1 block text-sm text-stone-500">
                     {formatQuantity(
-                      productAvailable(item),
+                      productAvailability(item),
                       item.product.unit.abbreviation,
                     )}
                   </span>
@@ -868,7 +925,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                               inputMode="numeric"
                               max={
                                 inventoryItem
-                                  ? productAvailable(inventoryItem)
+                                  ? productAvailability(inventoryItem)
                                   : undefined
                               }
                               min="0"

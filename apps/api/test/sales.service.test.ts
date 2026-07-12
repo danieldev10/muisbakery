@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 
 import { BadRequestException, NotFoundException } from "@nestjs/common";
@@ -20,6 +21,33 @@ const product = {
   unitPrice: 3000,
   unit: { id: "unit-1", name: "Loaf", abbreviation: "loaf" },
 };
+
+function terminalRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "terminal-1",
+    name: "Front counter",
+    displayToken: "display-token",
+    pairingCodeHash: null,
+    pairingCodeExpiresAt: null,
+    pairedAt: null,
+    pairedBy: null,
+    deviceSecretIssuedAt: null,
+    isActive: true,
+    offlineEnabled: false,
+    lastSeenAt: null,
+    lastSyncedAt: null,
+    createdAt: new Date("2026-07-12T08:00:00.000Z"),
+    updatedAt: new Date("2026-07-12T09:00:00.000Z"),
+    currentSession: null,
+    stockAllocations: [],
+    retailerCreditAllocations: [],
+    ...overrides,
+  };
+}
+
+function hashSecret(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 function createSalesService(prisma: unknown, audit: unknown) {
   return new SalesService(prisma as never, audit as never, {} as never);
@@ -1032,6 +1060,114 @@ test("SalesService.getPosDisplay hides expired display tokens", async () => {
   );
 });
 
+test("SalesService.pairPosTerminal issues a device secret without consuming the pairing code", async () => {
+  const { audit, records } = createAuditMock();
+  const updates: Array<{ data: Record<string, unknown> }> = [];
+  const service = createSalesService(
+    {
+      posTerminal: {
+        findUnique: async () => ({
+          id: "terminal-1",
+          isActive: true,
+          pairingCodeHash: hashSecret("pair-code"),
+          pairingCodeExpiresAt: new Date(Date.now() + 60_000),
+        }),
+        update: async ({ data }: { data: Record<string, unknown> }) => {
+          updates.push({ data });
+
+          return terminalRecord({
+            pairingCodeHash: hashSecret("pair-code"),
+            pairingCodeExpiresAt: new Date(Date.now() + 60_000),
+            pairedAt: data.pairedAt,
+            pairedBy: {
+              id: actor.id,
+              name: actor.name,
+              email: actor.email,
+            },
+            deviceSecretIssuedAt: data.deviceSecretIssuedAt,
+            lastSeenAt: data.lastSeenAt,
+          });
+        },
+      },
+    },
+    audit,
+  );
+
+  const result = await service.pairPosTerminal(
+    { terminalId: "terminal-1", pairingCode: "pair-code" },
+    actor,
+  );
+  const update = updates[0]?.data;
+
+  assert.equal(typeof result.deviceSecret, "string");
+  assert.ok(result.deviceSecret.length > 20);
+  assert.equal("pairingCodeHash" in (update ?? {}), false);
+  assert.equal("pairingCodeExpiresAt" in (update ?? {}), false);
+  assert.equal(result.pairable, true);
+  assert.equal(update?.pairedById, actor.id);
+  assert.equal(typeof update?.deviceSecretHash, "string");
+  assert.notEqual(update?.deviceSecretHash, result.deviceSecret);
+  assert.equal(records.length, 1);
+});
+
+test("SalesService.getPosTerminal requires the paired device secret", async () => {
+  const service = createSalesService(
+    {
+      posTerminal: {
+        findUnique: async () => ({
+          id: "terminal-1",
+          displayToken: "display-token",
+          isActive: true,
+          deviceSecretHash: hashSecret("secret"),
+        }),
+        update: async () => terminalRecord(),
+      },
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.getPosTerminal("terminal-1", "wrong-secret"),
+    (error) =>
+      error instanceof BadRequestException &&
+      /not paired to that POS terminal/i.test(error.message),
+  );
+
+  const result = await service.getPosTerminal("terminal-1", "secret");
+
+  assert.equal(result.id, "terminal-1");
+});
+
+test("SalesService.createPosSession rejects unpaired device access to a terminal", async () => {
+  let sessionCreated = false;
+  const service = createSalesService(
+    {
+      posTerminal: {
+        findUnique: async () => ({
+          id: "terminal-1",
+          displayToken: "display-token",
+          isActive: true,
+          deviceSecretHash: hashSecret("secret"),
+        }),
+      },
+      posSession: {
+        create: async () => {
+          sessionCreated = true;
+        },
+      },
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.createPosSession({ terminalId: "terminal-1" }, actor),
+    (error) =>
+      error instanceof BadRequestException &&
+      /not paired to that POS terminal/i.test(error.message),
+  );
+  assert.equal(sessionCreated, false);
+});
+
 test("SalesService.updatePosTerminal can rotate the display token", async () => {
   const { audit, records } = createAuditMock();
   const updates: Array<{ data: Record<string, unknown> }> = [];
@@ -1042,18 +1178,10 @@ test("SalesService.updatePosTerminal can rotate the display token", async () => 
         update: async ({ data }: { data: Record<string, unknown> }) => {
           updates.push({ data });
 
-          return {
-            id: "terminal-1",
+          return terminalRecord({
             name: "Front counter",
             displayToken: String(data.displayToken ?? "old-token"),
-            isActive: true,
-            offlineEnabled: false,
-            lastSeenAt: null,
-            lastSyncedAt: null,
-            createdAt: new Date("2026-07-12T08:00:00.000Z"),
-            updatedAt: new Date("2026-07-12T09:00:00.000Z"),
-            currentSession: null,
-          };
+          });
         },
       },
     },
@@ -1078,6 +1206,7 @@ test("SalesService.updatePosTerminal can rotate the display token", async () => 
       isActive: true,
       offlineEnabled: false,
       displayTokenRotated: true,
+      pairingCodeRotated: false,
     },
   );
 });

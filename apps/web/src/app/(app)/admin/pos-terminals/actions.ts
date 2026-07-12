@@ -19,6 +19,7 @@ export async function createPosTerminal(
 ): Promise<FormState> {
   const result = await apiSend("/admin/pos-terminals", "POST", {
     name: getOptionalString(formData, "name"),
+    pairingCode: getString(formData, "pairingCode"),
     offlineEnabled: getBoolean(formData, "offlineEnabled"),
   });
 
@@ -39,9 +40,55 @@ export async function updatePosTerminal(
     "PATCH",
     {
       name: getOptionalString(formData, "name") ?? null,
+      pairingCode: getOptionalString(formData, "pairingCode"),
       isActive: getBoolean(formData, "isActive"),
       offlineEnabled: getBoolean(formData, "offlineEnabled"),
       rotateDisplayToken: getBoolean(formData, "rotateDisplayToken"),
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateTerminalViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function setTerminalStockAllocation(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const terminalId = getString(formData, "terminalId");
+  const result = await apiSend(
+    `/admin/pos-terminals/${terminalId}/stock-allocations`,
+    "POST",
+    {
+      productId: getString(formData, "productId"),
+      allocatedQuantity: getString(formData, "allocatedQuantity"),
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateTerminalViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function setTerminalRetailerCreditAllocation(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const terminalId = getString(formData, "terminalId");
+  const result = await apiSend(
+    `/admin/pos-terminals/${terminalId}/retailer-credit-allocations`,
+    "POST",
+    {
+      retailerId: getString(formData, "retailerId"),
+      allocatedAmount: getString(formData, "allocatedAmount"),
+      isActive: getBoolean(formData, "isActive"),
     },
   );
 

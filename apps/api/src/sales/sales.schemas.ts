@@ -36,6 +36,12 @@ const nullableId = z.preprocess(
   z.string().trim().min(1).nullable().optional(),
 );
 
+const pairingCodeSchema = z
+  .string()
+  .trim()
+  .min(6, "Pairing code must be at least 6 characters.")
+  .max(64, "Pairing code is too long.");
+
 const quantitySchema = z.coerce
   .number()
   .positive("Quantity must be greater than zero.")
@@ -79,6 +85,8 @@ export const createSaleSchema = z
     customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
     retailerId: optionalId,
     retailerApprovalId: optionalId,
+    terminalId: optionalId,
+    clientRequestId: optionalText(120),
     paymentMethod: z.enum(PaymentMethod),
     customerName: optionalText(160),
     soldAt: optionalDate,
@@ -183,12 +191,18 @@ export const recordReturnSchema = z
 
 export const createPosTerminalSchema = z.object({
   name: optionalText(100),
+  pairingCode: pairingCodeSchema,
   offlineEnabled: z.coerce.boolean().optional(),
 });
 
 export const updatePosTerminalSchema = z
   .object({
     name: nullableText(100),
+    pairingCode: z.preprocess(
+      (value) =>
+        typeof value === "string" && value.trim() === "" ? undefined : value,
+      pairingCodeSchema.optional(),
+    ),
     isActive: z.coerce.boolean().optional(),
     offlineEnabled: z.coerce.boolean().optional(),
     rotateDisplayToken: z.coerce.boolean().optional(),
@@ -196,6 +210,24 @@ export const updatePosTerminalSchema = z
   .refine((value) => Object.keys(value).length > 0, {
     message: "No changes provided.",
   });
+
+export const pairPosTerminalSchema = z.object({
+  terminalId: z.string().trim().min(1),
+  pairingCode: pairingCodeSchema,
+});
+
+export const setTerminalStockAllocationSchema = z.object({
+  productId: z.string().trim().min(1),
+  allocatedQuantity: nonnegativeQuantitySchema,
+});
+
+export const setTerminalRetailerCreditAllocationSchema = z.object({
+  retailerId: z.string().trim().min(1),
+  allocatedAmount: moneySchema.refine((value) => value > 0, {
+    message: "Allocated amount must be greater than zero.",
+  }),
+  isActive: z.coerce.boolean().default(true),
+});
 
 export const createPosSessionSchema = z.object({
   customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
@@ -243,12 +275,14 @@ export const updateRetailerSchema = z.object({
 
 export const createRetailerOrderApprovalSchema = z.object({
   approvedAmount: moneySchema.positive("Approved amount must be greater than zero."),
+  terminalId: optionalId,
   reason: optionalText(500),
   expiresAt: optionalDate,
 });
 
 export const requestRetailerOrderApprovalSchema = z.object({
   requestedAmount: moneySchema.positive("Requested amount must be greater than zero."),
+  terminalId: optionalId,
   reason: optionalText(500),
 });
 

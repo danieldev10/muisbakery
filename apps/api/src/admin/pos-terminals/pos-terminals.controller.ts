@@ -41,4 +41,30 @@ export class PosTerminalsController {
   ) {
     return this.sales.updatePosTerminal(id, body, getRequestUser(request));
   }
+
+  @Post(":id/stock-allocations")
+  setStockAllocation(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.setPosTerminalStockAllocation(
+      id,
+      body,
+      getRequestUser(request),
+    );
+  }
+
+  @Post(":id/retailer-credit-allocations")
+  setRetailerCreditAllocation(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.setPosTerminalRetailerCreditAllocation(
+      id,
+      body,
+      getRequestUser(request),
+    );
+  }
 }
