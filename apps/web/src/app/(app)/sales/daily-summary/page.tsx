@@ -1,3 +1,5 @@
+import { Field, TextareaField } from "@/components/admin/form-controls";
+import { AdminFormModal } from "@/components/admin/form-modal";
 import {
   Card,
   EmptyState,
@@ -7,6 +9,7 @@ import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type {
   CustomerType,
+  DayClosePreview,
   PaymentMethod,
   SalesSummary,
 } from "@/lib/operations/types";
@@ -23,6 +26,7 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
+import { submitDayClose } from "./actions";
 import { SaleItemsSummary } from "./sale-items-summary";
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -80,9 +84,12 @@ export default async function SalesDailySummaryPage({
     typeof query.date === "string" && query.date.trim() !== ""
       ? query.date
       : todayInputValue();
-  const summary = await apiGet<SalesSummary>(
-    `/sales/summary?date=${encodeURIComponent(date)}`,
-  );
+  const [summary, dayClose] = await Promise.all([
+    apiGet<SalesSummary>(`/sales/summary?date=${encodeURIComponent(date)}`),
+    apiGet<DayClosePreview>(
+      `/sales/day-close?date=${encodeURIComponent(date)}`,
+    ),
+  ]);
   const paymentSummaryQuery = firstParam(query, "paymentSummaryQ");
   const filteredPaymentSummary = summary.paymentSummary.filter((entry) =>
     matchesSearch(paymentSummaryQuery, [
@@ -146,6 +153,10 @@ export default async function SalesDailySummaryPage({
     filteredSales,
     pageNumber(query.page),
   );
+  const canSubmitClose =
+    !dayClose.close ||
+    (dayClose.needsReclose && dayClose.close.status === "SUBMITTED");
+  const closeActionLabel = dayClose.close ? "Re-close this day" : "Close this day";
 
   return (
     <>
@@ -207,6 +218,171 @@ export default async function SalesDailySummaryPage({
           <p className="mt-1 text-sm text-stone-500">Units back to stock</p>
         </Card>
       </div>
+
+      <Card>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
+              Close of day — {formatDate(summary.date)}
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">
+              Count the drawer against the system&apos;s expected takings, then
+              submit for Management sign-off.
+            </p>
+          </div>
+          {canSubmitClose ? (
+            <AdminFormModal
+              action={submitDayClose}
+              description={`Record the counted drawer cash for ${formatDate(summary.date)}. Expected cash is ${formatMoney(dayClose.expected.expectedCash)}.`}
+              submitLabel="Submit close"
+              title={closeActionLabel}
+              triggerLabel={closeActionLabel}
+            >
+              <input name="date" type="hidden" value={dayClose.date} />
+              <Field
+                label="Counted cash"
+                min="0"
+                name="countedCash"
+                placeholder="0.00"
+                required
+                step="0.01"
+                type="number"
+                defaultValue={dayClose.close?.countedCash ?? ""}
+              />
+              <TextareaField
+                defaultValue={dayClose.close?.notes ?? ""}
+                label="Notes"
+                name="notes"
+                placeholder="Optional, e.g. reason for a cash difference"
+              />
+            </AdminFormModal>
+          ) : dayClose.close ? (
+            <span
+              className={
+                dayClose.close.status === "APPROVED"
+                  ? "inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800"
+                  : "inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800"
+              }
+            >
+              {dayClose.close.status === "APPROVED"
+                ? "Approved by Management"
+                : "Awaiting Management review"}
+            </span>
+          ) : (
+            <span className="text-sm text-stone-500">No close submitted</span>
+          )}
+        </div>
+
+        {dayClose.close && dayClose.needsReclose ? (
+          <p
+            className={`mb-4 rounded-md border px-3 py-2 text-sm ${
+              dayClose.close.status === "APPROVED"
+                ? "border-red-200 bg-red-50 text-red-800"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+          >
+            New activity has changed the expected totals since this day was
+            closed.
+            {dayClose.close.status === "APPROVED"
+              ? " Management has already approved this close, so review is required before changing it."
+              : " Re-close the day before Management signs it off."}
+          </p>
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              Expected cash
+            </p>
+            <p className="mt-1 text-lg font-semibold text-stone-950">
+              {formatMoney(dayClose.expected.expectedCash)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              Expected transfers
+            </p>
+            <p className="mt-1 text-lg font-semibold text-stone-950">
+              {formatMoney(dayClose.expected.expectedTransfer)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              Expected POS
+            </p>
+            <p className="mt-1 text-lg font-semibold text-stone-950">
+              {formatMoney(dayClose.expected.expectedPos)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              Credit extended
+            </p>
+            <p className="mt-1 text-lg font-semibold text-stone-950">
+              {formatMoney(dayClose.expected.creditTotal)}
+            </p>
+          </div>
+        </div>
+
+        {dayClose.close ? (
+          <div className="mt-4 rounded-lg border border-[color:var(--border-muted)] bg-[var(--surface-warm)] p-4">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Counted cash
+                </p>
+                <p className="mt-1 text-lg font-semibold text-stone-950">
+                  {formatMoney(dayClose.close.countedCash)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Cash variance
+                </p>
+                <p
+                  className={`mt-1 text-lg font-semibold ${
+                    Number(dayClose.close.cashVariance) < 0
+                      ? "text-red-800"
+                      : "text-emerald-700"
+                  }`}
+                >
+                  {formatMoney(dayClose.close.cashVariance)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Submitted by
+                </p>
+                <p className="mt-1 text-sm text-stone-700">
+                  {dayClose.close.submittedBy?.name ??
+                    dayClose.close.submittedBy?.email ??
+                    "-"}{" "}
+                  · {formatDateTime(dayClose.close.submittedAt)}
+                </p>
+              </div>
+            </div>
+            {dayClose.close.notes ? (
+              <p className="mt-3 text-sm text-stone-600">
+                Notes: {dayClose.close.notes}
+              </p>
+            ) : null}
+            {dayClose.close.status === "APPROVED" ? (
+              <p className="mt-3 text-sm text-emerald-800">
+                Approved by{" "}
+                {dayClose.close.reviewedBy?.name ??
+                  dayClose.close.reviewedBy?.email ??
+                  "Management"}
+                {dayClose.close.reviewedAt
+                  ? ` on ${formatDateTime(dayClose.close.reviewedAt)}`
+                  : ""}
+                {dayClose.close.reviewNotes
+                  ? ` — ${dayClose.close.reviewNotes}`
+                  : ""}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title={`Payment methods (${filteredPaymentSummary.length} of ${summary.paymentSummary.length})`}>

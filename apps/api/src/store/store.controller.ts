@@ -5,11 +5,13 @@ import {
   Inject,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
 import type { Request } from "express";
 
+import type { QueryParams } from "../common/pagination";
 import { StoreGuard } from "../auth/store.guard";
 import { getRequestUser } from "../auth/auth.types";
 import { StoreService } from "./store.service";
@@ -33,13 +35,13 @@ export class StoreController {
   }
 
   @Get("batches")
-  batches() {
-    return this.store.listBatches();
+  batches(@Query() query: QueryParams) {
+    return this.store.listBatches(query);
   }
 
   @Get("receipts")
-  receipts() {
-    return this.store.listReceipts();
+  receipts(@Query() query: QueryParams) {
+    return this.store.listReceipts(query);
   }
 
   @Post("receipts")
@@ -48,8 +50,8 @@ export class StoreController {
   }
 
   @Get("material-requests")
-  materialRequests() {
-    return this.store.listMaterialRequests();
+  materialRequests(@Query() query: QueryParams) {
+    return this.store.listMaterialRequests(query);
   }
 
   @Post("material-requests/:id/issue")

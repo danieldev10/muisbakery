@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, Loader2, Wifi, WifiOff } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { io } from "socket.io-client";
 
 import type { PosSession, PosTerminal } from "@/lib/operations/types";
@@ -11,7 +11,6 @@ import { formatProductName } from "@/lib/product-label";
 type DisplayEvent =
   | {
       kind: "session";
-      preview?: boolean;
       session: PosSession;
     }
   | {
@@ -46,30 +45,6 @@ export function CustomerDisplay({
   const [session, setSession] = useState<PosSession | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const previewHoldUntilRef = useRef(0);
-
-  const applyDisplaySession = useCallback(
-    (nextSession: PosSession | null, preview = false) => {
-      if (preview) {
-        previewHoldUntilRef.current = Date.now() + 1000;
-      } else if (Date.now() < previewHoldUntilRef.current) {
-        setSession((currentSession) => {
-          if (
-            currentSession?.status === "ACTIVE" &&
-            nextSession?.status === "ACTIVE"
-          ) {
-            return currentSession;
-          }
-
-          return nextSession;
-        });
-        return;
-      }
-
-      setSession(nextSession);
-    },
-    [],
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -94,7 +69,7 @@ export function CustomerDisplay({
         }
 
         if (!cancelled) {
-          applyDisplaySession(
+          setSession(
             mode === "terminal"
               ? (data as PosTerminal).currentSession
               : (data as PosSession),
@@ -130,12 +105,12 @@ export function CustomerDisplay({
       }
 
       if (data.kind === "session") {
-        applyDisplaySession(data.session, data.preview);
+        setSession(data.session);
         setError(null);
       }
 
       if (data.kind === "terminal") {
-        applyDisplaySession(data.terminal.currentSession);
+        setSession(data.terminal.currentSession);
         setError(null);
       }
 
@@ -166,7 +141,7 @@ export function CustomerDisplay({
       cancelled = true;
       socket.disconnect();
     };
-  }, [applyDisplaySession, mode, token]);
+  }, [mode, token]);
 
   const itemCount = useMemo(
     () =>

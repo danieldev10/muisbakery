@@ -146,10 +146,31 @@ export type MaterialRequest = {
   fulfilledAt: string | null;
   createdAt: string;
   updatedAt: string;
+  productionRequest: {
+    id: string;
+    requestedQuantity: string;
+    status: MaterialRequestStatus;
+    product: ProductRef;
+  } | null;
   rawMaterial: RawMaterialRef;
   requestedBy: UserRef;
   issuedBy: UserRef | null;
   issues: MaterialRequestIssue[];
+};
+
+export type ProductionRequest = {
+  id: string;
+  requestedQuantity: string;
+  status: MaterialRequestStatus;
+  neededBy: string | null;
+  notes: string | null;
+  responseNotes: string | null;
+  fulfilledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  product: ProductRef;
+  requestedBy: UserRef;
+  materialRequests: MaterialRequest[];
 };
 
 export type ProductionWasteType = "DAMAGED" | "RETURNED_TO_PRODUCTION";
@@ -264,11 +285,27 @@ export type Retailer = {
   creditLimit: string;
   outstandingBalance: string;
   availableCredit: string;
+  requiresOrderApproval: boolean;
+  orderApprovals: RetailerOrderApproval[];
+  orderApprovalRequests: RetailerOrderApproval[];
   notes: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
   createdBy: UserRef | null;
+};
+
+export type RetailerOrderApproval = {
+  id: string;
+  approvedAmount: string;
+  status: "PENDING" | "APPROVED" | "USED" | "REVOKED";
+  reason: string | null;
+  expiresAt: string | null;
+  usedAt: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  requestedBy: UserRef | null;
+  approvedBy: UserRef | null;
 };
 
 export type RetailerPayment = {
@@ -282,7 +319,6 @@ export type RetailerPayment = {
   retailer: {
     id: string;
     name: string;
-    creditLimit: string;
   };
   createdBy: UserRef | null;
   allocations: Array<{
@@ -322,6 +358,7 @@ export type Sale = {
   saleNumber: number;
   customerType: CustomerType;
   retailer: Retailer | null;
+  retailerApproval: RetailerOrderApproval | null;
   paymentMethod: PaymentMethod;
   customerName: string | null;
   soldAt: string;
@@ -427,6 +464,7 @@ export type PosSession = {
   status: PosSessionStatus;
   customerType: CustomerType;
   retailer: Retailer | null;
+  retailerApprovalId: string | null;
   customerName: string | null;
   paymentMethod: PaymentMethod;
   discount: string;
@@ -453,7 +491,54 @@ export type PosTerminal = {
   id: string;
   name: string | null;
   displayToken: string;
+  isActive: boolean;
+  offlineEnabled: boolean;
+  lastSeenAt: string | null;
+  lastSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;
   currentSession: PosSession | null;
+};
+
+export type DayCloseStatus = "SUBMITTED" | "APPROVED";
+
+export type SalesDayClose = {
+  id: string;
+  businessDate: string;
+  salesCount: number;
+  expectedCash: string;
+  expectedTransfer: string;
+  expectedPos: string;
+  creditTotal: string;
+  countedCash: string;
+  cashVariance: string;
+  damagedQuantity: number;
+  returnedQuantity: number;
+  notes: string | null;
+  status: DayCloseStatus;
+  submittedAt: string;
+  submittedBy: UserRef | null;
+  reviewedAt: string | null;
+  reviewedBy: UserRef | null;
+  reviewNotes: string | null;
+};
+
+export type DayClosePreview = {
+  date: string;
+  expected: {
+    salesCount: number;
+    expectedCash: string;
+    expectedTransfer: string;
+    expectedPos: string;
+    creditTotal: string;
+    damagedQuantity: number;
+    returnedQuantity: number;
+  };
+  close: SalesDayClose | null;
+  needsReclose: boolean;
+};
+
+export type DayCloseListReport = {
+  month: { value: string; label: string; start: string; end: string };
+  closes: SalesDayClose[];
 };

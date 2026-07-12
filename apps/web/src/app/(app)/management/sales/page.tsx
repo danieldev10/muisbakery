@@ -2,6 +2,7 @@ import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementSalesReport } from "@/lib/management/types";
+import type { DayCloseListReport } from "@/lib/operations/types";
 import {
   pageNumber,
   paginate,
@@ -26,10 +27,19 @@ import {
   paymentLabels,
 } from "../_components";
 
+import { ApproveDayCloseButton } from "./approve-day-close-modal";
+
 const returnLabels = {
   RETURN_TO_STOCK: "Returned to stock",
   DAMAGED: "Damaged",
 };
+
+function formatBusinessDate(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeZone: "UTC",
+  }).format(new Date(value));
+}
 
 export default async function ManagementSalesPage({
   searchParams,
@@ -38,9 +48,14 @@ export default async function ManagementSalesPage({
 }) {
   const query = await searchParams;
   const month = getMonthParam(query);
-  const report = await apiGet<ManagementSalesReport>(
-    `/management/sales?month=${encodeURIComponent(month)}`,
-  );
+  const [report, dayCloses] = await Promise.all([
+    apiGet<ManagementSalesReport>(
+      `/management/sales?month=${encodeURIComponent(month)}`,
+    ),
+    apiGet<DayCloseListReport>(
+      `/management/day-closes?month=${encodeURIComponent(month)}`,
+    ),
+  ]);
   const paymentQuery = firstParam(query, "paymentQ");
   const filteredPaymentSummary = report.paymentSummary.filter((entry) =>
     matchesSearch(paymentQuery, [
@@ -152,6 +167,96 @@ export default async function ManagementSalesPage({
           detail={`${formatQuantity(report.summary.returnedToStockQuantity)} returned to stock`}
         />
       </div>
+
+      <Card
+        title={`Daily close-outs (${dayCloses.closes.length})`}
+        description="Drawer counts submitted by Sales for each business day. Review and approve to sign the day off."
+      >
+        {dayCloses.closes.length === 0 ? (
+          <EmptyState>
+            No days have been closed for this month yet. Sales closes a day
+            from the Daily summary page.
+          </EmptyState>
+        ) : (
+          <TableShell
+            head={
+              <>
+                <th className="py-2 pr-4">Date</th>
+                <th className="py-2 pr-4">Sales</th>
+                <th className="py-2 pr-4">Expected cash</th>
+                <th className="py-2 pr-4">Counted cash</th>
+                <th className="py-2 pr-4">Variance</th>
+                <th className="py-2 pr-4">Credit</th>
+                <th className="py-2 pr-4">Damaged / returned</th>
+                <th className="py-2 pr-4">Status</th>
+                <th className="py-2 pr-4">Actions</th>
+              </>
+            }
+          >
+            {dayCloses.closes.map((close) => (
+              <tr key={close.id}>
+                <td className="py-3 pr-4 font-medium text-stone-900">
+                  {formatBusinessDate(close.businessDate)}
+                  <span className="block text-xs font-normal text-stone-500">
+                    by{" "}
+                    {close.submittedBy?.name ??
+                      close.submittedBy?.email ??
+                      "-"}
+                  </span>
+                </td>
+                <td className="py-3 pr-4 text-stone-600">{close.salesCount}</td>
+                <td className="py-3 pr-4 text-stone-600">
+                  {formatMoney(close.expectedCash)}
+                </td>
+                <td className="py-3 pr-4 text-stone-600">
+                  {formatMoney(close.countedCash)}
+                </td>
+                <td
+                  className={`py-3 pr-4 font-semibold ${
+                    Number(close.cashVariance) < 0
+                      ? "text-red-800"
+                      : "text-emerald-700"
+                  }`}
+                >
+                  {formatMoney(close.cashVariance)}
+                </td>
+                <td className="py-3 pr-4 text-stone-600">
+                  {formatMoney(close.creditTotal)}
+                </td>
+                <td className="py-3 pr-4 text-stone-600">
+                  {close.damagedQuantity} / {close.returnedQuantity}
+                </td>
+                <td className="py-3 pr-4">
+                  <span
+                    className={
+                      close.status === "APPROVED"
+                        ? "inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800"
+                        : "inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800"
+                    }
+                    title={close.reviewNotes ?? undefined}
+                  >
+                    {close.status === "APPROVED" ? "Approved" : "Submitted"}
+                  </span>
+                </td>
+                <td className="py-3 pr-4">
+                  {close.status === "APPROVED" ? (
+                    <span className="text-xs text-stone-500">
+                      {close.reviewedBy?.name ??
+                        close.reviewedBy?.email ??
+                        "-"}
+                    </span>
+                  ) : (
+                    <ApproveDayCloseButton
+                      close={close}
+                      detail={`${formatBusinessDate(close.businessDate)} · counted ${formatMoney(close.countedCash)} vs expected ${formatMoney(close.expectedCash)}`}
+                    />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </TableShell>
+        )}
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title={`Payment methods (${filteredPaymentSummary.length} of ${report.paymentSummary.length})`}>

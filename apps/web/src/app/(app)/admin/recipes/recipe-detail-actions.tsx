@@ -10,7 +10,7 @@ import {
   type Recipe,
 } from "@/lib/admin/types";
 
-import { deleteRecipeFromDetail, updateRecipe } from "./actions";
+import { deleteRecipe, deleteRecipeFromDetail, updateRecipe } from "./actions";
 
 const fieldClass =
   "h-10 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-sm text-[var(--text-primary)] shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]";
@@ -350,14 +350,16 @@ export function EditRecipeButton({
 
 export function DeleteRecipeButton({
   productLabel,
+  redirectAfterDelete = true,
   recipeId,
 }: {
   productLabel: string;
+  redirectAfterDelete?: boolean;
   recipeId: string;
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(
-    deleteRecipeFromDetail,
+    redirectAfterDelete ? deleteRecipeFromDetail : deleteRecipe,
     initialFormState,
   );
 

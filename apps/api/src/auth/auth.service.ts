@@ -4,6 +4,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -31,6 +32,8 @@ const MAX_FAILURES_PER_IP = 30;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @Inject(PrismaService)
     private readonly prisma: PrismaService,
@@ -180,6 +183,9 @@ export class AuthService {
       emailFailures >= MAX_FAILURES_PER_EMAIL ||
       ipFailures >= MAX_FAILURES_PER_IP
     ) {
+      this.logger.warn(
+        `Login throttled email=${email} ip=${ip ?? "unknown"} emailFailures=${emailFailures} ipFailures=${ipFailures}`,
+      );
       throw new HttpException(
         "Too many failed login attempts. Try again in a few minutes.",
         HttpStatus.TOO_MANY_REQUESTS,

@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   assertRequiredEnv,
+  getInternalApiSecret,
   getJwtSecret,
   getWebOrigin,
 } from "../src/config/env";
@@ -11,6 +12,7 @@ const ENV_KEYS = [
   "DATABASE_URL",
   "AUTH_JWT_SECRET",
   "AUTH_SECRET",
+  "INTERNAL_API_SECRET",
   "WEB_ORIGIN",
   "NODE_ENV",
 ] as const;
@@ -61,6 +63,7 @@ test("assertRequiredEnv requires WEB_ORIGIN and a long secret in production", ()
       NODE_ENV: "production",
       DATABASE_URL: "postgresql://localhost/db",
       AUTH_JWT_SECRET: "short",
+      INTERNAL_API_SECRET: "b".repeat(32),
       WEB_ORIGIN: "https://bakery.example.com",
     },
     () => {
@@ -73,9 +76,35 @@ test("assertRequiredEnv requires WEB_ORIGIN and a long secret in production", ()
       NODE_ENV: "production",
       DATABASE_URL: "postgresql://localhost/db",
       AUTH_JWT_SECRET: "a".repeat(32),
+      INTERNAL_API_SECRET: "b".repeat(32),
     },
     () => {
       assert.throws(assertRequiredEnv, /WEB_ORIGIN/);
+    },
+  );
+
+  withEnv(
+    {
+      NODE_ENV: "production",
+      DATABASE_URL: "postgresql://localhost/db",
+      AUTH_JWT_SECRET: "a".repeat(32),
+      WEB_ORIGIN: "https://bakery.example.com",
+    },
+    () => {
+      assert.throws(assertRequiredEnv, /INTERNAL_API_SECRET/);
+    },
+  );
+
+  withEnv(
+    {
+      NODE_ENV: "production",
+      DATABASE_URL: "postgresql://localhost/db",
+      AUTH_JWT_SECRET: "a".repeat(32),
+      INTERNAL_API_SECRET: "short",
+      WEB_ORIGIN: "https://bakery.example.com",
+    },
+    () => {
+      assert.throws(assertRequiredEnv, /INTERNAL_API_SECRET must be at least 32/);
     },
   );
 });
@@ -95,5 +124,26 @@ test("getWebOrigin falls back to the local dev origin", () => {
   });
   withEnv({ WEB_ORIGIN: "https://bakery.example.com" }, () => {
     assert.equal(getWebOrigin(), "https://bakery.example.com");
+  });
+});
+
+test("getWebOrigin rejects malformed or path-based origins", () => {
+  withEnv({ WEB_ORIGIN: "not a url" }, () => {
+    assert.throws(getWebOrigin, /valid URL origin/);
+  });
+  withEnv({ WEB_ORIGIN: "https://bakery.example.com/app" }, () => {
+    assert.throws(getWebOrigin, /not a full URL path/);
+  });
+});
+
+test("getInternalApiSecret is optional in development and required in production", () => {
+  withEnv({}, () => {
+    assert.equal(getInternalApiSecret(), null);
+  });
+  withEnv({ INTERNAL_API_SECRET: "dev-internal-secret" }, () => {
+    assert.equal(getInternalApiSecret(), "dev-internal-secret");
+  });
+  withEnv({ NODE_ENV: "production" }, () => {
+    assert.throws(getInternalApiSecret, /server-to-server API secret/);
   });
 });

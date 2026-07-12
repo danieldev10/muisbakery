@@ -150,7 +150,7 @@ export class ProductsService {
 
     const target = await this.prisma.product.findUnique({
       where: { id },
-      select: { id: true },
+      include,
     });
 
     if (!target) {
@@ -162,12 +162,8 @@ export class ProductsService {
     }
 
     if (parsed.data.name || parsed.data.size !== undefined) {
-      const current = await this.prisma.product.findUniqueOrThrow({
-        where: { id },
-        select: { name: true, size: true },
-      });
-      const nextName = parsed.data.name ?? current.name;
-      const nextSize = parsed.data.size ?? current.size;
+      const nextName = parsed.data.name ?? target.name;
+      const nextSize = parsed.data.size ?? target.size;
       const clash = await this.prisma.product.findFirst({
         where: { name: nextName, size: nextSize, NOT: { id } },
         select: { id: true },
@@ -189,7 +185,25 @@ export class ProductsService {
       action: "ADMIN_PRODUCT_UPDATED",
       entityType: "Product",
       entityId: product.id,
-      metadata: { isActive: product.isActive },
+      metadata: {
+        isActive: product.isActive,
+        before: {
+          name: target.name,
+          size: target.size,
+          description: target.description,
+          unitId: target.unitId,
+          unitPrice: target.unitPrice?.toString() ?? null,
+          isActive: target.isActive,
+        },
+        after: {
+          name: product.name,
+          size: product.size,
+          description: product.description,
+          unitId: product.unitId,
+          unitPrice: product.unitPrice?.toString() ?? null,
+          isActive: product.isActive,
+        },
+      },
     });
 
     return serialize(product);

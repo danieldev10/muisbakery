@@ -4,6 +4,7 @@
  */
 
 const MIN_PRODUCTION_SECRET_LENGTH = 32;
+const MIN_INTERNAL_SECRET_LENGTH = 32;
 
 export function isProduction() {
   return process.env.NODE_ENV === "production";
@@ -27,8 +28,50 @@ export function getJwtSecret() {
   return secret;
 }
 
+function parseOrigin(value: string, variableName: string) {
+  let url: URL;
+
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${variableName} must be a valid URL origin.`);
+  }
+
+  if (url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`${variableName} must be an origin, not a full URL path.`);
+  }
+
+  if (isProduction() && url.protocol !== "https:") {
+    throw new Error(`${variableName} must use https in production.`);
+  }
+
+  return url.origin;
+}
+
 export function getWebOrigin() {
-  return process.env.WEB_ORIGIN ?? "http://localhost:3000";
+  return parseOrigin(process.env.WEB_ORIGIN ?? "http://localhost:3000", "WEB_ORIGIN");
+}
+
+export function getInternalApiSecret() {
+  const secret = process.env.INTERNAL_API_SECRET;
+
+  if (!secret || secret.trim() === "") {
+    if (isProduction()) {
+      throw new Error(
+        "INTERNAL_API_SECRET is not set. Refusing to start without a server-to-server API secret.",
+      );
+    }
+
+    return null;
+  }
+
+  if (isProduction() && secret.length < MIN_INTERNAL_SECRET_LENGTH) {
+    throw new Error(
+      `INTERNAL_API_SECRET must be at least ${MIN_INTERNAL_SECRET_LENGTH} characters in production.`,
+    );
+  }
+
+  return secret;
 }
 
 export function assertRequiredEnv() {
@@ -46,6 +89,10 @@ export function assertRequiredEnv() {
     missing.push("WEB_ORIGIN");
   }
 
+  if (isProduction() && !process.env.INTERNAL_API_SECRET) {
+    missing.push("INTERNAL_API_SECRET");
+  }
+
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}. Refusing to start.`,
@@ -54,4 +101,6 @@ export function assertRequiredEnv() {
 
   // Applies the production length check even when the variable is present.
   getJwtSecret();
+  getWebOrigin();
+  getInternalApiSecret();
 }

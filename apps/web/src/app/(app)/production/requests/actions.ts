@@ -11,7 +11,7 @@ export async function createMaterialRequest(
   formData: FormData,
 ): Promise<FormState> {
   const result = await apiSend("/production/material-requests", "POST", {
-    rawMaterialId: getString(formData, "rawMaterialId"),
+    productId: getString(formData, "productId"),
     requestedQuantity: getString(formData, "requestedQuantity"),
     neededBy: getOptionalString(formData, "neededBy"),
     notes: getOptionalString(formData, "notes"),

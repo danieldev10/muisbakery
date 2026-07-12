@@ -23,6 +23,10 @@ import {
 } from "@/lib/table-filters";
 
 import { RecipeFormModal } from "./recipe-form";
+import {
+  DeleteRecipeButton,
+  EditRecipeButton,
+} from "./recipe-detail-actions";
 
 export default async function RecipesPage({
   searchParams,
@@ -160,18 +164,17 @@ export default async function RecipesPage({
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {pageItems.map((recipe) => (
-              <Link
-                className={`group flex min-h-48 flex-col justify-between rounded-lg border border-[color:var(--border-muted)] bg-white p-4 shadow-[var(--shadow-whisper)] transition hover:-translate-y-0.5 hover:border-[var(--brand-burgundy)] hover:shadow-[var(--shadow-panel)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-burgundy)] ${
+              <div
+                className={`flex min-h-48 flex-col justify-between rounded-lg border border-[color:var(--border-muted)] bg-white p-4 shadow-[var(--shadow-whisper)] transition ${
                   recipe.isActive ? "" : "opacity-60"
                 }`}
-                href={`/admin/recipes/${recipe.id}`}
                 key={recipe.id}
               >
                 <div className="flex items-start justify-between gap-3">
                   <h3 className="mt-1 text-lg font-semibold leading-tight text-[var(--text-primary)]">
                     {formatProductName(recipe.product)}
                   </h3>
-                  <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-warm)] text-[var(--brand-burgundy)] transition group-hover:border-[var(--brand-burgundy)] group-hover:bg-[var(--brand-tint)]">
+                  <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-warm)] text-[var(--brand-burgundy)]">
                     <BookOpen aria-hidden className="size-5" />
                   </span>
                 </div>
@@ -209,14 +212,28 @@ export default async function RecipesPage({
                   </div>
                 </div>
 
-                <span className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--brand-burgundy)]">
-                  View recipe
-                  <ArrowRight
-                    aria-hidden
-                    className="size-4 transition group-hover:translate-x-0.5"
-                  />
-                </span>
-              </Link>
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+                  <Link
+                    className="inline-flex h-9 items-center gap-1.5 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-sm font-semibold text-[var(--brand-burgundy)] transition hover:border-[var(--brand-burgundy)] hover:bg-[var(--brand-tint)]"
+                    href={`/admin/recipes/${recipe.id}`}
+                  >
+                    View recipe
+                    <ArrowRight aria-hidden className="size-4" />
+                  </Link>
+                  <div className="flex items-center gap-2">
+                    <EditRecipeButton
+                      productLabel={formatProductName(recipe.product)}
+                      rawMaterials={materialOptions}
+                      recipe={recipe}
+                    />
+                    <DeleteRecipeButton
+                      productLabel={formatProductName(recipe.product)}
+                      redirectAfterDelete={false}
+                      recipeId={recipe.id}
+                    />
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}

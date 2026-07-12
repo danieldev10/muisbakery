@@ -75,7 +75,6 @@ export class UnitsService {
 
     const target = await this.prisma.unit.findUnique({
       where: { id },
-      select: { id: true },
     });
 
     if (!target) {
@@ -103,7 +102,19 @@ export class UnitsService {
       action: "ADMIN_UNIT_UPDATED",
       entityType: "Unit",
       entityId: unit.id,
-      metadata: { isActive: unit.isActive },
+      metadata: {
+        isActive: unit.isActive,
+        before: {
+          name: target.name,
+          abbreviation: target.abbreviation,
+          isActive: target.isActive,
+        },
+        after: {
+          name: unit.name,
+          abbreviation: unit.abbreviation,
+          isActive: unit.isActive,
+        },
+      },
     });
 
     return unit;

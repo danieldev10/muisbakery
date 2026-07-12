@@ -60,6 +60,13 @@ enum PosSessionStatus {
   EXPIRED
 }
 
+enum RetailerOrderApprovalStatus {
+  PENDING
+  APPROVED
+  USED
+  REVOKED
+}
+
 enum ProductionMaterialStockMovementType {
   RECEIVE_FROM_STORE
   CONSUME
@@ -94,6 +101,7 @@ model User {
   materialRequestIssues       MaterialRequestIssue[]            @relation("MaterialRequestIssueIssuedBy")
   stockMovements              RawMaterialStockMovement[]        @relation("StockMovementActor")
   productionRuns              ProductionRun[]                   @relation("ProductionRunCreatedBy")
+  productionRequests          ProductionRequest[]               @relation("ProductionRequestRequestedBy")
   productionWaste             ProductionWaste[]                 @relation("ProductionWasteCreatedBy")
   productionMaterialBatches   ProductionMaterialStockBatch[]    @relation("ProductionMaterialBatchCreatedBy")
   productionMaterialMovements ProductionMaterialStockMovement[] @relation("ProductionMaterialMovementActor")
@@ -102,11 +110,15 @@ model User {
   sales                       Sale[]                            @relation("SaleCreatedBy")
   salesReturns                SalesProductReturn[]              @relation("SalesReturnCreatedBy")
   createdRetailers            Retailer[]                        @relation("RetailerCreatedBy")
+  retailerOrderApprovals      RetailerOrderApproval[]           @relation("RetailerOrderApprovalApprovedBy")
+  retailerOrderApprovalRequests RetailerOrderApproval[]          @relation("RetailerOrderApprovalRequestedBy")
   retailerPayments            RetailerPayment[]                 @relation("RetailerPaymentCreatedBy")
   posSessions                 PosSession[]                      @relation("PosSessionCreatedBy")
   posTerminals                PosTerminal[]                     @relation("PosTerminalCreatedBy")
   expenses                    Expense[]                         @relation("ExpenseCreatedBy")
   voidedExpenses              Expense[]                         @relation("ExpenseVoidedBy")
+  dayClosesSubmitted          SalesDayClose[]                   @relation("DayCloseSubmittedBy")
+  dayClosesReviewed           SalesDayClose[]                   @relation("DayCloseReviewedBy")
 
   @@index([role])
   @@index([isActive])
@@ -185,6 +197,7 @@ model Product {
   unit                Unit                        @relation(fields: [unitId], references: [id], onDelete: Restrict)
   recipe              Recipe?
   productionRuns      ProductionRun[]
+  productionRequests  ProductionRequest[]
   productionWaste     ProductionWaste[]
   salesBatches        SalesProductBatch[]
   salesStockMovements SalesProductStockMovement[]
@@ -354,6 +367,7 @@ model RawMaterialStockMovement {
 model MaterialRequest {
   id                String                @id @default(cuid())
   rawMaterialId     String
+  productionRequestId String?
   requestedQuantity Decimal               @db.Decimal(14, 3)
   issuedQuantity    Decimal               @default(0) @db.Decimal(14, 3)
   status            MaterialRequestStatus @default(PENDING)
@@ -367,6 +381,7 @@ model MaterialRequest {
   updatedAt         DateTime              @updatedAt
 
   rawMaterial               RawMaterial                    @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  productionRequest         ProductionRequest?             @relation(fields: [productionRequestId], references: [id], onDelete: Cascade)
   requestedBy               User                           @relation("MaterialRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
   issuedBy                  User?                          @relation("MaterialRequestIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
   issues                    MaterialRequestIssue[]
@@ -374,8 +389,32 @@ model MaterialRequest {
   productionMaterialBatches ProductionMaterialStockBatch[]
 
   @@index([rawMaterialId])
+  @@index([productionRequestId])
   @@index([requestedById])
   @@index([issuedById])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ProductionRequest {
+  id                String                @id @default(cuid())
+  productId         String
+  requestedQuantity Int
+  status            MaterialRequestStatus @default(PENDING)
+  neededBy          DateTime?
+  notes             String?
+  responseNotes     String?
+  fulfilledAt       DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  requestedById     String
+
+  product          Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  requestedBy      User              @relation("ProductionRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  materialRequests MaterialRequest[]
+
+  @@index([productId])
+  @@index([requestedById])
   @@index([status])
   @@index([createdAt])
 }
@@ -533,6 +572,8 @@ model SalesProductBatch {
   batchDate         DateTime @db.Date
   quantityReceived  Int
   quantityRemaining Int
+  unitCost          Decimal  @default(0) @db.Decimal(14, 4)
+  totalCost         Decimal  @default(0) @db.Decimal(14, 2)
   receivedAt        DateTime
   notes             String?
   createdAt         DateTime @default(now())
@@ -580,7 +621,7 @@ model Retailer {
   phone         String?
   email         String?
   address       String?
-  creditLimit   Decimal  @db.Decimal(14, 2)
+  creditLimit   Decimal  @default(0) @db.Decimal(14, 2)
   notes         String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
@@ -591,9 +632,35 @@ model Retailer {
   sales       Sale[]
   posSessions PosSession[]
   payments    RetailerPayment[]
+  orderApprovals RetailerOrderApproval[]
 
   @@index([isActive])
   @@index([createdById])
+}
+
+model RetailerOrderApproval {
+  id             String                      @id @default(cuid())
+  retailerId     String
+  approvedAmount Decimal                     @db.Decimal(14, 2)
+  status         RetailerOrderApprovalStatus @default(PENDING)
+  reason         String?
+  expiresAt      DateTime?
+  usedAt         DateTime?
+  createdAt      DateTime                    @default(now())
+  reviewedAt     DateTime?
+  requestedById  String?
+  approvedById   String?
+
+  retailer   Retailer @relation(fields: [retailerId], references: [id], onDelete: Restrict)
+  sale       Sale?
+  requestedBy User?    @relation("RetailerOrderApprovalRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  approvedBy User?    @relation("RetailerOrderApprovalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([retailerId, status])
+  @@index([expiresAt])
+  @@index([requestedById])
+  @@index([approvedById])
+  @@index([createdAt])
 }
 
 model RetailerPayment {
@@ -616,6 +683,40 @@ model RetailerPayment {
   @@index([createdById])
 }
 
+enum DayCloseStatus {
+  SUBMITTED
+  APPROVED
+}
+
+// Close-of-day record: Sales submits the drawer count against the system's
+// expected totals; Management signs it off. One close per business date.
+model SalesDayClose {
+  id               String         @id @default(cuid())
+  businessDate     DateTime       @unique @db.Date
+  salesCount       Int
+  expectedCash     Decimal        @db.Decimal(14, 2)
+  expectedTransfer Decimal        @db.Decimal(14, 2)
+  expectedPos      Decimal        @db.Decimal(14, 2)
+  creditTotal      Decimal        @db.Decimal(14, 2)
+  countedCash      Decimal        @db.Decimal(14, 2)
+  cashVariance     Decimal        @db.Decimal(14, 2)
+  damagedQuantity  Int
+  returnedQuantity Int
+  notes            String?
+  status           DayCloseStatus @default(SUBMITTED)
+  submittedAt      DateTime       @default(now())
+  submittedById    String?
+  reviewedAt       DateTime?
+  reviewedById     String?
+  reviewNotes      String?
+
+  submittedBy User? @relation("DayCloseSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
+  reviewedBy  User? @relation("DayCloseReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([submittedById])
+}
+
 model RetailerPaymentAllocation {
   id        String   @id @default(cuid())
   paymentId String
@@ -635,6 +736,7 @@ model Sale {
   saleNumber    Int           @unique @default(autoincrement())
   customerType  CustomerType   @default(INDIVIDUAL)
   retailerId    String?
+  retailerApprovalId String?      @unique
   paymentMethod PaymentMethod
   customerName  String?
   soldAt        DateTime
@@ -649,6 +751,7 @@ model Sale {
 
   createdBy  User?       @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   retailer   Retailer?   @relation(fields: [retailerId], references: [id], onDelete: Restrict)
+  retailerApproval RetailerOrderApproval? @relation(fields: [retailerApprovalId], references: [id], onDelete: SetNull)
   items      SaleItem[]
   posSession PosSession?
   retailerPaymentAllocations RetailerPaymentAllocation[]
@@ -656,6 +759,7 @@ model Sale {
   @@index([soldAt])
   @@index([customerType])
   @@index([retailerId])
+  @@index([retailerApprovalId])
   @@index([paymentMethod])
   @@index([createdById])
 }
@@ -667,10 +771,11 @@ model PosSession {
   status          PosSessionStatus @default(ACTIVE)
   customerType    CustomerType     @default(INDIVIDUAL)
   retailerId      String?
+  retailerApprovalId String?
   customerName    String?
   paymentMethod   PaymentMethod    @default(CASH)
   discount        Decimal          @default(0) @db.Decimal(14, 2)
-  amountPaid      Decimal?
+  amountPaid      Decimal?         @db.Decimal(14, 2)
   notes           String?
   expiresAt       DateTime?
   completedAt     DateTime?
@@ -699,6 +804,10 @@ model PosTerminal {
   name             String?
   displayToken     String   @unique
   currentSessionId String?  @unique
+  isActive         Boolean  @default(true)
+  offlineEnabled   Boolean  @default(false)
+  lastSeenAt       DateTime?
+  lastSyncedAt     DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   createdById      String?
@@ -707,6 +816,8 @@ model PosTerminal {
   currentSession PosSession?  @relation("PosTerminalCurrentSession", fields: [currentSessionId], references: [id], onDelete: SetNull)
   sessions       PosSession[] @relation("PosTerminalSessions")
 
+  @@index([isActive])
+  @@index([offlineEnabled])
   @@index([createdById])
   @@index([createdAt])
 }

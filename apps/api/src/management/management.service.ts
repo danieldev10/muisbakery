@@ -8,12 +8,22 @@ import {
   PaymentMethod,
   Prisma,
   ProductionWasteType,
+  Role,
   SalesReturnDisposition,
 } from "@prisma/client";
 import { z } from "zod";
 
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
+import {
+  containsFilter,
+  dateRangeFilter,
+  hasPaginatedRequest,
+  paginatedResult,
+  parsePagination,
+  queryText,
+  type QueryParams,
+} from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
 import { getMonthRange, type MonthRange } from "./month-range";
 
@@ -275,6 +285,47 @@ function serializeUser(
     : null;
 }
 
+function auditLogWhere(query: QueryParams | undefined) {
+  const search = queryText(query, "q");
+  const role = queryText(query, "role");
+  const entity = queryText(query, "entity");
+  const createdAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.AuditLogWhereInput = {
+    action: { in: WORKFLOW_AUDIT_ACTIONS },
+  };
+
+  if (role) {
+    if (role === "SYSTEM") {
+      where.actorId = null;
+    } else if (Object.values(Role).includes(role as Role)) {
+      where.actor = { role: role as Role };
+    }
+  }
+
+  if (entity) {
+    where.entityType = entity;
+  }
+
+  if (createdAt) {
+    where.createdAt = createdAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { action: containsFilter(search) },
+      { entityType: containsFilter(search) },
+      { entityId: containsFilter(search) },
+      { actor: { name: containsFilter(search) } },
+      { actor: { email: containsFilter(search) } },
+    ];
+  }
+
+  return where;
+}
+
 function serializeSale(sale: SaleWithIncludes) {
   return {
     id: sale.id,
@@ -434,7 +485,7 @@ export class ManagementService {
       month: profitLoss.month,
       summary: {
         totalRevenue: profitLoss.revenue.totalRevenue,
-        estimatedMaterialCost: profitLoss.costs.materialIssuedCost,
+        estimatedMaterialCost: profitLoss.costs.costOfGoodsSold,
         estimatedGrossProfit: profitLoss.profit.estimatedGrossProfit,
         estimatedNetProfit: profitLoss.profit.estimatedNetProfit,
         operatingExpenses: profitLoss.expenses.totalOperatingExpenses,
@@ -454,9 +505,9 @@ export class ManagementService {
             detail: `${profitLoss.revenue.salesCount} sales`,
           },
           {
-            label: "Material cost",
-            value: profitLoss.costs.materialIssuedCost,
-            detail: "Issued to production",
+            label: "COGS",
+            value: profitLoss.costs.costOfGoodsSold,
+            detail: "Sold finished goods",
           },
           {
             label: "Gross profit",
@@ -500,6 +551,7 @@ export class ManagementService {
       sales,
       materialReceipts,
       materialIssues,
+      saleItemBatches,
       productionWaste,
       returns,
       expenses,
@@ -526,6 +578,21 @@ export class ManagementService {
             createdAt: {
               gte: range.start,
               lt: range.end,
+            },
+          },
+          select: {
+            quantity: true,
+            batch: {
+              select: {
+                unitCost: true,
+              },
+            },
+          },
+        }),
+        this.prisma.saleItemBatch.findMany({
+          where: {
+            saleItem: {
+              sale: salesWhere,
             },
           },
           select: {
@@ -594,6 +661,13 @@ export class ManagementService {
           decimalToNumber(issue.batch.unitCost),
       0,
     );
+    const costOfGoodsSold = saleItemBatches.reduce(
+      (sum, issue) =>
+        sum +
+        decimalToNumber(issue.quantity) *
+          decimalToNumber(issue.batch.unitCost),
+      0,
+    );
     // Only damaged waste is a real loss; waste returned to production is
     // reused in later runs and is reported separately without a loss value.
     const damagedProductionWaste = productionWaste.filter(
@@ -651,7 +725,7 @@ export class ManagementService {
       expensesByCategory.set(expense.category.id, entry);
     }
 
-    const estimatedGrossProfit = totalRevenue - materialIssuedCost;
+    const estimatedGrossProfit = totalRevenue - costOfGoodsSold;
     const estimatedNetProfit =
       estimatedGrossProfit - operatingExpensesTotal - totalEstimatedLoss;
     const grossMarginPercent =
@@ -677,6 +751,7 @@ export class ManagementService {
       costs: {
         materialPurchasedCost: moneyString(materialPurchasedCost),
         materialIssuedCost: moneyString(materialIssuedCost),
+        costOfGoodsSold: moneyString(costOfGoodsSold),
       },
       expenses: {
         count: expenses.length,
@@ -708,7 +783,8 @@ export class ManagementService {
         netMarginPercent: percentString(netMarginPercent),
       },
       notes: [
-        "Cost of goods sold is estimated from raw material batches issued to production this month, at their recorded unit costs.",
+        "Cost of goods sold is calculated from finished-good batches sold this month, using the production cost captured on each batch.",
+        "Materials issued to production are shown separately because unsold finished goods remain inventory until sold.",
         "Operating expenses are the expenses recorded under Management > Expenses (voided expenses are excluded).",
         "Waste and damaged-return losses use product selling price as estimated retail value.",
         "Waste returned to production is reused in later runs and is not counted as a loss.",
@@ -739,7 +815,11 @@ export class ManagementService {
       (sum, item) => sum + Number(item.estimatedValue),
       0,
     );
-    const finishedGoodsValue = finishedProducts.reduce(
+    const finishedGoodsCostValue = finishedProducts.reduce(
+      (sum, item) => sum + Number(item.estimatedCostValue),
+      0,
+    );
+    const finishedGoodsRetailValue = finishedProducts.reduce(
       (sum, item) => sum + Number(item.estimatedRetailValue),
       0,
     );
@@ -747,8 +827,13 @@ export class ManagementService {
     return {
       valuation: {
         rawMaterials: moneyString(rawMaterialsValue),
-        finishedGoods: moneyString(finishedGoodsValue),
-        totalStockValue: moneyString(rawMaterialsValue + finishedGoodsValue),
+        finishedGoods: moneyString(finishedGoodsCostValue),
+        finishedGoodsCost: moneyString(finishedGoodsCostValue),
+        finishedGoodsRetail: moneyString(finishedGoodsRetailValue),
+        totalStockValue: moneyString(rawMaterialsValue + finishedGoodsCostValue),
+        totalRetailValue: moneyString(
+          rawMaterialsValue + finishedGoodsRetailValue,
+        ),
       },
       lowStockThreshold: quantityString(LOW_STOCK_THRESHOLD),
       lowStock: {
@@ -1061,17 +1146,39 @@ export class ManagementService {
     };
   }
 
-  async auditLog() {
+  async auditLog(query?: QueryParams) {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const [entries, recentEntries] = await Promise.all([
-      this.prisma.auditLog.findMany({
-        where: { action: { in: WORKFLOW_AUDIT_ACTIONS } },
-        include: {
-          actor: { select: userSelect },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 200,
-      }),
+    const where = auditLogWhere(query);
+    const orderBy = { createdAt: "desc" } as const;
+    const [entriesResult, recentEntries] = await Promise.all([
+      hasPaginatedRequest(query)
+        ? (async () => {
+            const { page, pageSize, skip, take } = parsePagination(query);
+            const [total, entries] = await this.prisma.$transaction([
+              this.prisma.auditLog.count({ where }),
+              this.prisma.auditLog.findMany({
+                where,
+                include: {
+                  actor: { select: userSelect },
+                },
+                orderBy,
+                skip,
+                take,
+              }),
+            ]);
+
+            return paginatedResult(entries, total, page, pageSize);
+          })()
+        : this.prisma.auditLog
+            .findMany({
+              where,
+              include: {
+                actor: { select: userSelect },
+              },
+              orderBy,
+              take: 200,
+            })
+            .then((entries) => entries),
       this.prisma.auditLog.findMany({
         where: {
           action: { in: WORKFLOW_AUDIT_ACTIONS },
@@ -1085,6 +1192,12 @@ export class ManagementService {
         orderBy: { createdAt: "desc" },
       }),
     ]);
+    const entries = Array.isArray(entriesResult)
+      ? entriesResult
+      : entriesResult.items;
+    const pagination = Array.isArray(entriesResult)
+      ? undefined
+      : entriesResult.pagination;
 
     const roleActivity = new Map<string, number>();
     const entityActivity = new Map<string, number>();
@@ -1122,6 +1235,7 @@ export class ManagementService {
         createdAt: entry.createdAt.toISOString(),
         actor: serializeUser(entry.actor),
       })),
+      pagination,
     };
   }
 
@@ -1173,31 +1287,46 @@ export class ManagementService {
       (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
       0,
     );
+    const estimatedCostValue = product.salesBatches.reduce(
+      (sum, batch) =>
+        sum +
+        decimalToNumber(batch.quantityRemaining) *
+          decimalToNumber(batch.unitCost),
+      0,
+    );
     const estimatedRetailValue =
       totalRemaining * decimalToNumber(product.unitPrice);
 
     return {
       product: serializeProduct(product),
       totalRemaining: countString(totalRemaining),
+      estimatedCostValue: moneyString(estimatedCostValue),
       estimatedRetailValue: moneyString(estimatedRetailValue),
-      batches: product.salesBatches.map((batch) => ({
-        id: batch.id,
-        batchNumber: batch.batchNumber,
-        batchDate: batch.batchDate.toISOString(),
-        quantityReceived: batch.quantityReceived.toString(),
-        quantityRemaining: batch.quantityRemaining.toString(),
-        estimatedRetailValue: moneyString(
-          decimalToNumber(batch.quantityRemaining) *
-            decimalToNumber(product.unitPrice),
-        ),
-        receivedAt: batch.receivedAt.toISOString(),
-        productionRun: batch.productionRun
-          ? {
-              id: batch.productionRun.id,
-              producedAt: batch.productionRun.producedAt.toISOString(),
-            }
-          : null,
-      })),
+      batches: product.salesBatches.map((batch) => {
+        const batchRemaining = decimalToNumber(batch.quantityRemaining);
+        const batchCostValue =
+          batchRemaining * decimalToNumber(batch.unitCost);
+
+        return {
+          id: batch.id,
+          batchNumber: batch.batchNumber,
+          batchDate: batch.batchDate.toISOString(),
+          quantityReceived: batch.quantityReceived.toString(),
+          quantityRemaining: batch.quantityRemaining.toString(),
+          unitCost: batch.unitCost.toString(),
+          estimatedCostValue: moneyString(batchCostValue),
+          estimatedRetailValue: moneyString(
+            batchRemaining * decimalToNumber(product.unitPrice),
+          ),
+          receivedAt: batch.receivedAt.toISOString(),
+          productionRun: batch.productionRun
+            ? {
+                id: batch.productionRun.id,
+                producedAt: batch.productionRun.producedAt.toISOString(),
+              }
+            : null,
+        };
+      }),
     };
   }
 }

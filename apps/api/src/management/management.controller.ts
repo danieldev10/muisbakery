@@ -13,7 +13,9 @@ import {
 import type { Request } from "express";
 
 import { getRequestUser } from "../auth/auth.types";
+import type { QueryParams } from "../common/pagination";
 import { ManagementGuard } from "../auth/management.guard";
+import { DayCloseService } from "../sales/day-close.service";
 import { ExpensesService } from "./expenses.service";
 import { ManagementService } from "./management.service";
 
@@ -25,7 +27,23 @@ export class ManagementController {
     private readonly management: ManagementService,
     @Inject(ExpensesService)
     private readonly expenses: ExpensesService,
+    @Inject(DayCloseService)
+    private readonly dayClose: DayCloseService,
   ) {}
+
+  @Get("day-closes")
+  listDayCloses(@Query("month") month?: string) {
+    return this.dayClose.listForMonth(month);
+  }
+
+  @Post("day-closes/:id/approve")
+  approveDayClose(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.dayClose.approve(id, body, getRequestUser(request));
+  }
 
   @Get("dashboard")
   dashboard(@Query("month") month?: string) {
@@ -85,7 +103,7 @@ export class ManagementController {
   }
 
   @Get("audit-log")
-  auditLog() {
-    return this.management.auditLog();
+  auditLog(@Query() query: QueryParams) {
+    return this.management.auditLog(query);
   }
 }

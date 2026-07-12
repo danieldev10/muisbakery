@@ -41,4 +41,32 @@ export class AdminRetailersController {
   ) {
     return this.sales.updateRetailer(id, body, getRequestUser(request));
   }
+
+  @Post(":id/order-approvals")
+  createOrderApproval(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.createRetailerOrderApproval(
+      id,
+      body,
+      getRequestUser(request),
+    );
+  }
+
+  @Patch(":id/order-approvals/:approvalId")
+  updateOrderApproval(
+    @Param("id") id: string,
+    @Param("approvalId") approvalId: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.updateRetailerOrderApproval(
+      id,
+      approvalId,
+      body,
+      getRequestUser(request),
+    );
+  }
 }

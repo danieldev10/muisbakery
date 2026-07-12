@@ -13,7 +13,15 @@ test("UsersService.update can change a user's email address", async () => {
   const service = new UsersService(
     {
       user: {
-        findUnique: async () => ({ id: "user-2", role: "SALES" }),
+        findUnique: async () => ({
+          id: "user-2",
+          name: "Sales Rep",
+          email: "sales.rep@muisbakery.local",
+          role: "SALES",
+          isActive: true,
+          lastLoginAt: null,
+          createdAt: now,
+        }),
         findFirst: async () => null,
         update: async ({ data }: { data: Record<string, unknown> }) => {
           updateData = data;
@@ -46,6 +54,24 @@ test("UsersService.update can change a user's email address", async () => {
   assert.equal(updateData?.email, "sales.lead@muisbakery.local");
   assert.equal(result.email, "sales.lead@muisbakery.local");
   assert.equal(records.length, 1);
+  assert.deepEqual((records[0] as { metadata: unknown }).metadata, {
+    email: "sales.lead@muisbakery.local",
+    role: "SALES",
+    isActive: true,
+    passwordChanged: false,
+    before: {
+      name: "Sales Rep",
+      email: "sales.rep@muisbakery.local",
+      role: "SALES",
+      isActive: true,
+    },
+    after: {
+      name: "Sales Lead",
+      email: "sales.lead@muisbakery.local",
+      role: "SALES",
+      isActive: true,
+    },
+  });
 });
 
 test("UsersService.update rejects duplicate email addresses", async () => {

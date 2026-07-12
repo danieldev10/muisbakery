@@ -10,6 +10,7 @@ import {
   StatusBadge,
   TableShell,
 } from "@/components/admin/layout";
+import { InlineActionForm } from "@/components/admin/inline-action-form";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { Retailer } from "@/lib/operations/types";
@@ -26,7 +27,10 @@ import {
 } from "@/lib/table-filters";
 
 import {
+  approveRetailerOrderApproval,
+  createRetailerOrderApproval,
   createRetailer,
+  revokeRetailerOrderApproval,
   updateRetailer,
 } from "./actions";
 
@@ -75,15 +79,6 @@ function RetailerFields({ retailer }: { retailer?: Retailer }) {
           name="email"
           type="email"
         />
-        <Field
-          defaultValue={retailer?.creditLimit}
-          label="Credit limit"
-          min="0.01"
-          name="creditLimit"
-          required
-          step="0.01"
-          type="number"
-        />
       </div>
       <TextareaField
         defaultValue={retailer?.address ?? ""}
@@ -126,9 +121,11 @@ export default async function AdminRetailersPage({
         retailer.phone,
         retailer.email,
         retailer.address,
-        retailer.creditLimit,
         retailer.outstandingBalance,
-        retailer.availableCredit,
+        ...retailer.orderApprovalRequests.map(
+          (approval) => approval.approvedAmount,
+        ),
+        ...retailer.orderApprovalRequests.map((approval) => approval.status),
         retailer.notes,
       ]) && matchesSelect(status, retailer.isActive),
   );
@@ -145,12 +142,12 @@ export default async function AdminRetailersPage({
             Retailers ({filteredRetailers.length} of {retailers.length})
           </h2>
           <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">
-            Manage retailer accounts and credit limits for Sales.
+            Manage retailer accounts and Admin approvals for repeat credit sales.
           </p>
         </div>
         <AdminFormModal
           action={createRetailer}
-          description="Create a retailer account for credit-limit sales."
+          description="Create a retailer profile for Sales credit follow-up."
           submitLabel="Create retailer"
           title="Create retailer"
           triggerLabel="Create retailer"
@@ -187,9 +184,8 @@ export default async function AdminRetailersPage({
             <>
               <th className="py-2 pr-4">Retailer</th>
               <th className="py-2 pr-4">Contact</th>
-              <th className="py-2 pr-4">Credit limit</th>
               <th className="py-2 pr-4">Outstanding</th>
-              <th className="py-2 pr-4">Available</th>
+              <th className="py-2 pr-4">Approval requests</th>
               <th className="py-2 pr-4">Status</th>
               <th className="py-2 pr-4">Actions</th>
             </>
@@ -210,14 +206,89 @@ export default async function AdminRetailersPage({
                     "-"}
                 </p>
               </td>
-              <td className="py-3 pr-4 text-stone-600">
-                {formatMoney(retailer.creditLimit)}
-              </td>
               <td className="py-3 pr-4 text-red-800">
                 {formatMoney(retailer.outstandingBalance)}
               </td>
-              <td className="py-3 pr-4 font-semibold text-emerald-700">
-                {formatMoney(retailer.availableCredit)}
+              <td className="py-3 pr-4 text-stone-600">
+                {retailer.orderApprovalRequests.length > 0 ? (
+                  <div className="grid gap-1">
+                    {retailer.orderApprovalRequests.map((approval) => (
+                      <div
+                        className="flex flex-wrap items-center gap-2"
+                        key={approval.id}
+                      >
+                        <span
+                          className={
+                            approval.status === "PENDING"
+                              ? "font-medium text-amber-700"
+                              : approval.status === "APPROVED"
+                                ? "font-medium text-emerald-700"
+                                : "font-medium text-stone-500"
+                          }
+                        >
+                          {formatMoney(approval.approvedAmount)}
+                        </span>
+                        <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700">
+                          {approval.status.toLowerCase()}
+                        </span>
+                        {approval.expiresAt ? (
+                          <span className="text-xs text-stone-500">
+                            expires{" "}
+                            {new Intl.DateTimeFormat("en", {
+                              dateStyle: "medium",
+                            }).format(new Date(approval.expiresAt))}
+                          </span>
+                        ) : null}
+                        {approval.requestedBy ? (
+                          <span className="text-xs text-stone-500">
+                            requested by{" "}
+                            {approval.requestedBy.name ??
+                              approval.requestedBy.email}
+                          </span>
+                        ) : null}
+                        {approval.status === "PENDING" ? (
+                          <InlineActionForm
+                            action={approveRetailerOrderApproval}
+                            pendingLabel="Approving"
+                            submitLabel="Approve"
+                          >
+                            <input
+                              name="retailerId"
+                              type="hidden"
+                              value={retailer.id}
+                            />
+                            <input
+                              name="approvalId"
+                              type="hidden"
+                              value={approval.id}
+                            />
+                          </InlineActionForm>
+                        ) : null}
+                        {approval.status === "PENDING" ||
+                        approval.status === "APPROVED" ? (
+                          <InlineActionForm
+                            action={revokeRetailerOrderApproval}
+                            pendingLabel="Revoking"
+                            submitLabel="Revoke"
+                          >
+                            <input
+                              name="retailerId"
+                              type="hidden"
+                              value={retailer.id}
+                            />
+                            <input
+                              name="approvalId"
+                              type="hidden"
+                              value={approval.id}
+                            />
+                          </InlineActionForm>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-sm text-stone-500">-</span>
+                )}
               </td>
               <td className="py-3 pr-4">
                 <StatusBadge active={retailer.isActive} />
@@ -235,6 +306,45 @@ export default async function AdminRetailersPage({
                   >
                     <RetailerFields retailer={retailer} />
                   </AdminFormModal>
+                  {Number(retailer.outstandingBalance) > 0 ? (
+                    <AdminFormModal
+                      action={createRetailerOrderApproval}
+                      description={`Outstanding balance: ${formatMoney(
+                        retailer.outstandingBalance,
+                      )}`}
+                      submitLabel="Approve order"
+                      title="Approve next retailer order"
+                      triggerClassName={secondaryButtonClass}
+                      triggerIcon={null}
+                      triggerLabel="Approve order"
+                    >
+                      <input
+                        name="retailerId"
+                        type="hidden"
+                        value={retailer.id}
+                      />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field
+                          label="Approved amount"
+                          min="0.01"
+                          name="approvedAmount"
+                          required
+                          step="0.01"
+                          type="number"
+                        />
+                        <Field
+                          label="Expires at"
+                          name="expiresAt"
+                          type="datetime-local"
+                        />
+                      </div>
+                      <TextareaField
+                        label="Reason"
+                        name="reason"
+                        placeholder="Optional approval note"
+                      />
+                    </AdminFormModal>
+                  ) : null}
                 </div>
               </td>
             </tr>

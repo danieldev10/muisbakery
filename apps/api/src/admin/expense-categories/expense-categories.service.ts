@@ -74,7 +74,6 @@ export class ExpenseCategoriesService {
 
     const target = await this.prisma.expenseCategory.findUnique({
       where: { id },
-      select: { id: true },
     });
 
     if (!target) {
@@ -102,7 +101,19 @@ export class ExpenseCategoriesService {
       action: "ADMIN_EXPENSE_CATEGORY_UPDATED",
       entityType: "ExpenseCategory",
       entityId: category.id,
-      metadata: { isActive: category.isActive },
+      metadata: {
+        isActive: category.isActive,
+        before: {
+          name: target.name,
+          description: target.description,
+          isActive: target.isActive,
+        },
+        after: {
+          name: category.name,
+          description: category.description,
+          isActive: category.isActive,
+        },
+      },
     });
 
     return category;

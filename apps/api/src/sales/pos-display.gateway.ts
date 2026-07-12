@@ -22,10 +22,6 @@ type DisplaySubscribePayload = {
   token?: unknown;
 };
 
-type DisplayPreviewPayload = DisplaySubscribePayload & {
-  session?: unknown;
-};
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Display is not available.";
 }
@@ -91,26 +87,5 @@ export class PosDisplayGateway implements OnGatewayInit {
       client.emit("pos:display:error", { message: errorMessage(error) });
       return { ok: false };
     }
-  }
-
-  @SubscribeMessage("pos:display:preview")
-  preview(@MessageBody() payload: DisplayPreviewPayload | undefined) {
-    const token = typeof payload?.token === "string" ? payload.token.trim() : "";
-    const mode = payload?.mode === "session" ? "session" : "terminal";
-    const session = payload?.session;
-
-    if (!token || !session || typeof session !== "object") {
-      return { ok: false };
-    }
-
-    if (mode === "session") {
-      this.displayEvents.emitSessionUpdate(token, session, { preview: true });
-      return { ok: true };
-    }
-
-    this.displayEvents.emitTerminalSessionUpdate(token, session, {
-      preview: true,
-    });
-    return { ok: true };
   }
 }

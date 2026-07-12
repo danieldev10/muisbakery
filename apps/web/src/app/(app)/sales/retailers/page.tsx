@@ -83,9 +83,7 @@ export default async function SalesRetailersPage({
         retailer.phone,
         retailer.email,
         retailer.address,
-        retailer.creditLimit,
         retailer.outstandingBalance,
-        retailer.availableCredit,
         retailer.notes,
       ]) && matchesSelect(status, retailer.isActive),
   );
@@ -152,9 +150,8 @@ export default async function SalesRetailersPage({
             <>
               <th className="py-2 pr-4">Retailer</th>
               <th className="py-2 pr-4">Contact</th>
-              <th className="py-2 pr-4">Credit limit</th>
               <th className="py-2 pr-4">Outstanding</th>
-              <th className="py-2 pr-4">Available</th>
+              <th className="py-2 pr-4">Order status</th>
               <th className="py-2 pr-4">Status</th>
               <th className="py-2 pr-4">Actions</th>
             </>
@@ -172,14 +169,25 @@ export default async function SalesRetailersPage({
                 <p>{retailer.contactPerson ?? "-"}</p>
                 <p className="text-xs">{retailer.phone ?? retailer.email ?? ""}</p>
               </td>
-              <td className="py-3 pr-4 text-stone-600">
-                {formatMoney(retailer.creditLimit)}
-              </td>
               <td className="py-3 pr-4 text-red-800">
                 {formatMoney(retailer.outstandingBalance)}
               </td>
-              <td className="py-3 pr-4 font-semibold text-emerald-700">
-                {formatMoney(retailer.availableCredit)}
+              <td className="py-3 pr-4 text-stone-600">
+                {retailer.requiresOrderApproval ? (
+                  retailer.orderApprovals.length > 0 ? (
+                    <span className="font-semibold text-emerald-700">
+                      Admin approval available
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-red-800">
+                      Admin approval required
+                    </span>
+                  )
+                ) : (
+                  <span className="font-semibold text-emerald-700">
+                    Clear
+                  </span>
+                )}
               </td>
               <td className="py-3 pr-4">
                 <StatusBadge active={retailer.isActive} />

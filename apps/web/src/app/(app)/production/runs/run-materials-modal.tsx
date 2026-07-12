@@ -87,7 +87,6 @@ export function RunMaterialsButton({
                     <tr className="border-b border-[color:var(--border-muted)] bg-[var(--surface-muted)] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
                       <th className="py-2.5 pl-4 pr-4">Raw material</th>
                       <th className="py-2.5 pr-4">Actual used</th>
-                      <th className="py-2.5 pr-4">Expected</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[color:var(--border-muted)]">
@@ -102,36 +101,11 @@ export function RunMaterialsButton({
                             usage.rawMaterial.baseUnit.abbreviation,
                           )}
                         </td>
-                        <td className="py-2.5 pr-4 text-[var(--text-muted)]">
-                          {usage.expectedQuantity
-                            ? formatQuantity(
-                                usage.expectedQuantity,
-                                usage.rawMaterial.baseUnit.abbreviation,
-                              )
-                            : "-"}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-
-              {run.expectedQuantity ? (
-                <p
-                  className={`mt-3 text-sm ${
-                    run.shortfallQuantity
-                      ? "font-medium text-red-700"
-                      : "text-[var(--text-muted)]"
-                  }`}
-                >
-                  These materials should yield at least{" "}
-                  {Number(run.expectedQuantity).toLocaleString("en")}{" "}
-                  {run.product.unit.abbreviation}
-                  {run.shortfallQuantity
-                    ? ` — recorded output was ${run.shortfallQuantity} short.`
-                    : "."}
-                </p>
-              ) : null}
             </div>
           </div>
         </div>

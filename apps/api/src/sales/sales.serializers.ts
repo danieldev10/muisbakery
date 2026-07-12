@@ -4,6 +4,7 @@ import type {
   PosSessionWithIncludes,
   PosTerminalWithIncludes,
   ProductInventory,
+  RetailerOrderApprovalWithIncludes,
   RetailerPaymentWithIncludes,
   RetailerWithCreatedBy,
   SaleItemOption,
@@ -57,12 +58,10 @@ export function serializeInventoryItem(product: ProductInventory) {
 
 export function serializeRetailer(
   retailer: RetailerWithCreatedBy,
-  credit: { outstandingBalance?: number; availableCredit?: number } = {},
+  credit: { outstandingBalance?: number } = {},
 ) {
-  const creditLimit = decimalToNumber(retailer.creditLimit);
   const outstandingBalance = credit.outstandingBalance ?? 0;
-  const availableCredit =
-    credit.availableCredit ?? Math.max(0, creditLimit - outstandingBalance);
+  const now = Date.now();
 
   return {
     id: retailer.id,
@@ -73,12 +72,41 @@ export function serializeRetailer(
     address: retailer.address,
     creditLimit: retailer.creditLimit.toString(),
     outstandingBalance: outstandingBalance.toFixed(2),
-    availableCredit: availableCredit.toFixed(2),
+    availableCredit: "0.00",
+    requiresOrderApproval: outstandingBalance > 0,
+    orderApprovals: (retailer.orderApprovals ?? [])
+      .filter(
+        (approval) =>
+          approval.status === "APPROVED" &&
+          !approval.usedAt &&
+          (!approval.expiresAt || approval.expiresAt.getTime() > now),
+      )
+      .map(serializeRetailerOrderApproval),
+    orderApprovalRequests: (retailer.orderApprovals ?? []).map(
+      serializeRetailerOrderApproval,
+    ),
     notes: retailer.notes,
     isActive: retailer.isActive,
     createdAt: retailer.createdAt.toISOString(),
     updatedAt: retailer.updatedAt.toISOString(),
     createdBy: retailer.createdBy,
+  };
+}
+
+export function serializeRetailerOrderApproval(
+  approval: RetailerOrderApprovalWithIncludes,
+) {
+  return {
+    id: approval.id,
+    approvedAmount: approval.approvedAmount.toString(),
+    status: approval.status,
+    reason: approval.reason,
+    expiresAt: approval.expiresAt?.toISOString() ?? null,
+    usedAt: approval.usedAt?.toISOString() ?? null,
+    createdAt: approval.createdAt.toISOString(),
+    reviewedAt: approval.reviewedAt?.toISOString() ?? null,
+    requestedBy: approval.requestedBy,
+    approvedBy: approval.approvedBy,
   };
 }
 
@@ -94,7 +122,6 @@ export function serializeRetailerPayment(payment: RetailerPaymentWithIncludes) {
     retailer: {
       id: payment.retailer.id,
       name: payment.retailer.name,
-      creditLimit: payment.retailer.creditLimit.toString(),
     },
     createdBy: payment.createdBy,
     allocations: payment.allocations.map((allocation) => ({
@@ -117,6 +144,9 @@ export function serializeSale(sale: SaleWithIncludes) {
     saleNumber: sale.saleNumber,
     customerType: sale.customerType,
     retailer: sale.retailer ? serializeRetailer(sale.retailer) : null,
+    retailerApproval: sale.retailerApproval
+      ? serializeRetailerOrderApproval(sale.retailerApproval)
+      : null,
     paymentMethod: sale.paymentMethod,
     customerName: sale.customerName,
     soldAt: sale.soldAt.toISOString(),
@@ -248,6 +278,7 @@ export function serializePosSession(session: PosSessionWithIncludes) {
     status: session.status,
     customerType: session.customerType,
     retailer: session.retailer ? serializeRetailer(session.retailer) : null,
+    retailerApprovalId: session.retailerApprovalId,
     customerName: session.customerName,
     paymentMethod: session.paymentMethod,
     discount: session.discount.toString(),
@@ -278,6 +309,10 @@ export function serializePosTerminal(terminal: PosTerminalWithIncludes) {
     id: terminal.id,
     name: terminal.name,
     displayToken: terminal.displayToken,
+    isActive: terminal.isActive,
+    offlineEnabled: terminal.offlineEnabled,
+    lastSeenAt: terminal.lastSeenAt?.toISOString() ?? null,
+    lastSyncedAt: terminal.lastSyncedAt?.toISOString() ?? null,
     createdAt: terminal.createdAt.toISOString(),
     updatedAt: terminal.updatedAt.toISOString(),
     currentSession: terminal.currentSession

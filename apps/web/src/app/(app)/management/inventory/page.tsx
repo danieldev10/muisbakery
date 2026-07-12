@@ -112,11 +112,14 @@ export default async function ManagementInventoryPage({
       item.product.unit.abbreviation,
       item.product.unitPrice,
       item.totalRemaining,
+      item.estimatedCostValue,
       item.estimatedRetailValue,
       ...item.batches.flatMap((batch) => [
         batch.batchNumber,
         batch.batchDate,
         batch.quantityRemaining,
+        batch.unitCost,
+        batch.estimatedCostValue,
         batch.estimatedRetailValue,
         batch.productionRun?.producedAt,
       ]),
@@ -151,12 +154,12 @@ export default async function ManagementInventoryPage({
         <MetricCard
           label="Finished goods"
           value={formatMoney(report.valuation.finishedGoods)}
-          detail={`${stockedFinishedProducts.length} stocked products`}
+          detail={`${stockedFinishedProducts.length} stocked products at cost`}
         />
         <MetricCard
           label="Total stock value"
           value={formatMoney(report.valuation.totalStockValue)}
-          detail={`Low stock threshold ${formatQuantity(report.lowStockThreshold)}`}
+          detail={`Retail reference ${formatMoney(report.valuation.totalRetailValue)}`}
         />
       </div>
 
@@ -420,7 +423,7 @@ export default async function ManagementInventoryPage({
             pageParams={["productsPage"]}
             searchParam="productQ"
             searchParams={params}
-            searchPlaceholder="Search product, unit, price, batch, or value"
+            searchPlaceholder="Search product, unit, price, batch, cost, or value"
           />
         ) : null}
         {stockedFinishedProducts.length === 0 ? (
@@ -433,6 +436,7 @@ export default async function ManagementInventoryPage({
               <>
                 <th className="py-2 pr-4">Product</th>
                 <th className="py-2 pr-4">Remaining</th>
+                <th className="py-2 pr-4">Cost value</th>
                 <th className="py-2 pr-4">Retail value</th>
                 <th className="py-2 pr-4">Batches</th>
               </>
@@ -448,6 +452,9 @@ export default async function ManagementInventoryPage({
                     item.totalRemaining,
                     item.product.unit.abbreviation,
                   )}
+                </td>
+                <td className="py-3 pr-4 text-stone-600">
+                  {formatMoney(item.estimatedCostValue)}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatMoney(item.estimatedRetailValue)}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getApiBaseUrl } from "@/lib/api";
+import { getInternalApiHeaders } from "@/lib/internal-api";
 
 type HeadersWithSetCookie = Headers & {
   getSetCookie?: () => string[];
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
     cache: "no-store",
     headers: {
       "Content-Type": request.headers.get("content-type") ?? "application/json",
+      ...getInternalApiHeaders(),
     },
     body: await request.text(),
   });

@@ -5,7 +5,6 @@ export type PosDisplayEvent =
   | {
       kind: "session";
       session: unknown;
-      preview?: boolean;
     }
   | {
       kind: "terminal";
@@ -36,16 +35,11 @@ export class PosDisplayEvents {
     return this.hasSubscribers(posDisplayTerminalRoom(displayToken));
   }
 
-  emitSessionUpdate(
-    displayToken: string,
-    session: unknown,
-    options?: { preview?: boolean },
-  ) {
+  emitSessionUpdate(displayToken: string, session: unknown) {
     this.server
       ?.to(posDisplaySessionRoom(displayToken))
       .emit("pos:display:update", {
         kind: "session",
-        preview: options?.preview,
         session,
       });
   }
@@ -56,16 +50,11 @@ export class PosDisplayEvents {
       .emit("pos:display:update", { kind: "terminal", terminal });
   }
 
-  emitTerminalSessionUpdate(
-    displayToken: string,
-    session: unknown,
-    options?: { preview?: boolean },
-  ) {
+  emitTerminalSessionUpdate(displayToken: string, session: unknown) {
     this.server
       ?.to(posDisplayTerminalRoom(displayToken))
       .emit("pos:display:update", {
         kind: "session",
-        preview: options?.preview,
         session,
       });
   }

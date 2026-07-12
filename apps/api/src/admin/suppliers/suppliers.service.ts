@@ -84,7 +84,6 @@ export class SuppliersService {
 
     const target = await this.prisma.supplier.findUnique({
       where: { id },
-      select: { id: true },
     });
 
     if (!target) {
@@ -112,7 +111,27 @@ export class SuppliersService {
       action: "ADMIN_SUPPLIER_UPDATED",
       entityType: "Supplier",
       entityId: supplier.id,
-      metadata: { isActive: supplier.isActive },
+      metadata: {
+        isActive: supplier.isActive,
+        before: {
+          name: target.name,
+          contactName: target.contactName,
+          phone: target.phone,
+          email: target.email,
+          address: target.address,
+          notes: target.notes,
+          isActive: target.isActive,
+        },
+        after: {
+          name: supplier.name,
+          contactName: supplier.contactName,
+          phone: supplier.phone,
+          email: supplier.email,
+          address: supplier.address,
+          notes: supplier.notes,
+          isActive: supplier.isActive,
+        },
+      },
     });
 
     return supplier;

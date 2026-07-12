@@ -101,7 +101,7 @@ export class RawMaterialsService {
 
     const target = await this.prisma.rawMaterial.findUnique({
       where: { id },
-      select: { id: true },
+      include,
     });
 
     if (!target) {
@@ -134,7 +134,21 @@ export class RawMaterialsService {
       action: "ADMIN_RAW_MATERIAL_UPDATED",
       entityType: "RawMaterial",
       entityId: material.id,
-      metadata: { isActive: material.isActive },
+      metadata: {
+        isActive: material.isActive,
+        before: {
+          name: target.name,
+          description: target.description,
+          baseUnitId: target.baseUnitId,
+          isActive: target.isActive,
+        },
+        after: {
+          name: material.name,
+          description: material.description,
+          baseUnitId: material.baseUnitId,
+          isActive: material.isActive,
+        },
+      },
     });
 
     return material;

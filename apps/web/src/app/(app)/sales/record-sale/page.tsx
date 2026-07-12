@@ -8,24 +8,17 @@ import {
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type {
-  CustomerType,
   PaymentMethod,
   Sale,
   SalesOptions,
 } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
 import {
-  pageNumber,
-  paginate,
+  paginatedApiPath,
+  type PaginatedResponse,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
-import {
-  firstParam,
-  matchesDateRange,
-  matchesSearch,
-  matchesSelect,
-} from "@/lib/table-filters";
 
 import { createSale } from "./actions";
 
@@ -40,11 +33,6 @@ const paymentLabels: Record<PaymentMethod, string> = {
   TRANSFER: "Transfer",
   POS: "POS",
   CREDIT: "Credit",
-};
-
-const customerTypeLabels: Record<CustomerType, string> = {
-  INDIVIDUAL: "Individual",
-  RETAILER: "Retailer",
 };
 
 function formatDate(value: string) {
@@ -77,63 +65,27 @@ export default async function RecordSalePage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const [options, sales] = await Promise.all([
+  const [options, result] = await Promise.all([
     apiGet<SalesOptions>("/sales/options"),
-    apiGet<Sale[]>("/sales/sales"),
+    apiGet<PaginatedResponse<Sale>>(
+      paginatedApiPath("/sales/sales", params, [
+        "q",
+        "payment",
+        "product",
+        "from",
+        "to",
+      ]),
+    ),
   ]);
+  const sales = result.items;
+  const pagination = result.pagination;
   const stockedProducts = options.products.filter(
     (item) => Number(item.totalRemaining) > 0,
   );
-  const query = firstParam(params, "q");
-  const paymentFilter = firstParam(params, "payment");
-  const productFilter = firstParam(params, "product");
-  const from = firstParam(params, "from");
-  const to = firstParam(params, "to");
-  const productOptions = [
-    ...new Map(
-      sales.flatMap((sale) =>
-        sale.items.map((item) => [
-          item.product.id,
-          {
-            label: formatProductName(item.product),
-            value: item.product.id,
-          },
-        ]),
-      ),
-    ).values(),
-  ];
-  const filteredSales = sales.filter(
-    (sale) =>
-      matchesSearch(query, [
-        sale.saleNumber,
-        sale.customerType,
-        customerTypeLabels[sale.customerType],
-        sale.retailer?.name,
-        sale.customerName,
-        sale.paymentMethod,
-        paymentLabels[sale.paymentMethod],
-        sale.totalAmount,
-        sale.amountPaid,
-        sale.balanceDue,
-        sale.notes,
-        sale.createdBy?.name,
-        sale.createdBy?.email,
-        ...sale.items.flatMap((item) => [
-          formatProductName(item.product),
-          item.quantity,
-          item.unitPrice,
-          item.lineTotal,
-        ]),
-      ]) &&
-      matchesSelect(paymentFilter, sale.paymentMethod) &&
-      (!productFilter ||
-        sale.items.some((item) => item.product.id === productFilter)) &&
-      matchesDateRange(sale.soldAt, from, to),
-  );
-  const { pageItems, ...pagination } = paginate(
-    filteredSales,
-    pageNumber(params.page),
-  );
+  const productOptions = options.products.map((item) => ({
+    label: formatProductName(item.product),
+    value: item.product.id,
+  }));
 
   return (
     <>
@@ -172,12 +124,43 @@ export default async function RecordSalePage({
                   <option value="">No retailer selected</option>
                   {options.retailers.map((retailer) => (
                     <option key={retailer.id} value={retailer.id}>
-                      {retailer.name} ({formatMoney(retailer.availableCredit)})
+                      {retailer.name}
+                      {retailer.requiresOrderApproval
+                        ? ` - approval required, outstanding ${formatMoney(
+                            retailer.outstandingBalance,
+                          )}`
+                        : ""}
                     </option>
                   ))}
                 </select>
                 <p className="text-xs text-stone-500">
-                  Retailer sales must use Credit.
+                  Retailers can pay now by cash, transfer, or POS. Repeat
+                  credit sales need Admin approval.
+                </p>
+              </div>
+              <div className="grid gap-1.5">
+                <label
+                  className="text-sm font-medium text-stone-700"
+                  htmlFor="retailerApprovalId"
+                >
+                  Admin approval
+                </label>
+                <select
+                  className={selectClass}
+                  id="retailerApprovalId"
+                  name="retailerApprovalId"
+                >
+                  <option value="">No approval selected</option>
+                  {options.retailers.flatMap((retailer) =>
+                    retailer.orderApprovals.map((approval) => (
+                      <option key={approval.id} value={approval.id}>
+                        {retailer.name} - {formatMoney(approval.approvedAmount)}
+                      </option>
+                    )),
+                  )}
+                </select>
+                <p className="text-xs text-stone-500">
+                  Required only when the retailer has uncleared credit.
                 </p>
               </div>
               <div className="grid gap-1.5">
@@ -282,37 +265,33 @@ export default async function RecordSalePage({
         )}
       </Card>
 
-      <Card title={`Recent sales (${filteredSales.length} of ${sales.length})`}>
-        {sales.length > 0 ? (
-          <TableToolbar
-            basePath="/sales/record-sale"
-            dateFilters={[
-              { label: "Sold from", name: "from" },
-              { label: "Sold to", name: "to" },
-            ]}
-            searchParams={params}
-            searchPlaceholder="Search sale number, customer, product, or payment"
-            selectFilters={[
-              {
-                label: "Payment",
-                name: "payment",
-                options: options.paymentMethods.map((method) => ({
-                  label: paymentLabels[method],
-                  value: method,
-                })),
-              },
-              {
-                label: "Product",
-                name: "product",
-                options: productOptions,
-              },
-            ]}
-          />
-        ) : null}
-        {sales.length === 0 ? (
+      <Card title={`Recent sales (${pagination.total})`}>
+        <TableToolbar
+          basePath="/sales/record-sale"
+          dateFilters={[
+            { label: "Sold from", name: "from" },
+            { label: "Sold to", name: "to" },
+          ]}
+          searchParams={params}
+          searchPlaceholder="Search sale number, customer, product, or payment"
+          selectFilters={[
+            {
+              label: "Payment",
+              name: "payment",
+              options: options.paymentMethods.map((method) => ({
+                label: paymentLabels[method],
+                value: method,
+              })),
+            },
+            {
+              label: "Product",
+              name: "product",
+              options: productOptions,
+            },
+          ]}
+        />
+        {pagination.total === 0 ? (
           <EmptyState>No sales have been recorded yet.</EmptyState>
-        ) : filteredSales.length === 0 ? (
-          <EmptyState>No sales match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -326,7 +305,7 @@ export default async function RecordSalePage({
               </>
             }
           >
-            {pageItems.map((sale) => (
+            {sales.map((sale) => (
               <tr className="align-top" key={sale.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">

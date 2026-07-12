@@ -89,6 +89,7 @@ test("ProductionService.createRun consumes production materials FIFO and transfe
         id: "flour-old",
         rawMaterialId: flour.id,
         quantityRemaining: 4,
+        storeBatch: { unitCost: 100 },
         receivedAt: new Date("2026-07-08T07:00:00.000Z"),
         createdAt: new Date("2026-07-08T07:00:00.000Z"),
       },
@@ -96,6 +97,7 @@ test("ProductionService.createRun consumes production materials FIFO and transfe
         id: "flour-new",
         rawMaterialId: flour.id,
         quantityRemaining: 3,
+        storeBatch: { unitCost: 120 },
         receivedAt: new Date("2026-07-09T07:00:00.000Z"),
         createdAt: new Date("2026-07-09T07:00:00.000Z"),
       },
@@ -105,6 +107,7 @@ test("ProductionService.createRun consumes production materials FIFO and transfe
         id: "sugar-old",
         rawMaterialId: sugar.id,
         quantityRemaining: 3,
+        storeBatch: { unitCost: 50 },
         receivedAt: new Date("2026-07-08T08:00:00.000Z"),
         createdAt: new Date("2026-07-08T08:00:00.000Z"),
       },
@@ -320,6 +323,8 @@ test("ProductionService.createRun consumes production materials FIFO and transfe
   assert.equal(wasteWrites[0]?.quantity, 2);
   assert.equal(salesBatchWrites[0]?.batchNumber, 4);
   assert.equal(salesBatchWrites[0]?.quantityReceived, 8);
+  assert.equal(salesBatchWrites[0]?.unitCost, 62);
+  assert.equal(salesBatchWrites[0]?.totalCost, 496);
   assert.equal(salesMovements[0]?.type, FinishedProductStockMovementType.RECEIVE_FROM_PRODUCTION);
   assert.equal(salesMovements[0]?.quantity, 8);
   assert.equal(records.length, 1);
@@ -327,4 +332,142 @@ test("ProductionService.createRun consumes production materials FIFO and transfe
   assert.equal(result.expectedQuantity, "10");
   assert.equal(result.quantityTransferred, "8");
   assert.equal(result.wasteQuantity, "2");
+});
+
+test("ProductionService.cancelMaterialRequest does not overwrite a concurrently issued request", async () => {
+  const { audit } = createAuditMock();
+  let unconditionalUpdateCalled = false;
+  const prisma = {
+    productionRequest: {
+      findUnique: async () => ({
+        id: "request-1",
+        requestedById: actor.id,
+        status: "PENDING",
+      }),
+      updateMany: async () => ({ count: 0 }),
+      update: async () => {
+        unconditionalUpdateCalled = true;
+      },
+    },
+    materialRequest: {
+      updateMany: async () => {
+        unconditionalUpdateCalled = true;
+      },
+    },
+    $transaction: async (callback: (transaction: unknown) => unknown) =>
+      callback(prisma),
+  };
+  const service = new ProductionService(
+    prisma as never,
+    audit as never,
+  );
+
+  await assert.rejects(
+    service.cancelMaterialRequest("request-1", actor),
+    (error) =>
+      error instanceof BadRequestException &&
+      /updated by someone else/i.test(error.message),
+  );
+  assert.equal(unconditionalUpdateCalled, false);
+});
+
+test("ProductionService.createMaterialRequest expands a product request into recipe material lines", async () => {
+  const neededBy = new Date("2026-07-12T08:00:00.000Z");
+  const createdAt = new Date("2026-07-11T18:00:00.000Z");
+  let createData: Record<string, any> | null = null;
+  const { audit, records } = createAuditMock();
+  const service = new ProductionService(
+    {
+      $transaction: async (callback: (transaction: unknown) => unknown) =>
+        callback({
+          product: {
+            findUnique: async () => bread,
+          },
+          productionRequest: {
+            create: async ({ data }: { data: Record<string, any> }) => {
+              createData = data;
+              const materialLines = data.materialRequests.create.map(
+                (line: Record<string, unknown>, index: number) => ({
+                  id: `material-request-${index + 1}`,
+                  rawMaterialId: line.rawMaterialId,
+                  productionRequestId: "production-request-1",
+                  requestedQuantity: line.requestedQuantity,
+                  issuedQuantity: 0,
+                  status: "PENDING",
+                  neededBy: line.neededBy,
+                  notes: line.notes,
+                  responseNotes: null,
+                  fulfilledAt: null,
+                  createdAt,
+                  updatedAt: createdAt,
+                  productionRequest: {
+                    id: "production-request-1",
+                    requestedQuantity: data.requestedQuantity,
+                    status: "PENDING",
+                    product: bread,
+                  },
+                  rawMaterial:
+                    line.rawMaterialId === flour.id ? flour : sugar,
+                  requestedBy: {
+                    id: actor.id,
+                    name: actor.name,
+                    email: actor.email,
+                  },
+                  issuedBy: null,
+                  issues: [],
+                }),
+              );
+
+              return {
+                id: "production-request-1",
+                productId: bread.id,
+                requestedQuantity: data.requestedQuantity,
+                status: "PENDING",
+                neededBy: data.neededBy,
+                notes: data.notes,
+                responseNotes: null,
+                fulfilledAt: null,
+                createdAt,
+                updatedAt: createdAt,
+                product: bread,
+                requestedBy: {
+                  id: actor.id,
+                  name: actor.name,
+                  email: actor.email,
+                },
+                materialRequests: materialLines,
+              };
+            },
+          },
+        }),
+    } as never,
+    audit as never,
+  );
+
+  const result = await service.createMaterialRequest(
+    {
+      productId: bread.id,
+      requestedQuantity: "20",
+      neededBy: neededBy.toISOString(),
+      notes: "Morning batch",
+    },
+    actor,
+  );
+
+  assert.equal(createData?.productId, bread.id);
+  assert.equal(createData?.requestedQuantity, 20);
+  assert.deepEqual(
+    createData?.materialRequests.create.map((line: Record<string, unknown>) => ({
+      rawMaterialId: line.rawMaterialId,
+      requestedQuantity: line.requestedQuantity,
+    })),
+    [
+      { rawMaterialId: flour.id, requestedQuantity: 10 },
+      { rawMaterialId: sugar.id, requestedQuantity: 4 },
+    ],
+  );
+  assert.equal(result.product.id, bread.id);
+  assert.equal(result.requestedQuantity, "20");
+  assert.equal(result.materialRequests.length, 2);
+  assert.equal(records[0]?.action, "PRODUCTION_PRODUCT_REQUEST_CREATED");
 });

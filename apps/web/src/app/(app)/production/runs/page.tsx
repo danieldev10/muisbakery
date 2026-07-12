@@ -44,7 +44,6 @@ export default async function ProductionRunsPage({
   const runs = await apiGet<ProductionRun[]>("/production/runs");
   const query = firstParam(params, "q");
   const productFilter = firstParam(params, "product");
-  const varianceFilter = firstParam(params, "variance");
   const from = firstParam(params, "from");
   const to = firstParam(params, "to");
   const productOptions = [
@@ -65,22 +64,15 @@ export default async function ProductionRunsPage({
         run.quantityProduced,
         run.quantityTransferred,
         run.wasteQuantity,
-        run.expectedQuantity,
-        run.shortfallQuantity,
         run.notes,
         run.createdBy?.name,
         run.createdBy?.email,
         ...run.materialUsages.flatMap((usage) => [
           usage.rawMaterial.name,
           usage.actualQuantity,
-          usage.expectedQuantity,
         ]),
       ]) &&
       matchesSelect(productFilter, run.product.id) &&
-      matchesSelect(
-        varianceFilter,
-        run.shortfallQuantity ? "shortfall" : "on-track",
-      ) &&
       matchesDateRange(run.producedAt, from, to),
   );
   const { pageItems, ...pagination } = paginate(
@@ -106,14 +98,6 @@ export default async function ProductionRunsPage({
                 name: "product",
                 options: productOptions,
               },
-              {
-                label: "Variance",
-                name: "variance",
-                options: [
-                  { label: "On track", value: "on-track" },
-                  { label: "Shortfall", value: "shortfall" },
-                ],
-              },
             ]}
           />
         ) : null}
@@ -136,9 +120,7 @@ export default async function ProductionRunsPage({
           >
             {pageItems.map((run) => (
               <tr
-                className={`align-top ${
-                  run.shortfallQuantity ? "border-l-4 border-l-red-700" : ""
-                }`}
+                className="align-top"
                 key={run.id}
               >
                 <td className="py-3 pr-4">
@@ -152,30 +134,10 @@ export default async function ProductionRunsPage({
                   ) : null}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
-                  <p className={run.shortfallQuantity ? "font-semibold text-red-800" : undefined}>
-                    {formatQuantity(
-                      run.quantityProduced,
-                      run.product.unit.abbreviation,
-                    )}
-                  </p>
-                  {run.expectedQuantity ? (
-                    <p
-                      className={`text-xs ${
-                        run.shortfallQuantity
-                          ? "font-medium text-red-700"
-                          : "text-stone-500"
-                      }`}
-                    >
-                      expected ≥{" "}
-                      {formatQuantity(
-                        run.expectedQuantity,
-                        run.product.unit.abbreviation,
-                      )}
-                      {run.shortfallQuantity
-                        ? ` (${run.shortfallQuantity} short)`
-                        : ""}
-                    </p>
-                  ) : null}
+                  {formatQuantity(
+                    run.quantityProduced,
+                    run.product.unit.abbreviation,
+                  )}
                 </td>
                 <td className="py-3 pr-4 text-stone-600">
                   {formatQuantity(

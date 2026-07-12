@@ -5,11 +5,13 @@ import {
   Inject,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
 import type { Request } from "express";
 
+import type { QueryParams } from "../common/pagination";
 import { ProductionGuard } from "../auth/production.guard";
 import { getRequestUser } from "../auth/auth.types";
 import { ProductionService } from "./production.service";
@@ -28,8 +30,8 @@ export class ProductionController {
   }
 
   @Get("material-requests")
-  materialRequests(@Req() request: Request) {
-    return this.production.listMaterialRequests(getRequestUser(request));
+  materialRequests(@Req() request: Request, @Query() query: QueryParams) {
+    return this.production.listMaterialRequests(getRequestUser(request), query);
   }
 
   @Get("inventory")

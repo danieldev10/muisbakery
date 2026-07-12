@@ -10,10 +10,17 @@ import {
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
-import type { InventoryItem, MaterialRequest } from "@/lib/operations/types";
+import type {
+  InventoryItem,
+  MaterialRequest,
+  RawMaterialBatch,
+  StoreOptions,
+} from "@/lib/operations/types";
 import {
   pageNumber,
   paginate,
+  paginatedApiPath,
+  type PaginatedResponse,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
@@ -45,10 +52,18 @@ export default async function StoreInventoryDetailPage({
   params: Promise<{ rawMaterialId: string }>;
   searchParams: Promise<PageSearchParams>;
 }) {
-  const [{ rawMaterialId }, query, inventory, requests] = await Promise.all([
-    params,
-    searchParams,
+  const [{ rawMaterialId }, query] = await Promise.all([params, searchParams]);
+  const [inventory, options, batchResult, requests] = await Promise.all([
     apiGet<InventoryItem[]>("/store/inventory"),
+    apiGet<StoreOptions>("/store/options"),
+    apiGet<PaginatedResponse<RawMaterialBatch>>(
+      paginatedApiPath(
+        "/store/batches",
+        { ...query, material: rawMaterialId, open: "1" },
+        ["q", "material", "supplier", "from", "to", "open"],
+        "batchPage",
+      ),
+    ),
     apiGet<MaterialRequest[]>("/store/material-requests"),
   ]);
 
@@ -61,36 +76,12 @@ export default async function StoreInventoryDetailPage({
   }
 
   const unit = item.rawMaterial.baseUnit.abbreviation;
-  const batchQuery = firstParam(query, "batchQ");
-  const batchSupplier = firstParam(query, "batchSupplier");
-  const batchFrom = firstParam(query, "batchFrom");
-  const batchTo = firstParam(query, "batchTo");
-  const batchSupplierOptions = [
-    ...new Map(
-      item.batches
-        .filter((batch) => batch.supplier)
-        .map((batch) => [
-          batch.supplier!.id,
-          {
-            label: batch.supplier!.name,
-            value: batch.supplier!.id,
-          },
-        ]),
-    ).values(),
-  ];
-  const filteredBatches = item.batches.filter(
-    (batch) =>
-      matchesSearch(batchQuery, [
-        batch.batchNumber,
-        batch.batchLabel,
-        batch.reference,
-        batch.supplier?.name,
-        batch.quantityReceived,
-        batch.quantityRemaining,
-      ]) &&
-      matchesSelect(batchSupplier, batch.supplier?.id ?? "") &&
-      matchesDateRange(batch.receivedAt, batchFrom, batchTo),
-  );
+  const batches = batchResult.items;
+  const batchPagination = batchResult.pagination;
+  const batchSupplierOptions = options.suppliers.map((supplier) => ({
+    label: supplier.name,
+    value: supplier.id,
+  }));
   const approvedRequests = requests
     .filter(
       (request) =>
@@ -208,21 +199,21 @@ export default async function StoreInventoryDetailPage({
         </section>
       </div>
 
-      <Card title={`Current batches (${filteredBatches.length} of ${item.batches.length})`}>
+      <Card title={`Current batches (${batchPagination.total} of ${item.batches.length})`}>
         {item.batches.length > 0 ? (
           <TableToolbar
             basePath={`/store/inventory/${rawMaterialId}`}
             dateFilters={[
-              { label: "Received from", name: "batchFrom" },
-              { label: "Received to", name: "batchTo" },
+              { label: "Received from", name: "from" },
+              { label: "Received to", name: "to" },
             ]}
-            searchParam="batchQ"
+            pageParams={["batchPage"]}
             searchParams={query}
-            searchPlaceholder="Search batch, supplier, reference, or quantity"
+            searchPlaceholder="Search batch, supplier, or reference"
             selectFilters={[
               {
                 label: "Supplier",
-                name: "batchSupplier",
+                name: "supplier",
                 options: batchSupplierOptions,
               },
             ]}
@@ -230,7 +221,7 @@ export default async function StoreInventoryDetailPage({
         ) : null}
         {item.batches.length === 0 ? (
           <EmptyState>No open batches currently have remaining stock.</EmptyState>
-        ) : filteredBatches.length === 0 ? (
+        ) : batches.length === 0 ? (
           <EmptyState>No batches match the current filters.</EmptyState>
         ) : (
           <TableShell
@@ -245,7 +236,7 @@ export default async function StoreInventoryDetailPage({
               </>
             }
           >
-            {filteredBatches.map((batch) => (
+            {batches.map((batch) => (
               <tr className="align-top" key={batch.id}>
                 <td className="py-3 pr-4 font-medium text-[var(--text-primary)]">
                   Batch {batch.batchNumber}
@@ -269,6 +260,12 @@ export default async function StoreInventoryDetailPage({
             ))}
           </TableShell>
         )}
+        <TablePagination
+          basePath={`/store/inventory/${rawMaterialId}`}
+          pageParam="batchPage"
+          searchParams={query}
+          {...batchPagination}
+        />
       </Card>
 
       <Card title={`Approved Production requests (${filteredApprovedRequests.length} of ${approvedRequests.length})`}>

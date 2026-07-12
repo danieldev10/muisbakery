@@ -24,6 +24,7 @@ export const iconButtonClass =
 export type PosSessionPatch = {
   customerType?: CustomerType;
   retailerId?: string | null;
+  retailerApprovalId?: string | null;
   customerName?: string | null;
   paymentMethod?: PaymentMethod;
 };

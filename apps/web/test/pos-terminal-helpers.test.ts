@@ -27,6 +27,7 @@ function session(overrides: Partial<PosSession> = {}): PosSession {
     status: "ACTIVE",
     customerType: "INDIVIDUAL",
     retailer: null,
+    retailerApprovalId: null,
     customerName: null,
     paymentMethod: "CASH",
     discount: "0",

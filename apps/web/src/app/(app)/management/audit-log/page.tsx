@@ -3,17 +3,10 @@ import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { ManagementAuditReport } from "@/lib/management/types";
 import {
-  pageNumber,
-  paginate,
+  paginatedApiPath,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
-import {
-  firstParam,
-  matchesDateRange,
-  matchesSearch,
-  matchesSelect,
-} from "@/lib/table-filters";
 
 import {
   formatAction,
@@ -27,12 +20,24 @@ export default async function ManagementAuditLogPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const report = await apiGet<ManagementAuditReport>("/management/audit-log");
-  const query = firstParam(params, "q");
-  const roleFilter = firstParam(params, "role");
-  const entityFilter = firstParam(params, "entity");
-  const from = firstParam(params, "from");
-  const to = firstParam(params, "to");
+  const report = await apiGet<ManagementAuditReport>(
+    paginatedApiPath("/management/audit-log", params, [
+      "q",
+      "role",
+      "entity",
+      "from",
+      "to",
+    ]),
+  );
+  const pagination =
+    report.pagination ?? {
+      page: 1,
+      pageCount: 1,
+      pageSize: report.entries.length,
+      total: report.entries.length,
+      rangeStart: report.entries.length > 0 ? 1 : 0,
+      rangeEnd: report.entries.length,
+    };
   const roleOptions = report.roleActivity.map((entry) => ({
     label: entry.role,
     value: entry.role,
@@ -41,56 +46,33 @@ export default async function ManagementAuditLogPage({
     label: entry.entityType,
     value: entry.entityType,
   }));
-  const filteredEntries = report.entries.filter(
-    (entry) =>
-      matchesSearch(query, [
-        formatAction(entry.action),
-        entry.action,
-        entry.entityType,
-        entry.entityId,
-        entry.actor?.name,
-        entry.actor?.email,
-        entry.actor?.role,
-      ]) &&
-      matchesSelect(roleFilter, entry.actor?.role ?? "") &&
-      matchesSelect(entityFilter, entry.entityType) &&
-      matchesDateRange(entry.createdAt, from, to),
-  );
-  const { pageItems, ...pagination } = paginate(
-    filteredEntries,
-    pageNumber(params.page),
-  );
 
   return (
     <ManagementPageShell>
-      <Card title={`Latest events (${filteredEntries.length} of ${report.entries.length})`}>
-        {report.entries.length > 0 ? (
-          <TableToolbar
-            basePath="/management/audit-log"
-            dateFilters={[
-              { label: "From", name: "from" },
-              { label: "To", name: "to" },
-            ]}
-            searchParams={params}
-            searchPlaceholder="Search action, record, actor, or reference"
-            selectFilters={[
-              {
-                label: "Role",
-                name: "role",
-                options: roleOptions,
-              },
-              {
-                label: "Record",
-                name: "entity",
-                options: entityOptions,
-              },
-            ]}
-          />
-        ) : null}
-        {report.entries.length === 0 ? (
+      <Card title={`Latest events (${pagination.total})`}>
+        <TableToolbar
+          basePath="/management/audit-log"
+          dateFilters={[
+            { label: "From", name: "from" },
+            { label: "To", name: "to" },
+          ]}
+          searchParams={params}
+          searchPlaceholder="Search action, record, actor, or reference"
+          selectFilters={[
+            {
+              label: "Role",
+              name: "role",
+              options: roleOptions,
+            },
+            {
+              label: "Record",
+              name: "entity",
+              options: entityOptions,
+            },
+          ]}
+        />
+        {pagination.total === 0 ? (
           <EmptyState>No audit events have been recorded yet.</EmptyState>
-        ) : filteredEntries.length === 0 ? (
-          <EmptyState>No audit events match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -102,7 +84,7 @@ export default async function ManagementAuditLogPage({
               </>
             }
           >
-            {pageItems.map((entry) => (
+            {report.entries.map((entry) => (
               <tr className="align-top" key={entry.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   {formatAction(entry.action)}

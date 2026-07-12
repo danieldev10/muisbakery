@@ -12,7 +12,6 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
 
 import type {
   CustomerType,
@@ -24,7 +23,6 @@ import type {
   SalesOptions,
 } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
-import { getPosDisplaySocketUrl } from "@/lib/pos-display-socket";
 import {
   apiJson,
   calculateSessionTotals,
@@ -44,15 +42,24 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   const [session, setSession] = useState<PosSession | null>(null);
   const [terminal, setTerminal] = useState<PosTerminalRecord | null>(null);
   const [query, setQuery] = useState("");
+  const [retailers, setRetailers] = useState(options.retailers);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [approvalRequestBusy, setApprovalRequestBusy] = useState(false);
+  const [approvalRequestSent, setApprovalRequestSent] = useState(false);
   const [cartSyncCount, setCartSyncCount] = useState(0);
   const [origin] = useState(() =>
     typeof window === "undefined" ? "" : window.location.origin,
   );
+  const [terminalSetupId, setTerminalSetupId] = useState(() =>
+    typeof window === "undefined"
+      ? ""
+      : (window.localStorage.getItem("muisbakery.posTerminalId") ?? ""),
+  );
   const [customerType, setCustomerType] =
     useState<CustomerType>("INDIVIDUAL");
   const [retailerId, setRetailerId] = useState("");
+  const [retailerApprovalId, setRetailerApprovalId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const terminalRef = useRef<PosTerminalRecord | null>(null);
   const terminalLoadPromiseRef = useRef<Promise<PosTerminalRecord | null> | null>(
@@ -60,7 +67,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   );
   const sessionRef = useRef<PosSession | null>(null);
   const sessionStartPromiseRef = useRef<Promise<PosSession | null> | null>(null);
-  const displaySocketRef = useRef<Socket | null>(null);
   const nextCartSyncIdRef = useRef(1);
   const cartSyncsRef = useRef(
     new Map<
@@ -87,6 +93,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       setPaymentMethod(nextSession?.paymentMethod ?? "CASH");
       setCustomerType(nextSession?.customerType ?? "INDIVIDUAL");
       setRetailerId(nextSession?.retailer?.id ?? "");
+      setRetailerApprovalId(nextSession?.retailerApprovalId ?? "");
     },
     [],
   );
@@ -94,21 +101,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   const applyTerminal = useCallback((nextTerminal: PosTerminalRecord | null) => {
     terminalRef.current = nextTerminal;
     setTerminal(nextTerminal);
-  }, []);
-
-  const previewCustomerDisplay = useCallback((nextSession: PosSession | null) => {
-    const currentTerminal = terminalRef.current;
-    const socket = displaySocketRef.current;
-
-    if (!currentTerminal || !nextSession || !socket) {
-      return;
-    }
-
-    socket.emit("pos:display:preview", {
-      mode: "terminal",
-      token: currentTerminal.displayToken,
-      session: nextSession,
-    });
   }, []);
 
   const ensureTerminal = useCallback(async () => {
@@ -132,17 +124,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           return loaded;
         } catch {
           window.localStorage.removeItem("muisbakery.posTerminalId");
+          setTerminalSetupId("");
         }
       }
 
-      const created = await apiJson<PosTerminalRecord>("/terminals", {
-        method: "POST",
-        body: JSON.stringify({ name: "POS terminal" }),
-      });
-
-      window.localStorage.setItem("muisbakery.posTerminalId", created.id);
-      applyTerminal(created);
-      return created;
+      throw new Error(
+        "This device is not paired to a POS terminal. Ask Admin to create a terminal, then enter its setup ID here.",
+      );
     })();
 
     try {
@@ -162,6 +150,34 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     }
     cartSyncsRef.current.clear();
     refreshCartSyncCount();
+  }
+
+  async function claimTerminal() {
+    const setupId = terminalSetupId.trim();
+
+    if (!setupId) {
+      setError("Enter the POS terminal setup ID from Admin.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const loaded = await apiJson<PosTerminalRecord>(`/terminals/${setupId}`);
+
+      window.localStorage.setItem("muisbakery.posTerminalId", loaded.id);
+      setTerminalSetupId(loaded.id);
+      applyTerminal(loaded);
+    } catch (caught) {
+      window.localStorage.removeItem("muisbakery.posTerminalId");
+      applyTerminal(null);
+      setError(
+        caught instanceof Error ? caught.message : "Unable to pair terminal.",
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -199,20 +215,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     };
   }, [applySession, ensureTerminal]);
 
-  useEffect(() => {
-    const socket = io(getPosDisplaySocketUrl(), {
-      transports: ["websocket"],
-      withCredentials: true,
-    });
-
-    displaySocketRef.current = socket;
-
-    return () => {
-      displaySocketRef.current = null;
-      socket.disconnect();
-    };
-  }, []);
-
   const filteredProducts = useMemo(() => {
     const search = query.trim().toLowerCase();
 
@@ -229,15 +231,24 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
   const active = session?.status === "ACTIVE";
   const selectedRetailer: Retailer | null =
-    options.retailers.find((retailer) => retailer.id === retailerId) ??
+    retailers.find((retailer) => retailer.id === retailerId) ??
     session?.retailer ??
     null;
-  const projectedRetailerCredit =
-    selectedRetailer && session
-      ? Number(selectedRetailer.availableCredit) - Number(session.totalAmount)
-      : null;
+  const selectedApproval =
+    selectedRetailer?.orderApprovals.find(
+      (approval) => approval.id === retailerApprovalId,
+    ) ?? null;
+  const pendingApprovalRequest =
+    selectedRetailer?.orderApprovalRequests.find(
+      (approval) => approval.status === "PENDING",
+    ) ?? null;
   const retailerSelectionMissing =
     customerType === "RETAILER" && retailerId.trim() === "";
+  const retailerApprovalMissing =
+    customerType === "RETAILER" &&
+    paymentMethod === "CREDIT" &&
+    Boolean(selectedRetailer?.requiresOrderApproval) &&
+    retailerApprovalId.trim() === "";
   const displayUrl =
     terminal && origin
       ? `${origin}/customer-display/terminal/${terminal.displayToken}`
@@ -309,38 +320,106 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
   async function changeCustomerType(nextType: CustomerType) {
     setCustomerType(nextType);
+    setApprovalRequestSent(false);
 
     if (nextType === "INDIVIDUAL") {
       setRetailerId("");
+      setRetailerApprovalId("");
       setPaymentMethod("CASH");
       await patchSession({
         customerType: "INDIVIDUAL",
         retailerId: null,
+        retailerApprovalId: null,
         paymentMethod: "CASH",
       });
       return;
     }
 
-    const nextRetailer = selectedRetailer ?? options.retailers[0] ?? null;
+    const nextRetailer = selectedRetailer ?? retailers[0] ?? null;
+    const nextApprovalId = nextRetailer?.requiresOrderApproval
+      ? nextRetailer.orderApprovals[0]?.id ?? ""
+      : "";
 
     setRetailerId(nextRetailer?.id ?? "");
+    setRetailerApprovalId(nextApprovalId);
     setPaymentMethod("CREDIT");
     await patchSession({
       customerType: "RETAILER",
       retailerId: nextRetailer?.id ?? null,
+      retailerApprovalId: nextApprovalId || null,
       paymentMethod: "CREDIT",
     });
   }
 
   async function changeRetailer(nextRetailerId: string) {
+    const nextRetailer =
+      retailers.find((retailer) => retailer.id === nextRetailerId) ??
+      null;
+    const nextApprovalId = nextRetailer?.requiresOrderApproval
+      ? nextRetailer.orderApprovals[0]?.id ?? ""
+      : "";
+
     setCustomerType("RETAILER");
     setRetailerId(nextRetailerId);
+    setRetailerApprovalId(nextApprovalId);
+    setApprovalRequestSent(false);
     setPaymentMethod("CREDIT");
     await patchSession({
       customerType: "RETAILER",
       retailerId: nextRetailerId || null,
+      retailerApprovalId: nextApprovalId || null,
       paymentMethod: "CREDIT",
     });
+  }
+
+  async function changeRetailerApproval(nextApprovalId: string) {
+    setRetailerApprovalId(nextApprovalId);
+    await patchSession({
+      customerType: "RETAILER",
+      retailerId: retailerId || null,
+      retailerApprovalId: nextApprovalId || null,
+      paymentMethod: "CREDIT",
+    });
+  }
+
+  async function refreshRetailers() {
+    const updatedRetailers = await apiJson<Retailer[]>("/retailers");
+
+    setRetailers(updatedRetailers);
+
+    return updatedRetailers;
+  }
+
+  async function requestAdminApproval() {
+    if (!selectedRetailer || !session) {
+      return;
+    }
+
+    setApprovalRequestBusy(true);
+    setApprovalRequestSent(false);
+    setError(null);
+
+    try {
+      await apiJson(`/retailers/${selectedRetailer.id}/order-approval-requests`, {
+        method: "POST",
+        body: JSON.stringify({
+          requestedAmount: session.totalAmount,
+          reason: `POS request for retailer credit sale of ${formatMoney(
+            session.totalAmount,
+          )}.`,
+        }),
+      });
+      await refreshRetailers();
+      setApprovalRequestSent(true);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to request Admin approval.",
+      );
+    } finally {
+      setApprovalRequestBusy(false);
+    }
   }
 
   function queueCartSync(
@@ -441,7 +520,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       void apiJson<PosSession>(`/sessions/${pending.sessionId}`)
         .then((loaded) => {
           applySession(loaded, false);
-          previewCustomerDisplay(loaded);
         })
         .catch(() => undefined);
     }
@@ -475,7 +553,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     const optimistic = updateSessionProductQuantity(current, item, nextQuantity);
 
     applySession(optimistic, false);
-    previewCustomerDisplay(optimistic);
     queueCartSync(optimistic, item, nextQuantity);
   }
 
@@ -493,8 +570,11 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         body: JSON.stringify({
           customerType,
           retailerId: customerType === "RETAILER" ? retailerId || null : null,
-          paymentMethod:
-            customerType === "RETAILER" ? "CREDIT" : paymentMethod,
+          retailerApprovalId:
+            customerType === "RETAILER" && paymentMethod === "CREDIT"
+              ? retailerApprovalId || null
+              : null,
+          paymentMethod,
         }),
       });
       const completed = await apiJson<PosSession>(
@@ -568,7 +648,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           </div>
           <button
             className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
-            disabled={busy}
+            disabled={busy || !terminal}
             onClick={startSession}
             type="button"
           >
@@ -577,7 +657,34 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           </button>
         </div>
 
-        {filteredProducts.length === 0 ? (
+        {!terminal ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-semibold text-amber-950">
+              Terminal setup required
+            </p>
+            <p className="mt-1 text-sm leading-6 text-amber-900">
+              Enter the setup ID from Admin &gt; POS terminals before using this
+              sales point.
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                className="h-10 min-w-0 flex-1 rounded-md border border-amber-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+                onChange={(event) => setTerminalSetupId(event.target.value)}
+                placeholder="POS terminal setup ID"
+                type="text"
+                value={terminalSetupId}
+              />
+              <button
+                className="inline-flex h-10 items-center justify-center rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
+                disabled={busy}
+                onClick={claimTerminal}
+                type="button"
+              >
+                Pair terminal
+              </button>
+            </div>
+          </div>
+        ) : filteredProducts.length === 0 ? (
           <p className="rounded-md border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">
             No products available.
           </p>
@@ -589,7 +696,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
               return (
                 <button
                   className="min-h-28 rounded-md border border-stone-200 bg-stone-50 p-3 text-left transition hover:border-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={busy && !session}
+                  disabled={!terminal || (busy && !session)}
                   key={item.product.id}
                   onClick={() => setProductQuantity(item, quantity + 1)}
                   type="button"
@@ -678,7 +785,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         {!session ? (
           <button
             className="flex h-28 w-full items-center justify-center gap-2 rounded-md border border-dashed border-stone-300 text-sm font-medium text-stone-600 transition hover:border-red-800 hover:text-red-800"
-            disabled={busy}
+            disabled={busy || !terminal}
             onClick={startSession}
             type="button"
           >
@@ -751,12 +858,39 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                           >
                             <Minus className="h-4 w-4" />
                           </button>
-                          <span className="min-w-16 text-center text-sm font-semibold text-stone-900">
-                            {formatQuantity(
-                              item.quantity,
-                              item.product.unit.abbreviation,
-                            )}
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <input
+                              aria-label={`Quantity for ${formatProductName(
+                                item.product,
+                              )}`}
+                              className="h-9 w-20 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-2 text-center text-sm font-semibold text-stone-900 shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]"
+                              disabled={!inventoryItem}
+                              inputMode="numeric"
+                              max={
+                                inventoryItem
+                                  ? productAvailable(inventoryItem)
+                                  : undefined
+                              }
+                              min="0"
+                              onChange={(event) =>
+                                inventoryItem
+                                  ? setProductQuantity(
+                                      inventoryItem,
+                                      Number.parseInt(
+                                        event.target.value || "0",
+                                        10,
+                                      ),
+                                    )
+                                  : undefined
+                              }
+                              step="1"
+                              type="number"
+                              value={item.quantity}
+                            />
+                            <span className="text-xs text-stone-500">
+                              {item.product.unit.abbreviation}
+                            </span>
+                          </div>
                           <button
                             className={iconButtonClass}
                             disabled={!inventoryItem}
@@ -831,7 +965,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                       value={retailerId}
                     >
                       <option value="">Select retailer</option>
-                      {options.retailers.map((retailer) => (
+                      {retailers.map((retailer) => (
                         <option key={retailer.id} value={retailer.id}>
                           {retailer.name}
                         </option>
@@ -841,38 +975,130 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                   {selectedRetailer ? (
                     <div className="rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-warm)] px-3 py-2 text-xs text-[var(--text-secondary)]">
                       <p>
-                        Available credit:{" "}
+                        Outstanding balance:{" "}
                         <span className="font-semibold text-[var(--text-primary)]">
-                          {formatMoney(selectedRetailer.availableCredit)}
+                          {formatMoney(selectedRetailer.outstandingBalance)}
                         </span>
                       </p>
-                      <p
-                        className={
-                          projectedRetailerCredit !== null &&
-                          projectedRetailerCredit < 0
-                            ? "font-semibold text-red-800"
-                            : undefined
-                        }
-                      >
-                        After this sale:{" "}
-                        {formatMoney(projectedRetailerCredit ?? 0)}
-                      </p>
+                      {selectedRetailer.requiresOrderApproval ? (
+                        paymentMethod === "CREDIT" ? (
+                          <p className="mt-1 font-semibold text-red-800">
+                            Admin approval required for another credit sale.
+                          </p>
+                        ) : (
+                          <p className="mt-1 font-semibold text-emerald-700">
+                            Paid-now sale. Existing credit remains for follow-up.
+                          </p>
+                        )
+                      ) : (
+                        <p className="mt-1 font-semibold text-emerald-700">
+                          No uncleared credit.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
                       Create or select a retailer account before checkout.
                     </p>
                   )}
+                  {selectedRetailer?.requiresOrderApproval &&
+                  paymentMethod === "CREDIT" ? (
+                    selectedRetailer.orderApprovals.length > 0 ? (
+                      <div className="grid gap-1.5">
+                        <label
+                          className="text-sm font-medium text-stone-700"
+                          htmlFor="retailerApprovalId"
+                        >
+                          Admin approval
+                        </label>
+                        <select
+                          className={fieldClass}
+                          id="retailerApprovalId"
+                          onChange={(event) =>
+                            void changeRetailerApproval(event.target.value)
+                          }
+                          value={retailerApprovalId}
+                        >
+                          <option value="">Select approval</option>
+                          {selectedRetailer.orderApprovals.map((approval) => (
+                            <option key={approval.id} value={approval.id}>
+                              {formatMoney(approval.approvedAmount)}
+                              {approval.expiresAt
+                                ? ` expires ${new Intl.DateTimeFormat("en", {
+                                    dateStyle: "medium",
+                                  }).format(new Date(approval.expiresAt))}`
+                                : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {selectedApproval ? (
+                          <p className="text-xs text-stone-500">
+                            Covers up to{" "}
+                            {formatMoney(selectedApproval.approvedAmount)}.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="grid gap-2 rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                        <p>
+                          Ask Admin to approve this retailer before credit
+                          checkout.
+                        </p>
+                        {pendingApprovalRequest ? (
+                          <p className="font-semibold text-amber-800">
+                            Pending request:{" "}
+                            {formatMoney(pendingApprovalRequest.approvedAmount)}
+                          </p>
+                        ) : (
+                          <button
+                            className="inline-flex h-8 w-fit items-center justify-center rounded-[5px] bg-red-800 px-3 text-xs font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
+                            disabled={
+                              approvalRequestBusy ||
+                              Number(session.totalAmount) <= 0
+                            }
+                            onClick={requestAdminApproval}
+                            type="button"
+                          >
+                            {approvalRequestBusy
+                              ? "Requesting..."
+                              : "Request Admin approval"}
+                          </button>
+                        )}
+                        {approvalRequestSent ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold text-emerald-700">
+                              Request sent. Refresh after Admin approves it.
+                            </p>
+                            <button
+                              className="inline-flex h-7 items-center justify-center rounded-[5px] border border-emerald-300 bg-white px-2 text-xs font-semibold text-emerald-800"
+                              onClick={() => void refreshRetailers()}
+                              type="button"
+                            >
+                              Refresh approvals
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  ) : null}
                 </div>
               ) : null}
 
               <select
                 className={fieldClass}
-                disabled={customerType === "RETAILER"}
                 onChange={(event) => {
                   const method = event.target.value as PaymentMethod;
                   setPaymentMethod(method);
-                  void patchSession({ paymentMethod: method });
+                  setApprovalRequestSent(false);
+                  if (method !== "CREDIT") {
+                    setRetailerApprovalId("");
+                  }
+                  void patchSession({
+                    paymentMethod: method,
+                    retailerApprovalId: method === "CREDIT"
+                      ? retailerApprovalId || null
+                      : null,
+                  });
                 }}
                 value={paymentMethod}
               >
@@ -901,7 +1127,8 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                 busy ||
                 cartIsSyncing ||
                 session.items.length === 0 ||
-                retailerSelectionMissing
+                retailerSelectionMissing ||
+                retailerApprovalMissing
               }
               onClick={checkout}
               type="button"

@@ -12,17 +12,11 @@ import type {
 } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
 import {
-  pageNumber,
-  paginate,
+  paginatedApiPath,
+  type PaginatedResponse,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
-import {
-  firstParam,
-  matchesDateRange,
-  matchesSearch,
-  matchesSelect,
-} from "@/lib/table-filters";
 
 import { recordCustomerReturn, recordDamagedStock } from "./actions";
 import { CustomerReturnModal, DamagedStockModal } from "./return-modals";
@@ -55,47 +49,24 @@ export default async function SalesReturnsPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const [options, returns] = await Promise.all([
+  const [options, result] = await Promise.all([
     apiGet<SalesOptions>("/sales/options"),
-    apiGet<SalesReturn[]>("/sales/returns"),
-  ]);
-  const query = firstParam(params, "q");
-  const productFilter = firstParam(params, "product");
-  const dispositionFilter = firstParam(params, "disposition");
-  const from = firstParam(params, "from");
-  const to = firstParam(params, "to");
-  const returnProductOptions = [
-    ...new Map(
-      returns.map((entry) => [
-        entry.product.id,
-        {
-          label: formatProductName(entry.product),
-          value: entry.product.id,
-        },
+    apiGet<PaginatedResponse<SalesReturn>>(
+      paginatedApiPath("/sales/returns", params, [
+        "q",
+        "product",
+        "disposition",
+        "from",
+        "to",
       ]),
-    ).values(),
-  ];
-  const filteredReturns = returns.filter(
-    (entry) =>
-      matchesSearch(query, [
-        formatProductName(entry.product),
-        entry.quantity,
-        entry.reason,
-        entry.disposition,
-        formatDisposition(entry.disposition),
-        entry.batch?.batchNumber,
-        entry.saleItem?.sale.saleNumber,
-        entry.createdBy?.name,
-        entry.createdBy?.email,
-      ]) &&
-      matchesSelect(productFilter, entry.product.id) &&
-      matchesSelect(dispositionFilter, entry.disposition) &&
-      matchesDateRange(entry.recordedAt, from, to),
-  );
-  const { pageItems, ...pagination } = paginate(
-    filteredReturns,
-    pageNumber(params.page),
-  );
+    ),
+  ]);
+  const returns = result.items;
+  const pagination = result.pagination;
+  const returnProductOptions = options.products.map((entry) => ({
+    label: formatProductName(entry.product),
+    value: entry.product.id,
+  }));
 
   const productOptions = options.products
     .filter((item) => Number(item.totalRemaining) > 0)
@@ -119,8 +90,7 @@ export default async function SalesReturnsPage({
       <Card>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
-            Recent returns and damage ({filteredReturns.length} of{" "}
-            {returns.length})
+            Recent returns and damage ({pagination.total})
           </h2>
           <div className="flex flex-wrap gap-2">
             <DamagedStockModal
@@ -134,33 +104,29 @@ export default async function SalesReturnsPage({
             />
           </div>
         </div>
-        {returns.length > 0 ? (
-          <TableToolbar
-            basePath="/sales/returns"
-            dateFilters={[
-              { label: "Recorded from", name: "from" },
-              { label: "Recorded to", name: "to" },
-            ]}
-            searchParams={params}
-            searchPlaceholder="Search product, source, reason, or outcome"
-            selectFilters={[
-              {
-                label: "Product",
-                name: "product",
-                options: returnProductOptions,
-              },
-              {
-                label: "Outcome",
-                name: "disposition",
-                options: dispositionOptions,
-              },
-            ]}
-          />
-        ) : null}
-        {returns.length === 0 ? (
+        <TableToolbar
+          basePath="/sales/returns"
+          dateFilters={[
+            { label: "Recorded from", name: "from" },
+            { label: "Recorded to", name: "to" },
+          ]}
+          searchParams={params}
+          searchPlaceholder="Search product, source, reason, or outcome"
+          selectFilters={[
+            {
+              label: "Product",
+              name: "product",
+              options: returnProductOptions,
+            },
+            {
+              label: "Outcome",
+              name: "disposition",
+              options: dispositionOptions,
+            },
+          ]}
+        />
+        {pagination.total === 0 ? (
           <EmptyState>No returns or damaged stock have been recorded.</EmptyState>
-        ) : filteredReturns.length === 0 ? (
-          <EmptyState>No returns or damage records match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -173,7 +139,7 @@ export default async function SalesReturnsPage({
               </>
             }
           >
-            {pageItems.map((entry) => (
+            {returns.map((entry) => (
               <tr className="align-top" key={entry.id}>
                 <td className="py-3 pr-4">
                   <p className="font-medium text-stone-900">

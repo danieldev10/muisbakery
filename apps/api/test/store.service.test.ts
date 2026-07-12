@@ -191,6 +191,8 @@ test("StoreService.issueMaterialRequest issues stock FIFO across raw material ba
     createdAt: now,
     updatedAt: now,
     rawMaterial,
+    productionRequest: null,
+    productionRequestId: null,
     requestedBy: requester,
     issuedBy: null,
     issues: [],
@@ -362,8 +364,7 @@ test("StoreService.rejectMaterialRequest rejects the remaining quantity on parti
     data?: Record<string, unknown>;
   } | null = null;
   const { audit, records } = createAuditMock();
-  const service = new StoreService(
-    {
+  const prisma = {
       materialRequest: {
         findUnique: async () => ({
           id: request.id,
@@ -382,7 +383,11 @@ test("StoreService.rejectMaterialRequest rejects the remaining quantity on parti
           responseNotes: "Not needed again this week",
         }),
       },
-    } as never,
+    $transaction: async (callback: (transaction: unknown) => unknown) =>
+      callback(prisma),
+  };
+  const service = new StoreService(
+    prisma as never,
     audit as never,
   );
 

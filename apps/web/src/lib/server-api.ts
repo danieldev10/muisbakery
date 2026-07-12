@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from "@/lib/api";
 import { getAuthCookieHeader } from "@/lib/auth";
+import { getInternalApiHeaders } from "@/lib/internal-api";
 
 export type ApiResult<T = unknown> =
   | { ok: true; data: T }
@@ -62,6 +63,7 @@ export async function apiSend<T = unknown>(
     headers: {
       "Content-Type": "application/json",
       cookie: await getAuthCookieHeader(),
+      ...getInternalApiHeaders(),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });

@@ -14,6 +14,15 @@ import { z } from "zod";
 
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
+import {
+  containsFilter,
+  dateRangeFilter,
+  hasPaginatedRequest,
+  paginatedResult,
+  parsePagination,
+  queryText,
+  type QueryParams,
+} from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
 
 const optionalText = (max = 300) =>
@@ -86,6 +95,13 @@ const userSelect = {
   email: true,
 } satisfies Prisma.UserSelect;
 
+const productSelect = {
+  id: true,
+  name: true,
+  size: true,
+  unit: { select: baseUnitSelect },
+} satisfies Prisma.ProductSelect;
+
 const batchInclude = {
   rawMaterial: { select: rawMaterialSelect },
   supplier: { select: supplierSelect },
@@ -114,6 +130,11 @@ const inventoryInclude = {
 
 const requestInclude = {
   rawMaterial: { select: rawMaterialSelect },
+  productionRequest: {
+    include: {
+      product: { select: productSelect },
+    },
+  },
   requestedBy: { select: userSelect },
   issuedBy: { select: userSelect },
   issues: {
@@ -165,6 +186,149 @@ function toBatchDate(receivedAt: Date) {
       receivedAt.getDate(),
     ),
   );
+}
+
+function numericSearch(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function materialRequestWhere(query: QueryParams | undefined) {
+  const search = queryText(query, "q");
+  const materialId = queryText(query, "material");
+  const status = queryText(query, "status");
+  const createdAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.MaterialRequestWhereInput = {};
+
+  if (materialId) {
+    where.rawMaterialId = materialId;
+  }
+
+  if (
+    status &&
+    Object.values(MaterialRequestStatus).includes(status as MaterialRequestStatus)
+  ) {
+    where.status = status as MaterialRequestStatus;
+  }
+
+  if (createdAt) {
+    where.createdAt = createdAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { rawMaterial: { name: containsFilter(search) } },
+      { rawMaterial: { baseUnit: { abbreviation: containsFilter(search) } } },
+      { notes: containsFilter(search) },
+      { responseNotes: containsFilter(search) },
+      { requestedBy: { name: containsFilter(search) } },
+      { requestedBy: { email: containsFilter(search) } },
+      { issuedBy: { name: containsFilter(search) } },
+      { issuedBy: { email: containsFilter(search) } },
+    ];
+
+    if (Object.values(MaterialRequestStatus).includes(search as MaterialRequestStatus)) {
+      where.OR.push({ status: search as MaterialRequestStatus });
+    }
+  }
+
+  return where;
+}
+
+function receiptWhere(query: QueryParams | undefined) {
+  const search = queryText(query, "q");
+  const batchNumber = numericSearch(search);
+  const receivedAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.RawMaterialReceiptWhereInput = {};
+  const materialId = queryText(query, "material");
+  const supplierId = queryText(query, "supplier");
+
+  if (materialId) {
+    where.rawMaterialId = materialId;
+  }
+
+  if (supplierId) {
+    where.supplierId = supplierId;
+  }
+
+  if (receivedAt) {
+    where.receivedAt = receivedAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { rawMaterial: { name: containsFilter(search) } },
+      { rawMaterial: { baseUnit: { abbreviation: containsFilter(search) } } },
+      { supplier: { name: containsFilter(search) } },
+      { reference: containsFilter(search) },
+      { notes: containsFilter(search) },
+      { createdBy: { name: containsFilter(search) } },
+      { createdBy: { email: containsFilter(search) } },
+    ];
+
+    if (batchNumber !== undefined) {
+      where.OR.push({ batch: { batchNumber } });
+    }
+  }
+
+  return where;
+}
+
+function batchWhere(query: QueryParams | undefined) {
+  const search = queryText(query, "q");
+  const batchNumber = numericSearch(search);
+  const batchDate = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.RawMaterialBatchWhereInput = {};
+  const materialId = queryText(query, "material");
+  const supplierId = queryText(query, "supplier");
+  const openOnly = queryText(query, "open");
+
+  if (materialId) {
+    where.rawMaterialId = materialId;
+  }
+
+  if (supplierId) {
+    where.supplierId = supplierId;
+  }
+
+  if (batchDate) {
+    where.batchDate = batchDate;
+  }
+
+  if (openOnly === "1" || openOnly === "true") {
+    where.quantityRemaining = { gt: 0 };
+  }
+
+  if (search) {
+    where.OR = [
+      { rawMaterial: { name: containsFilter(search) } },
+      { rawMaterial: { baseUnit: { abbreviation: containsFilter(search) } } },
+      { supplier: { name: containsFilter(search) } },
+      { reference: containsFilter(search) },
+      { notes: containsFilter(search) },
+      { createdBy: { name: containsFilter(search) } },
+      { createdBy: { email: containsFilter(search) } },
+    ];
+
+    if (batchNumber !== undefined) {
+      where.OR.push({ batchNumber });
+    }
+  }
+
+  return where;
 }
 
 // Costs are deliberately omitted from Store responses: unit costs are only
@@ -257,6 +421,14 @@ function serializeRequest(request: MaterialRequestWithIncludes) {
     fulfilledAt: request.fulfilledAt?.toISOString() ?? null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
+    productionRequest: request.productionRequest
+      ? {
+          id: request.productionRequest.id,
+          requestedQuantity: request.productionRequest.requestedQuantity.toString(),
+          status: request.productionRequest.status,
+          product: request.productionRequest.product,
+        }
+      : null,
     rawMaterial: request.rawMaterial,
     requestedBy: request.requestedBy,
     issuedBy: request.issuedBy,
@@ -283,6 +455,52 @@ export class StoreService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
+
+  private async refreshProductionRequestStatus(
+    tx: Prisma.TransactionClient,
+    productionRequestId: string,
+  ) {
+    const lines = await tx.materialRequest.findMany({
+      where: { productionRequestId },
+      select: { status: true, responseNotes: true },
+    });
+
+    if (lines.length === 0) {
+      return;
+    }
+
+    const statuses = lines.map((line) => line.status);
+    let nextStatus: MaterialRequestStatus;
+
+    if (statuses.every((status) => status === MaterialRequestStatus.CANCELLED)) {
+      nextStatus = MaterialRequestStatus.CANCELLED;
+    } else if (statuses.some((status) => status === MaterialRequestStatus.REJECTED)) {
+      nextStatus = MaterialRequestStatus.REJECTED;
+    } else if (statuses.every((status) => status === MaterialRequestStatus.FULFILLED)) {
+      nextStatus = MaterialRequestStatus.FULFILLED;
+    } else if (
+      statuses.some(
+        (status) =>
+          status === MaterialRequestStatus.FULFILLED ||
+          status === MaterialRequestStatus.PARTIALLY_ISSUED,
+      )
+    ) {
+      nextStatus = MaterialRequestStatus.PARTIALLY_ISSUED;
+    } else {
+      nextStatus = MaterialRequestStatus.PENDING;
+    }
+
+    await tx.productionRequest.update({
+      where: { id: productionRequestId },
+      data: {
+        status: nextStatus,
+        responseNotes:
+          lines.find((line) => line.responseNotes)?.responseNotes ?? null,
+        fulfilledAt:
+          nextStatus === MaterialRequestStatus.FULFILLED ? new Date() : null,
+      },
+    });
+  }
 
   async options() {
     const [rawMaterials, suppliers] = await Promise.all([
@@ -313,20 +531,76 @@ export class StoreService {
     return materials.map(serializeInventoryItem);
   }
 
-  async listBatches() {
+  async listBatches(query?: QueryParams) {
+    const where = batchWhere(query);
+    const orderBy: Prisma.RawMaterialBatchOrderByWithRelationInput[] = [
+      { batchDate: "desc" },
+      { batchNumber: "desc" },
+    ];
+
+    if (hasPaginatedRequest(query)) {
+      const { page, pageSize, skip, take } = parsePagination(query);
+      const [total, batches] = await this.prisma.$transaction([
+        this.prisma.rawMaterialBatch.count({ where }),
+        this.prisma.rawMaterialBatch.findMany({
+          where,
+          include: batchInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+
+      return paginatedResult(
+        batches.map(serializeBatch),
+        total,
+        page,
+        pageSize,
+      );
+    }
+
     const batches = await this.prisma.rawMaterialBatch.findMany({
+      where,
       include: batchInclude,
-      orderBy: [{ batchDate: "desc" }, { batchNumber: "desc" }],
+      orderBy,
       take: 200,
     });
 
     return batches.map(serializeBatch);
   }
 
-  async listReceipts() {
+  async listReceipts(query?: QueryParams) {
+    const where = receiptWhere(query);
+    const orderBy: Prisma.RawMaterialReceiptOrderByWithRelationInput[] = [
+      { receivedAt: "desc" },
+      { createdAt: "desc" },
+    ];
+
+    if (hasPaginatedRequest(query)) {
+      const { page, pageSize, skip, take } = parsePagination(query);
+      const [total, receipts] = await this.prisma.$transaction([
+        this.prisma.rawMaterialReceipt.count({ where }),
+        this.prisma.rawMaterialReceipt.findMany({
+          where,
+          include: receiptInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+
+      return paginatedResult(
+        receipts.map(serializeReceipt),
+        total,
+        page,
+        pageSize,
+      );
+    }
+
     const receipts = await this.prisma.rawMaterialReceipt.findMany({
+      where,
       include: receiptInclude,
-      orderBy: [{ receivedAt: "desc" }, { createdAt: "desc" }],
+      orderBy,
       take: 200,
     });
 
@@ -475,10 +749,36 @@ export class StoreService {
     return serializeReceipt(receipt);
   }
 
-  async listMaterialRequests() {
+  async listMaterialRequests(query?: QueryParams) {
+    const where = materialRequestWhere(query);
+    const orderBy = { createdAt: "desc" } as const;
+
+    if (hasPaginatedRequest(query)) {
+      const { page, pageSize, skip, take } = parsePagination(query);
+      const [total, requests] = await this.prisma.$transaction([
+        this.prisma.materialRequest.count({ where }),
+        this.prisma.materialRequest.findMany({
+          where,
+          include: requestInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+
+      return paginatedResult(
+        requests.map(serializeRequest),
+        total,
+        page,
+        pageSize,
+      );
+    }
+
     const requests = await this.prisma.materialRequest.findMany({
+      where,
       include: requestInclude,
-      orderBy: { createdAt: "desc" },
+      orderBy,
+      take: 200,
     });
 
     return requests.map(serializeRequest);
@@ -643,7 +943,7 @@ export class StoreService {
             ? MaterialRequestStatus.FULFILLED
             : MaterialRequestStatus.PARTIALLY_ISSUED;
 
-        return tx.materialRequest.update({
+        const updated = await tx.materialRequest.update({
           where: { id: request.id },
           data: {
             issuedQuantity: nextIssuedQuantity,
@@ -655,6 +955,15 @@ export class StoreService {
           },
           include: requestInclude,
         });
+
+        if (request.productionRequestId) {
+          await this.refreshProductionRequestStatus(
+            tx,
+            request.productionRequestId,
+          );
+        }
+
+        return updated;
       },
       { timeout: 15000, maxWait: 15000 },
     );
@@ -685,46 +994,60 @@ export class StoreService {
       throw new BadRequestException(parsed.error.issues[0]?.message);
     }
 
-    const existing = await this.prisma.materialRequest.findUnique({
-      where: { id: requestId },
-      select: { id: true, status: true },
-    });
-
-    if (!existing) {
-      throw new NotFoundException("Material request not found.");
-    }
-
     const rejectableStatuses: MaterialRequestStatus[] = [
       MaterialRequestStatus.PENDING,
       MaterialRequestStatus.PARTIALLY_ISSUED,
     ];
 
-    if (!rejectableStatuses.includes(existing.status)) {
-      throw new BadRequestException(
-        "Only pending or partially issued requests can be rejected.",
-      );
-    }
+    const request = await this.prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.materialRequest.findUnique({
+          where: { id: requestId },
+          select: { id: true, status: true },
+        });
 
-    // Conditional update so a concurrent issue/reject cannot both win.
-    const rejected = await this.prisma.materialRequest.updateMany({
-      where: { id: requestId, status: { in: rejectableStatuses } },
-      data: {
-        status: MaterialRequestStatus.REJECTED,
-        issuedById: actor.id,
-        responseNotes: parsed.data.notes ?? null,
+        if (!existing) {
+          throw new NotFoundException("Material request not found.");
+        }
+
+        if (!rejectableStatuses.includes(existing.status)) {
+          throw new BadRequestException(
+            "Only pending or partially issued requests can be rejected.",
+          );
+        }
+
+        // Conditional update so a concurrent issue/reject cannot both win.
+        const rejected = await tx.materialRequest.updateMany({
+          where: { id: requestId, status: { in: rejectableStatuses } },
+          data: {
+            status: MaterialRequestStatus.REJECTED,
+            issuedById: actor.id,
+            responseNotes: parsed.data.notes ?? null,
+          },
+        });
+
+        if (rejected.count === 0) {
+          throw new BadRequestException(
+            "This request was updated by someone else. Refresh and try again.",
+          );
+        }
+
+        const updatedRequest = await tx.materialRequest.findUniqueOrThrow({
+          where: { id: requestId },
+          include: requestInclude,
+        });
+
+        if (updatedRequest.productionRequestId) {
+          await this.refreshProductionRequestStatus(
+            tx,
+            updatedRequest.productionRequestId,
+          );
+        }
+
+        return updatedRequest;
       },
-    });
-
-    if (rejected.count === 0) {
-      throw new BadRequestException(
-        "This request was updated by someone else. Refresh and try again.",
-      );
-    }
-
-    const request = await this.prisma.materialRequest.findUniqueOrThrow({
-      where: { id: requestId },
-      include: requestInclude,
-    });
+      { timeout: 15000, maxWait: 15000 },
+    );
 
     await this.audit.record({
       actorId: actor.id,

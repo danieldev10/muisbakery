@@ -1,4 +1,5 @@
 import type { PaymentMethod, SalesReturnDisposition } from "@/lib/operations/types";
+import type { PaginationMeta } from "@/lib/paginate";
 import type { AppRole } from "@/lib/roles";
 
 export type ManagementUnitRef = {
@@ -52,7 +53,10 @@ export type ManagementInventoryReport = {
   valuation: {
     rawMaterials: string;
     finishedGoods: string;
+    finishedGoodsCost: string;
+    finishedGoodsRetail: string;
     totalStockValue: string;
+    totalRetailValue: string;
   };
   lowStockThreshold: string;
   lowStock: {
@@ -84,6 +88,7 @@ export type RawMaterialStockItem = {
 export type FinishedProductStockItem = {
   product: ManagementProductRef;
   totalRemaining: string;
+  estimatedCostValue: string;
   estimatedRetailValue: string;
   batches: Array<{
     id: string;
@@ -91,6 +96,8 @@ export type FinishedProductStockItem = {
     batchDate: string;
     quantityReceived: string;
     quantityRemaining: string;
+    unitCost: string;
+    estimatedCostValue: string;
     estimatedRetailValue: string;
     receivedAt: string;
     productionRun: { id: string; producedAt: string } | null;
@@ -152,6 +159,7 @@ export type ManagementProfitLossReport = {
   costs: {
     materialPurchasedCost: string;
     materialIssuedCost: string;
+    costOfGoodsSold: string;
   };
   expenses: {
     count: number;
@@ -276,6 +284,7 @@ export type ManagementAuditReport = {
   roleActivity: Array<{ role: string; count: number }>;
   entityActivity: Array<{ entityType: string; count: number }>;
   entries: ManagementAuditEntry[];
+  pagination?: PaginationMeta;
 };
 
 export type ManagementChartDatum = {

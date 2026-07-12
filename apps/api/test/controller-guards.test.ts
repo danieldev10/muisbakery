@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { ExpenseCategoriesController } from "../src/admin/expense-categories/expense-categories.controller";
+import { PosTerminalsController } from "../src/admin/pos-terminals/pos-terminals.controller";
 import { ProductsController } from "../src/admin/products/products.controller";
 import { RawMaterialsController } from "../src/admin/raw-materials/raw-materials.controller";
 import { RecipesController } from "../src/admin/recipes/recipes.controller";
@@ -33,6 +34,7 @@ const EXPECTED_GUARDS: Array<[string, unknown, unknown]> = [
   ["RawMaterialsController", RawMaterialsController, AdminGuard],
   ["SuppliersController", SuppliersController, AdminGuard],
   ["AdminRetailersController", AdminRetailersController, AdminGuard],
+  ["PosTerminalsController", PosTerminalsController, AdminGuard],
   ["RecipesController", RecipesController, AdminGuard],
   ["UnitsController", UnitsController, AdminGuard],
   ["ExpenseCategoriesController", ExpenseCategoriesController, AdminGuard],

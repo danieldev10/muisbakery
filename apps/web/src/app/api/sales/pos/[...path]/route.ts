@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getApiBaseUrl } from "@/lib/api";
 import { getAuthCookieHeader } from "@/lib/auth";
+import { getInternalApiHeaders } from "@/lib/internal-api";
 
 type RouteContext = {
   params: Promise<{ path: string[] }>;
@@ -24,6 +25,7 @@ async function proxy(request: Request, context: RouteContext) {
     headers: {
       "Content-Type": request.headers.get("content-type") ?? "application/json",
       cookie: await getAuthCookieHeader(),
+      ...getInternalApiHeaders(),
     },
     body,
   });

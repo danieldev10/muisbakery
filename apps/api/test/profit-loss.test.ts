@@ -35,6 +35,12 @@ function makePrisma() {
         { quantity: "10", batch: { unitCost: "100.00" } },
       ],
     },
+    saleItemBatch: {
+      findMany: async () => [
+        { quantity: "2", batch: { unitCost: "500.00" } },
+        { quantity: "1", batch: { unitCost: "1000.00" } },
+      ],
+    },
     productionWaste: {
       findMany: async () => [
         { type: "DAMAGED", quantity: "2", product: { unitPrice: "250.00" } },
@@ -79,8 +85,11 @@ test("profit/loss walks revenue through COGS, expenses, and losses to net profit
   assert.equal(report.revenue.salesCount, 2);
   assert.equal(report.revenue.balanceDue, "1000.00");
 
-  // COGS: 5 x 200 + 10 x 100
+  // Materials issued to production remain visible as an operating stock flow.
   assert.equal(report.costs.materialIssuedCost, "2000.00");
+
+  // COGS: 2 x 500 + 1 x 1000 from the finished-good batches sold.
+  assert.equal(report.costs.costOfGoodsSold, "2000.00");
   assert.equal(report.profit.estimatedGrossProfit, "8000.00");
   assert.equal(report.profit.grossMarginPercent, "80.00");
 
@@ -112,6 +121,7 @@ test("profit/loss with no activity reports zeros instead of NaN", async () => {
   const prisma = makePrisma();
   prisma.sale.findMany = async () => [];
   prisma.materialRequestIssue.findMany = async () => [];
+  prisma.saleItemBatch.findMany = async () => [];
   prisma.productionWaste.findMany = async () => [];
   prisma.salesProductReturn.findMany = async () => [];
   prisma.expense.findMany = async () => [];

@@ -59,9 +59,16 @@ test("createSaleSchema requires a retailer account for retailer sales", () => {
     paymentMethod: PaymentMethod.CREDIT,
     items: [{ productId: "product-1", quantity: "2", unitPrice: "1500" }],
   });
-  const wrongPayment = createSaleSchema.safeParse({
+  const cashRetailerSale = createSaleSchema.safeParse({
     customerType: CustomerType.RETAILER,
     retailerId: "retailer-1",
+    paymentMethod: PaymentMethod.CASH,
+    items: [{ productId: "product-1", quantity: "2", unitPrice: "1500" }],
+  });
+  const approvalOnPaidSale = createSaleSchema.safeParse({
+    customerType: CustomerType.RETAILER,
+    retailerId: "retailer-1",
+    retailerApprovalId: "approval-1",
     paymentMethod: PaymentMethod.CASH,
     items: [{ productId: "product-1", quantity: "2", unitPrice: "1500" }],
   });
@@ -73,10 +80,13 @@ test("createSaleSchema requires a retailer account for retailer sales", () => {
       : missingRetailer.error.issues[0]?.message ?? "",
     /select a retailer/i,
   );
-  assert.equal(wrongPayment.success, false);
+  assert.equal(cashRetailerSale.success, true);
+  assert.equal(approvalOnPaidSale.success, false);
   assert.match(
-    wrongPayment.success ? "" : wrongPayment.error.issues[0]?.message ?? "",
-    /must use credit/i,
+    approvalOnPaidSale.success
+      ? ""
+      : approvalOnPaidSale.error.issues[0]?.message ?? "",
+    /only needed for credit/i,
   );
 });
 

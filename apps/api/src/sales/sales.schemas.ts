@@ -1,6 +1,7 @@
 import {
   CustomerType,
   PaymentMethod,
+  RetailerOrderApprovalStatus,
   SalesReturnDisposition,
 } from "@prisma/client";
 import { z } from "zod";
@@ -77,6 +78,7 @@ export const createSaleSchema = z
   .object({
     customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
     retailerId: optionalId,
+    retailerApprovalId: optionalId,
     paymentMethod: z.enum(PaymentMethod),
     customerName: optionalText(160),
     soldAt: optionalDate,
@@ -107,14 +109,6 @@ export const createSaleSchema = z
           path: ["retailerId"],
         });
       }
-
-      if (value.paymentMethod !== PaymentMethod.CREDIT) {
-        context.addIssue({
-          code: "custom",
-          message: "Retailer sales must use credit.",
-          path: ["paymentMethod"],
-        });
-      }
     }
 
     if (value.customerType === CustomerType.INDIVIDUAL && value.retailerId) {
@@ -122,6 +116,29 @@ export const createSaleSchema = z
         code: "custom",
         message: "Retailer can only be selected for retailer sales.",
         path: ["retailerId"],
+      });
+    }
+
+    if (
+      value.customerType === CustomerType.INDIVIDUAL &&
+      value.retailerApprovalId
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer approval can only be selected for retailer sales.",
+        path: ["retailerApprovalId"],
+      });
+    }
+
+    if (
+      value.customerType === CustomerType.RETAILER &&
+      value.paymentMethod !== PaymentMethod.CREDIT &&
+      value.retailerApprovalId
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer approval is only needed for credit sales.",
+        path: ["retailerApprovalId"],
       });
     }
   });
@@ -166,11 +183,24 @@ export const recordReturnSchema = z
 
 export const createPosTerminalSchema = z.object({
   name: optionalText(100),
+  offlineEnabled: z.coerce.boolean().optional(),
 });
+
+export const updatePosTerminalSchema = z
+  .object({
+    name: nullableText(100),
+    isActive: z.coerce.boolean().optional(),
+    offlineEnabled: z.coerce.boolean().optional(),
+    rotateDisplayToken: z.coerce.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "No changes provided.",
+  });
 
 export const createPosSessionSchema = z.object({
   customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
   retailerId: optionalId,
+  retailerApprovalId: optionalId,
   customerName: optionalText(160),
   terminalId: optionalText(80),
 });
@@ -178,6 +208,7 @@ export const createPosSessionSchema = z.object({
 export const updatePosSessionSchema = z.object({
   customerType: z.enum(CustomerType).optional(),
   retailerId: nullableId,
+  retailerApprovalId: nullableId,
   customerName: nullableText(160),
   paymentMethod: z.enum(PaymentMethod).optional(),
   discount: optionalMoneySchema,
@@ -197,7 +228,6 @@ export const createRetailerSchema = z.object({
   phone: optionalText(40),
   email: optionalText(160),
   address: optionalText(300),
-  creditLimit: moneySchema.positive("Credit limit must be greater than zero."),
   notes: optionalText(500),
 });
 
@@ -207,9 +237,23 @@ export const updateRetailerSchema = z.object({
   phone: nullableText(40),
   email: nullableText(160),
   address: nullableText(300),
-  creditLimit: optionalMoneySchema,
   notes: nullableText(500),
   isActive: z.coerce.boolean().optional(),
+});
+
+export const createRetailerOrderApprovalSchema = z.object({
+  approvedAmount: moneySchema.positive("Approved amount must be greater than zero."),
+  reason: optionalText(500),
+  expiresAt: optionalDate,
+});
+
+export const requestRetailerOrderApprovalSchema = z.object({
+  requestedAmount: moneySchema.positive("Requested amount must be greater than zero."),
+  reason: optionalText(500),
+});
+
+export const updateRetailerOrderApprovalSchema = z.object({
+  status: z.enum(RetailerOrderApprovalStatus),
 });
 
 export const recordRetailerPaymentSchema = z.object({

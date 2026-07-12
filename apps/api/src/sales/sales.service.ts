@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import {
@@ -11,21 +12,35 @@ import {
   PaymentMethod,
   PosSessionStatus,
   Prisma,
+  RetailerOrderApprovalStatus,
   SalesReturnDisposition,
 } from "@prisma/client";
 
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
+import {
+  containsFilter,
+  dateRangeFilter,
+  hasPaginatedRequest,
+  paginatedResult,
+  parsePagination,
+  queryText,
+  type QueryParams,
+} from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
 import { PosDisplayEvents } from "./pos-display-events";
 import {
   createPosSessionSchema,
   createPosTerminalSchema,
+  createRetailerOrderApprovalSchema,
   createRetailerSchema,
   createSaleSchema,
   recordRetailerPaymentSchema,
+  requestRetailerOrderApprovalSchema,
+  updateRetailerOrderApprovalSchema,
   recordReturnSchema,
   updateRetailerSchema,
+  updatePosTerminalSchema,
   updatePosSessionSchema,
   upsertPosSessionItemSchema,
   type CreateSaleInput,
@@ -64,8 +79,140 @@ import {
   toDayRange,
 } from "./sales.utils";
 
+function numericSearch(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value.replace(/^#/, ""), 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function saleWhere(query: QueryParams | undefined) {
+  const search = queryText(query, "q");
+  const saleNumber = numericSearch(search);
+  const payment = queryText(query, "payment");
+  const customerType = queryText(query, "customerType");
+  const productId = queryText(query, "product");
+  const soldAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.SaleWhereInput = {};
+
+  if (
+    payment &&
+    Object.values(PaymentMethod).includes(payment as PaymentMethod)
+  ) {
+    where.paymentMethod = payment as PaymentMethod;
+  }
+
+  if (
+    customerType &&
+    Object.values(CustomerType).includes(customerType as CustomerType)
+  ) {
+    where.customerType = customerType as CustomerType;
+  }
+
+  if (productId) {
+    where.items = { some: { productId } };
+  }
+
+  if (soldAt) {
+    where.soldAt = soldAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { customerName: containsFilter(search) },
+      { retailer: { name: containsFilter(search) } },
+      { notes: containsFilter(search) },
+      { createdBy: { name: containsFilter(search) } },
+      { createdBy: { email: containsFilter(search) } },
+      { items: { some: { product: { name: containsFilter(search) } } } },
+      { items: { some: { product: { size: containsFilter(search) } } } },
+    ];
+
+    if (saleNumber !== undefined) {
+      where.OR.push({ saleNumber });
+    }
+
+    if (Object.values(PaymentMethod).includes(search as PaymentMethod)) {
+      where.OR.push({ paymentMethod: search as PaymentMethod });
+    }
+
+    if (Object.values(CustomerType).includes(search as CustomerType)) {
+      where.OR.push({ customerType: search as CustomerType });
+    }
+  }
+
+  return where;
+}
+
+function returnWhere(query: QueryParams | undefined) {
+  const search = queryText(query, "q");
+  const saleNumber = numericSearch(search);
+  const productId = queryText(query, "product");
+  const disposition = queryText(query, "disposition");
+  const recordedAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.SalesProductReturnWhereInput = {};
+
+  if (productId) {
+    where.productId = productId;
+  }
+
+  if (
+    disposition &&
+    Object.values(SalesReturnDisposition).includes(
+      disposition as SalesReturnDisposition,
+    )
+  ) {
+    where.disposition = disposition as SalesReturnDisposition;
+  }
+
+  if (recordedAt) {
+    where.recordedAt = recordedAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { reason: containsFilter(search) },
+      { product: { name: containsFilter(search) } },
+      { product: { size: containsFilter(search) } },
+      { createdBy: { name: containsFilter(search) } },
+      { createdBy: { email: containsFilter(search) } },
+    ];
+
+    if (saleNumber !== undefined) {
+      where.OR.push({
+        saleItem: {
+          sale: {
+            saleNumber,
+          },
+        },
+      });
+      where.OR.push({ batch: { batchNumber: saleNumber } });
+    }
+
+    if (
+      Object.values(SalesReturnDisposition).includes(
+        search as SalesReturnDisposition,
+      )
+    ) {
+      where.OR.push({ disposition: search as SalesReturnDisposition });
+    }
+  }
+
+  return where;
+}
+
 @Injectable()
 export class SalesService {
+  private readonly logger = new Logger(SalesService.name);
+
   constructor(
     @Inject(PrismaService)
     private readonly prisma: PrismaService,
@@ -144,12 +291,10 @@ export class SalesService {
     );
 
     return retailers.map((retailer) => {
-      const creditLimit = decimalToNumber(retailer.creditLimit);
       const outstandingBalance = balanceByRetailer.get(retailer.id) ?? 0;
 
       return serializeRetailer(retailer, {
         outstandingBalance,
-        availableCredit: Math.max(0, creditLimit - outstandingBalance),
       });
     });
   }
@@ -177,9 +322,7 @@ export class SalesService {
         phone: parsed.data.phone,
         email: parsed.data.email,
         address: parsed.data.address,
-        creditLimit: new Prisma.Decimal(
-          roundMoney(parsed.data.creditLimit).toFixed(2),
-        ),
+        creditLimit: new Prisma.Decimal(0),
         notes: parsed.data.notes,
         createdById: actor.id,
       },
@@ -193,7 +336,6 @@ export class SalesService {
       entityId: retailer.id,
       metadata: {
         retailerName: retailer.name,
-        creditLimit: retailer.creditLimit.toString(),
       },
     });
 
@@ -213,7 +355,7 @@ export class SalesService {
 
     const target = await this.prisma.retailer.findUnique({
       where: { id },
-      select: { id: true, name: true },
+      select: retailerSelect,
     });
 
     if (!target) {
@@ -231,13 +373,6 @@ export class SalesService {
       }
     }
 
-    if (
-      parsed.data.creditLimit !== undefined &&
-      parsed.data.creditLimit <= 0
-    ) {
-      throw new BadRequestException("Credit limit must be greater than zero.");
-    }
-
     const retailer = await this.prisma.retailer.update({
       where: { id },
       data: {
@@ -246,10 +381,6 @@ export class SalesService {
         phone: parsed.data.phone,
         email: parsed.data.email,
         address: parsed.data.address,
-        creditLimit:
-          parsed.data.creditLimit === undefined
-            ? undefined
-            : new Prisma.Decimal(roundMoney(parsed.data.creditLimit).toFixed(2)),
         notes: parsed.data.notes,
         isActive: parsed.data.isActive,
       },
@@ -263,12 +394,286 @@ export class SalesService {
       entityId: retailer.id,
       metadata: {
         retailerName: retailer.name,
-        creditLimit: retailer.creditLimit.toString(),
         isActive: retailer.isActive,
+        before: {
+          name: target.name,
+          contactPerson: target.contactPerson,
+          phone: target.phone,
+          email: target.email,
+          address: target.address,
+          notes: target.notes,
+          isActive: target.isActive,
+        },
+        after: {
+          name: retailer.name,
+          contactPerson: retailer.contactPerson,
+          phone: retailer.phone,
+          email: retailer.email,
+          address: retailer.address,
+          notes: retailer.notes,
+          isActive: retailer.isActive,
+        },
       },
     });
 
     return serializeRetailer(retailer);
+  }
+
+  async createRetailerOrderApproval(
+    retailerId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = createRetailerOrderApprovalSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const retailer = await this.prisma.retailer.findUnique({
+      where: { id: retailerId },
+      select: { id: true, name: true, isActive: true },
+    });
+
+    if (!retailer) {
+      throw new NotFoundException("Retailer not found.");
+    }
+
+    if (!retailer.isActive) {
+      throw new BadRequestException("That retailer account is inactive.");
+    }
+
+    const approval = await this.prisma.retailerOrderApproval.create({
+      data: {
+        retailerId: retailer.id,
+        approvedAmount: new Prisma.Decimal(
+          roundMoney(parsed.data.approvedAmount).toFixed(2),
+        ),
+        status: RetailerOrderApprovalStatus.APPROVED,
+        reason: parsed.data.reason,
+        expiresAt: parsed.data.expiresAt,
+        reviewedAt: new Date(),
+        approvedById: actor.id,
+      },
+      select: {
+        id: true,
+        approvedAmount: true,
+        status: true,
+        reason: true,
+        expiresAt: true,
+        usedAt: true,
+        createdAt: true,
+        reviewedAt: true,
+        requestedBy: { select: { id: true, name: true, email: true } },
+        approvedBy: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_RETAILER_ORDER_APPROVAL_CREATED",
+      entityType: "RetailerOrderApproval",
+      entityId: approval.id,
+      metadata: {
+        retailerId: retailer.id,
+        retailerName: retailer.name,
+        approvedAmount: approval.approvedAmount.toString(),
+        expiresAt: approval.expiresAt?.toISOString() ?? null,
+      },
+    });
+
+    return {
+      id: approval.id,
+      approvedAmount: approval.approvedAmount.toString(),
+      status: approval.status,
+      reason: approval.reason,
+      expiresAt: approval.expiresAt?.toISOString() ?? null,
+      usedAt: approval.usedAt?.toISOString() ?? null,
+      createdAt: approval.createdAt.toISOString(),
+      reviewedAt: approval.reviewedAt?.toISOString() ?? null,
+      requestedBy: approval.requestedBy,
+      approvedBy: approval.approvedBy,
+    };
+  }
+
+  async requestRetailerOrderApproval(
+    retailerId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = requestRetailerOrderApprovalSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const retailer = await this.prisma.retailer.findUnique({
+      where: { id: retailerId },
+      select: { id: true, name: true, isActive: true },
+    });
+
+    if (!retailer) {
+      throw new NotFoundException("Retailer not found.");
+    }
+
+    if (!retailer.isActive) {
+      throw new BadRequestException("That retailer account is inactive.");
+    }
+
+    const balance = await this.prisma.sale.aggregate({
+      where: {
+        retailerId: retailer.id,
+        balanceDue: { gt: 0 },
+      },
+      _sum: { balanceDue: true },
+    });
+    const outstandingBalance = decimalToNumber(balance._sum.balanceDue ?? 0);
+
+    if (outstandingBalance <= 0) {
+      throw new BadRequestException(
+        "This retailer has no uncleared credit, so Admin approval is not required.",
+      );
+    }
+
+    const approval = await this.prisma.retailerOrderApproval.create({
+      data: {
+        retailerId: retailer.id,
+        approvedAmount: new Prisma.Decimal(
+          roundMoney(parsed.data.requestedAmount).toFixed(2),
+        ),
+        status: RetailerOrderApprovalStatus.PENDING,
+        reason: parsed.data.reason,
+        requestedById: actor.id,
+      },
+      select: {
+        id: true,
+        approvedAmount: true,
+        status: true,
+        reason: true,
+        expiresAt: true,
+        usedAt: true,
+        createdAt: true,
+        reviewedAt: true,
+        requestedBy: { select: { id: true, name: true, email: true } },
+        approvedBy: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "SALES_RETAILER_ORDER_APPROVAL_REQUESTED",
+      entityType: "RetailerOrderApproval",
+      entityId: approval.id,
+      metadata: {
+        retailerId: retailer.id,
+        retailerName: retailer.name,
+        requestedAmount: approval.approvedAmount.toString(),
+        outstandingBalance: outstandingBalance.toFixed(2),
+      },
+    });
+
+    return {
+      id: approval.id,
+      approvedAmount: approval.approvedAmount.toString(),
+      status: approval.status,
+      reason: approval.reason,
+      expiresAt: approval.expiresAt?.toISOString() ?? null,
+      usedAt: approval.usedAt?.toISOString() ?? null,
+      createdAt: approval.createdAt.toISOString(),
+      reviewedAt: approval.reviewedAt?.toISOString() ?? null,
+      requestedBy: approval.requestedBy,
+      approvedBy: approval.approvedBy,
+    };
+  }
+
+  async updateRetailerOrderApproval(
+    retailerId: string,
+    approvalId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = updateRetailerOrderApprovalSchema.safeParse(input);
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const existing = await this.prisma.retailerOrderApproval.findUnique({
+      where: { id: approvalId },
+      select: { id: true, retailerId: true, status: true, usedAt: true },
+    });
+
+    if (!existing || existing.retailerId !== retailerId) {
+      throw new NotFoundException("Retailer order approval not found.");
+    }
+
+    if (existing.status === RetailerOrderApprovalStatus.USED || existing.usedAt) {
+      throw new BadRequestException("Used retailer approvals cannot be changed.");
+    }
+
+    // Conditional update: a checkout can consume this approval between the
+    // read above and here, and a review must never overwrite a USED approval.
+    const updated = await this.prisma.retailerOrderApproval.updateMany({
+      where: {
+        id: approvalId,
+        status: { not: RetailerOrderApprovalStatus.USED },
+        usedAt: null,
+      },
+      data: {
+        status: parsed.data.status,
+        ...(parsed.data.status === RetailerOrderApprovalStatus.APPROVED
+          ? { approvedById: actor.id, reviewedAt: new Date() }
+          : {}),
+        ...(parsed.data.status === RetailerOrderApprovalStatus.REVOKED
+          ? { reviewedAt: new Date() }
+          : {}),
+      },
+    });
+
+    if (updated.count === 0) {
+      throw new BadRequestException("Used retailer approvals cannot be changed.");
+    }
+
+    const approval = await this.prisma.retailerOrderApproval.findUniqueOrThrow({
+      where: { id: approvalId },
+      select: {
+        id: true,
+        approvedAmount: true,
+        status: true,
+        reason: true,
+        expiresAt: true,
+        usedAt: true,
+        createdAt: true,
+        reviewedAt: true,
+        requestedBy: { select: { id: true, name: true, email: true } },
+        approvedBy: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_RETAILER_ORDER_APPROVAL_UPDATED",
+      entityType: "RetailerOrderApproval",
+      entityId: approval.id,
+      metadata: {
+        retailerId,
+        beforeStatus: existing.status,
+        afterStatus: approval.status,
+      },
+    });
+
+    return {
+      id: approval.id,
+      approvedAmount: approval.approvedAmount.toString(),
+      status: approval.status,
+      reason: approval.reason,
+      expiresAt: approval.expiresAt?.toISOString() ?? null,
+      usedAt: approval.usedAt?.toISOString() ?? null,
+      createdAt: approval.createdAt.toISOString(),
+      reviewedAt: approval.reviewedAt?.toISOString() ?? null,
+      requestedBy: approval.requestedBy,
+      approvedBy: approval.approvedBy,
+    };
   }
 
   async listRetailerPayments(retailerId?: string) {
@@ -445,23 +850,105 @@ export class SalesService {
       data: {
         name: parsed.data.name,
         displayToken: generateDisplayToken(),
+        offlineEnabled: parsed.data.offlineEnabled ?? false,
         createdById: actor.id,
       },
       include: posTerminalInclude,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_POS_TERMINAL_CREATED",
+      entityType: "PosTerminal",
+      entityId: terminal.id,
+      metadata: {
+        name: terminal.name,
+        offlineEnabled: terminal.offlineEnabled,
+      },
+    });
+
+    return serializePosTerminal(terminal);
+  }
+
+  async listPosTerminals() {
+    const terminals = await this.prisma.posTerminal.findMany({
+      include: posTerminalInclude,
+      orderBy: [{ createdAt: "desc" }],
+    });
+
+    return terminals.map(serializePosTerminal);
+  }
+
+  async updatePosTerminal(
+    id: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = updatePosTerminalSchema.safeParse(input ?? {});
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const existing = await this.prisma.posTerminal.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("POS terminal not found.");
+    }
+
+    const terminal = await this.prisma.posTerminal.update({
+      where: { id },
+      data: {
+        name: parsed.data.name,
+        isActive: parsed.data.isActive,
+        offlineEnabled: parsed.data.offlineEnabled,
+        // Rotation invalidates a leaked customer-display URL without
+        // recreating the terminal.
+        ...(parsed.data.rotateDisplayToken
+          ? { displayToken: generateDisplayToken() }
+          : {}),
+      },
+      include: posTerminalInclude,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_POS_TERMINAL_UPDATED",
+      entityType: "PosTerminal",
+      entityId: terminal.id,
+      metadata: {
+        name: terminal.name,
+        isActive: terminal.isActive,
+        offlineEnabled: terminal.offlineEnabled,
+        displayTokenRotated: Boolean(parsed.data.rotateDisplayToken),
+      },
     });
 
     return serializePosTerminal(terminal);
   }
 
   async getPosTerminal(id: string) {
-    const terminal = await this.prisma.posTerminal.findUnique({
+    const existing = await this.prisma.posTerminal.findUnique({
       where: { id },
       include: posTerminalInclude,
     });
 
-    if (!terminal) {
+    if (!existing) {
       throw new NotFoundException("POS terminal not found.");
     }
+
+    if (!existing.isActive) {
+      throw new BadRequestException("This POS terminal has been deactivated.");
+    }
+
+    const terminal = await this.prisma.posTerminal.update({
+      where: { id },
+      data: { lastSeenAt: new Date() },
+      include: posTerminalInclude,
+    });
 
     return serializePosTerminal(terminal);
   }
@@ -500,11 +987,15 @@ export class SalesService {
     if (parsed.data.terminalId) {
       const terminal = await this.prisma.posTerminal.findUnique({
         where: { id: parsed.data.terminalId },
-        select: { id: true, displayToken: true },
+        select: { id: true, displayToken: true, isActive: true },
       });
 
       if (!terminal) {
         throw new NotFoundException("POS terminal not found.");
+      }
+
+      if (!terminal.isActive) {
+        throw new BadRequestException("This POS terminal has been deactivated.");
       }
 
       terminalDisplayToken = terminal.displayToken;
@@ -516,6 +1007,10 @@ export class SalesService {
         terminalId: parsed.data.terminalId,
         customerType: parsed.data.customerType,
         retailerId: retailer?.id ?? null,
+        retailerApprovalId:
+          parsed.data.customerType === CustomerType.RETAILER
+            ? parsed.data.retailerApprovalId ?? null
+            : null,
         customerName: retailer?.name ?? parsed.data.customerName,
         paymentMethod: retailer ? PaymentMethod.CREDIT : PaymentMethod.CASH,
         createdById: actor.id,
@@ -576,6 +1071,13 @@ export class SalesService {
           ? existing.retailerId
           : parsed.data.retailerId
         : null;
+    const nextRetailerApprovalId =
+      nextCustomerType === CustomerType.RETAILER
+        ? parsed.data.retailerApprovalId === undefined
+          ? existing.retailerApprovalId
+          : parsed.data.retailerApprovalId
+        : null;
+    const nextPaymentMethod = parsed.data.paymentMethod ?? existing.paymentMethod;
     let retailer:
       | { id: string; name: string; isActive: boolean }
       | null = null;
@@ -604,19 +1106,14 @@ export class SalesService {
       data: {
         customerType: nextCustomerType,
         retailerId: nextRetailerId,
+        retailerApprovalId: nextRetailerApprovalId,
         customerName:
           nextCustomerType === CustomerType.RETAILER
             ? retailer?.name
             : parsed.data.customerName,
-        paymentMethod:
-          nextCustomerType === CustomerType.RETAILER
-            ? PaymentMethod.CREDIT
-            : parsed.data.paymentMethod,
+        paymentMethod: nextPaymentMethod,
         discount: parsed.data.discount,
-        amountPaid:
-          nextCustomerType === CustomerType.RETAILER
-            ? null
-            : parsed.data.amountPaid,
+        amountPaid: parsed.data.amountPaid,
         notes: parsed.data.notes,
       },
       include: posSessionInclude,
@@ -731,16 +1228,11 @@ export class SalesService {
     const parsed = createSaleSchema.safeParse({
       customerType: session.customerType,
       retailerId: session.retailerId ?? undefined,
-      paymentMethod:
-        session.customerType === CustomerType.RETAILER
-          ? PaymentMethod.CREDIT
-          : session.paymentMethod,
+      retailerApprovalId: session.retailerApprovalId ?? undefined,
+      paymentMethod: session.paymentMethod,
       customerName: session.customerName ?? undefined,
       discount: session.discount.toString(),
-      amountPaid:
-        session.customerType === CustomerType.RETAILER
-          ? undefined
-          : session.amountPaid?.toString(),
+      amountPaid: session.amountPaid?.toString(),
       notes: session.notes
         ? `POS checkout. ${session.notes}`
         : `POS checkout from session ${session.id}.`,
@@ -758,38 +1250,47 @@ export class SalesService {
     // Sale creation and session completion happen in one transaction: the
     // conditional status flip claims the session first, so concurrent
     // checkouts cannot both create a sale (and deduct stock twice).
-    const { sale, updated } = await this.prisma.$transaction(
-      async (tx) => {
-        const claimed = await tx.posSession.updateMany({
-          where: { id: session.id, status: PosSessionStatus.ACTIVE },
-          data: {
-            status: PosSessionStatus.COMPLETED,
-            completedAt: new Date(),
-          },
-        });
+    const { sale, updated } = await this.prisma
+      .$transaction(
+        async (tx) => {
+          const claimed = await tx.posSession.updateMany({
+            where: { id: session.id, status: PosSessionStatus.ACTIVE },
+            data: {
+              status: PosSessionStatus.COMPLETED,
+              completedAt: new Date(),
+            },
+          });
 
-        if (claimed.count === 0) {
-          throw new BadRequestException(
-            "This POS session has already been checked out or cancelled.",
+          if (claimed.count === 0) {
+            throw new BadRequestException(
+              "This POS session has already been checked out or cancelled.",
+            );
+          }
+
+          const createdSale = await this.createSaleInTransaction(
+            tx,
+            parsed.data,
+            actor,
           );
-        }
 
-        const createdSale = await this.createSaleInTransaction(
-          tx,
-          parsed.data,
-          actor,
+          const updatedSession = await tx.posSession.update({
+            where: { id: session.id },
+            data: { completedSaleId: createdSale.id },
+            include: posSessionInclude,
+          });
+
+          return { sale: createdSale, updated: updatedSession };
+        },
+        { timeout: 15000, maxWait: 15000 },
+      )
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `POS checkout failed session=${session.id} actor=${actor.id} reason=${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
         );
-
-        const updatedSession = await tx.posSession.update({
-          where: { id: session.id },
-          data: { completedSaleId: createdSale.id },
-          include: posSessionInclude,
-        });
-
-        return { sale: createdSale, updated: updatedSession };
-      },
-      { timeout: 15000, maxWait: 15000 },
-    );
+        throw error;
+      });
 
     await this.auditSaleRecorded(sale, actor);
 
@@ -836,7 +1337,12 @@ export class SalesService {
       include: posSessionInclude,
     });
 
-    if (!session) {
+    // Expired sessions answer exactly like unknown tokens so a leaked URL
+    // reveals nothing once the session lapses.
+    if (
+      !session ||
+      (session.expiresAt && session.expiresAt.getTime() <= Date.now())
+    ) {
       throw new NotFoundException("POS display session not found.");
     }
 
@@ -853,23 +1359,72 @@ export class SalesService {
       throw new NotFoundException("POS terminal display not found.");
     }
 
+    if (!terminal.isActive) {
+      throw new NotFoundException("POS terminal display not found.");
+    }
+
     return serializePosTerminal(terminal);
   }
 
-  async listSales() {
+  async listSales(query?: QueryParams) {
+    const where = saleWhere(query);
+    const orderBy = { soldAt: "desc" } as const;
+
+    if (hasPaginatedRequest(query)) {
+      const { page, pageSize, skip, take } = parsePagination(query);
+      const [total, sales] = await this.prisma.$transaction([
+        this.prisma.sale.count({ where }),
+        this.prisma.sale.findMany({
+          where,
+          include: saleInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+
+      return paginatedResult(sales.map(serializeSale), total, page, pageSize);
+    }
+
     const sales = await this.prisma.sale.findMany({
+      where,
       include: saleInclude,
-      orderBy: { soldAt: "desc" },
+      orderBy,
       take: 200,
     });
 
     return sales.map(serializeSale);
   }
 
-  async listReturns() {
+  async listReturns(query?: QueryParams) {
+    const where = returnWhere(query);
+    const orderBy = { recordedAt: "desc" } as const;
+
+    if (hasPaginatedRequest(query)) {
+      const { page, pageSize, skip, take } = parsePagination(query);
+      const [total, returns] = await this.prisma.$transaction([
+        this.prisma.salesProductReturn.count({ where }),
+        this.prisma.salesProductReturn.findMany({
+          where,
+          include: returnInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+
+      return paginatedResult(
+        returns.map(serializeReturn),
+        total,
+        page,
+        pageSize,
+      );
+    }
+
     const returns = await this.prisma.salesProductReturn.findMany({
+      where,
       include: returnInclude,
-      orderBy: { recordedAt: "desc" },
+      orderBy,
       take: 200,
     });
 
@@ -949,8 +1504,9 @@ export class SalesService {
     const totalAmount = roundMoney(subtotal - discount);
     const customerType = data.customerType ?? CustomerType.INDIVIDUAL;
     let retailer:
-      | { id: string; name: string; creditLimit: Prisma.Decimal; isActive: boolean }
+      | { id: string; name: string; isActive: boolean }
       | null = null;
+    let retailerApprovalId: string | null = null;
     let paymentMethod = data.paymentMethod;
     let customerName = data.customerName;
     let amountPaid = roundMoney(
@@ -972,7 +1528,6 @@ export class SalesService {
         select: {
           id: true,
           name: true,
-          creditLimit: true,
           isActive: true,
         },
       });
@@ -985,9 +1540,7 @@ export class SalesService {
         throw new BadRequestException("That retailer account is inactive.");
       }
 
-      paymentMethod = PaymentMethod.CREDIT;
       customerName = retailer.name;
-      amountPaid = 0;
     }
 
     if (amountPaid > totalAmount) {
@@ -997,7 +1550,7 @@ export class SalesService {
     const balanceDue = roundMoney(totalAmount - amountPaid);
     const soldAt = data.soldAt ?? new Date();
 
-    if (retailer) {
+    if (retailer && paymentMethod === PaymentMethod.CREDIT && balanceDue > 0) {
       const currentBalance = await tx.sale.aggregate({
         where: {
           retailerId: retailer.id,
@@ -1008,20 +1561,61 @@ export class SalesService {
       const outstandingBalance = decimalToNumber(
         currentBalance._sum.balanceDue ?? 0,
       );
-      const availableCredit = roundMoney(
-        decimalToNumber(retailer.creditLimit) - outstandingBalance,
-      );
 
-      if (balanceDue > availableCredit) {
-        throw new BadRequestException(
-          `Retailer credit limit exceeded. Available credit is ₦${Math.max(
-            0,
-            availableCredit,
-          ).toLocaleString("en", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })}.`,
+      if (outstandingBalance > 0) {
+        if (!data.retailerApprovalId) {
+          throw new BadRequestException(
+            "This retailer has uncleared credit. Admin approval is required before another credit sale can be recorded.",
+          );
+        }
+
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "RetailerOrderApproval" WHERE "id" = ${data.retailerApprovalId} FOR UPDATE`,
         );
+
+        const approval = await tx.retailerOrderApproval.findUnique({
+          where: { id: data.retailerApprovalId },
+          select: {
+            id: true,
+            retailerId: true,
+            approvedAmount: true,
+            status: true,
+            expiresAt: true,
+            usedAt: true,
+          },
+        });
+
+        if (!approval || approval.retailerId !== retailer.id) {
+          throw new BadRequestException(
+            "Select a valid Admin approval for this retailer.",
+          );
+        }
+
+        if (
+          approval.status !== RetailerOrderApprovalStatus.APPROVED ||
+          approval.usedAt
+        ) {
+          throw new BadRequestException(
+            "This retailer approval has already been used or revoked.",
+          );
+        }
+
+        if (approval.expiresAt && approval.expiresAt.getTime() <= Date.now()) {
+          throw new BadRequestException("This retailer approval has expired.");
+        }
+
+        if (decimalToNumber(approval.approvedAmount) < balanceDue) {
+          throw new BadRequestException(
+            `Admin approval covers ₦${decimalToNumber(
+              approval.approvedAmount,
+            ).toLocaleString("en", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}, which is below this sale total.`,
+          );
+        }
+
+        retailerApprovalId = approval.id;
       }
     }
 
@@ -1029,6 +1623,7 @@ export class SalesService {
       data: {
         customerType,
         retailerId: retailer?.id ?? null,
+        retailerApprovalId,
         paymentMethod,
         customerName,
         soldAt,
@@ -1041,6 +1636,16 @@ export class SalesService {
         createdById: actor.id,
       },
     });
+
+    if (retailerApprovalId) {
+      await tx.retailerOrderApproval.update({
+        where: { id: retailerApprovalId },
+        data: {
+          status: RetailerOrderApprovalStatus.USED,
+          usedAt: new Date(),
+        },
+      });
+    }
 
     for (const item of items) {
       const lockedBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
@@ -1144,6 +1749,7 @@ export class SalesService {
         paymentMethod: sale.paymentMethod,
         customerType: sale.customerType,
         retailerId: sale.retailerId,
+        retailerApprovalId: sale.retailerApprovalId,
       },
     });
   }
@@ -1319,6 +1925,10 @@ export class SalesService {
       actorId: string;
     },
   ) {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "SaleItem" WHERE "id" = ${input.saleItemId} FOR UPDATE`,
+    );
+
     const saleItem = await tx.saleItem.findUnique({
       where: { id: input.saleItemId },
       include: {

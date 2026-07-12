@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import {
   CustomerType,
   FinishedProductStockMovementType,
@@ -28,6 +28,7 @@ function createSalesService(prisma: unknown, audit: unknown) {
 test("SalesService.recordReturn rejects customer returns above the returnable quantity", async () => {
   const { audit, records } = createAuditMock();
   const tx = {
+    $queryRaw: async () => [{ id: "sale-item-1" }],
     saleItem: {
       findUnique: async () => ({
         id: "sale-item-1",
@@ -333,7 +334,7 @@ test("SalesService.createSale records credit balances and deducts Sales stock FI
   assert.equal(result.balanceDue, "12000");
 });
 
-test("SalesService.createSale records retailer sales against available credit", async () => {
+test("SalesService.createSale consumes an Admin approval for repeat retailer credit", async () => {
   const soldAt = new Date("2026-07-10T12:10:00.000Z");
   const createdAt = new Date("2026-07-10T12:10:01.000Z");
   const retailer = {
@@ -365,6 +366,7 @@ test("SalesService.createSale records retailer sales against available credit", 
     },
   ];
   let saleCreateData: Record<string, unknown> | null = null;
+  let approvalUpdateData: Record<string, unknown> | null = null;
   const { audit, records } = createAuditMock();
   const tx = {
     product: {
@@ -391,6 +393,21 @@ test("SalesService.createSale records retailer sales against available credit", 
         saleNumber: 43,
         customerType: saleCreateData?.customerType,
         retailer,
+        retailerApprovalId: saleCreateData?.retailerApprovalId,
+        retailerApproval: {
+          id: "approval-1",
+          approvedAmount: "10000.00",
+          status: "USED",
+          reason: "Manager approved",
+          expiresAt: null,
+          usedAt: new Date("2026-07-10T12:10:02.000Z"),
+          createdAt,
+          approvedBy: {
+            id: actor.id,
+            name: actor.name,
+            email: actor.email,
+          },
+        },
         paymentMethod: saleCreateData?.paymentMethod,
         customerName: saleCreateData?.customerName,
         soldAt,
@@ -425,6 +442,19 @@ test("SalesService.createSale records retailer sales against available credit", 
       }),
     },
     $queryRaw: async () => batches.map((batch) => ({ id: batch.id })),
+    retailerOrderApproval: {
+      findUnique: async () => ({
+        id: "approval-1",
+        retailerId: retailer.id,
+        approvedAmount: "10000.00",
+        status: "APPROVED",
+        expiresAt: null,
+        usedAt: null,
+      }),
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        approvalUpdateData = data;
+      },
+    },
     salesProductBatch: {
       findMany: async () => batches,
       update: async () => undefined,
@@ -451,6 +481,7 @@ test("SalesService.createSale records retailer sales against available credit", 
     {
       customerType: CustomerType.RETAILER,
       retailerId: retailer.id,
+      retailerApprovalId: "approval-1",
       paymentMethod: PaymentMethod.CREDIT,
       soldAt: soldAt.toISOString(),
       items: [{ productId: product.id, quantity: "2", unitPrice: "3000" }],
@@ -460,17 +491,21 @@ test("SalesService.createSale records retailer sales against available credit", 
 
   assert.equal(saleCreateData?.customerType, CustomerType.RETAILER);
   assert.equal(saleCreateData?.retailerId, retailer.id);
+  assert.equal(saleCreateData?.retailerApprovalId, "approval-1");
   assert.equal(saleCreateData?.customerName, retailer.name);
   assert.equal(saleCreateData?.paymentMethod, PaymentMethod.CREDIT);
   assert.equal(saleCreateData?.amountPaid, 0);
   assert.equal(saleCreateData?.balanceDue, 6000);
   assert.equal(result.customerType, CustomerType.RETAILER);
   assert.equal(result.retailer?.name, retailer.name);
+  assert.equal(result.retailerApproval?.id, "approval-1");
   assert.equal(result.balanceDue, "6000");
+  assert.equal(approvalUpdateData?.status, "USED");
+  assert.ok(approvalUpdateData?.usedAt instanceof Date);
   assert.equal(records.length, 1);
 });
 
-test("SalesService.createSale rejects retailer sales above available credit", async () => {
+test("SalesService.createSale blocks repeat retailer credit without Admin approval", async () => {
   let saleCreated = false;
   const service = createSalesService(
     {
@@ -484,7 +519,6 @@ test("SalesService.createSale rejects retailer sales above available credit", as
             findUnique: async () => ({
               id: "retailer-1",
               name: "Amina Stores",
-              creditLimit: "500000.00",
               isActive: true,
             }),
           },
@@ -511,7 +545,7 @@ test("SalesService.createSale rejects retailer sales above available credit", as
       },
       actor,
     ),
-    /credit limit exceeded/i,
+    /admin approval is required/i,
   );
   assert.equal(saleCreated, false);
 });
@@ -766,6 +800,49 @@ test("SalesService.checkoutPosSession rejects already-claimed sessions before cr
   assert.equal(saleCreated, false);
 });
 
+test("SalesService.recordReturn locks the sale item before checking returnable quantity", async () => {
+  const calls: string[] = [];
+  const tx = {
+    $queryRaw: async () => {
+      calls.push("lock");
+      return [{ id: "sale-item-1" }];
+    },
+    saleItem: {
+      findUnique: async () => {
+        calls.push("read-sale-item");
+        return {
+          id: "sale-item-1",
+          productId: product.id,
+          product,
+          quantity: 1,
+          batchIssues: [],
+          returns: [],
+        };
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.recordReturn(
+      {
+        saleItemId: "sale-item-1",
+        disposition: SalesReturnDisposition.RETURN_TO_STOCK,
+        quantity: "2",
+      },
+      actor,
+    ),
+    /return at most/i,
+  );
+  assert.deepEqual(calls, ["lock", "read-sale-item"]);
+});
+
 test("SalesService.recordReturn returns customer items to their original sale batches", async () => {
   const now = new Date("2026-07-10T13:00:00.000Z");
   const batches = [
@@ -932,4 +1009,75 @@ test("SalesService.recordReturn returns customer items to their original sale ba
   assert.equal(result.length, 2);
   assert.equal(result[0]?.batch?.id, "batch-old");
   assert.equal(result[1]?.batch?.id, "batch-new");
+});
+
+test("SalesService.getPosDisplay hides expired display tokens", async () => {
+  const service = createSalesService(
+    {
+      posSession: {
+        findUnique: async () => ({
+          id: "session-1",
+          expiresAt: new Date(Date.now() - 1_000),
+        }),
+      },
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.getPosDisplay("expired-token"),
+    (error) =>
+      error instanceof NotFoundException &&
+      /display session not found/i.test(error.message),
+  );
+});
+
+test("SalesService.updatePosTerminal can rotate the display token", async () => {
+  const { audit, records } = createAuditMock();
+  const updates: Array<{ data: Record<string, unknown> }> = [];
+  const service = createSalesService(
+    {
+      posTerminal: {
+        findUnique: async () => ({ id: "terminal-1" }),
+        update: async ({ data }: { data: Record<string, unknown> }) => {
+          updates.push({ data });
+
+          return {
+            id: "terminal-1",
+            name: "Front counter",
+            displayToken: String(data.displayToken ?? "old-token"),
+            isActive: true,
+            offlineEnabled: false,
+            lastSeenAt: null,
+            lastSyncedAt: null,
+            createdAt: new Date("2026-07-12T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T09:00:00.000Z"),
+            currentSession: null,
+          };
+        },
+      },
+    },
+    audit,
+  );
+
+  const result = await service.updatePosTerminal(
+    "terminal-1",
+    { rotateDisplayToken: "true" },
+    actor,
+  );
+  const rotatedToken = updates[0]?.data.displayToken;
+
+  assert.equal(typeof rotatedToken, "string");
+  assert.notEqual(rotatedToken, "old-token");
+  assert.equal(result.displayToken, rotatedToken);
+  assert.equal(records.length, 1);
+  assert.deepEqual(
+    (records[0] as { metadata: Record<string, unknown> }).metadata,
+    {
+      name: "Front counter",
+      isActive: true,
+      offlineEnabled: false,
+      displayTokenRotated: true,
+    },
+  );
 });

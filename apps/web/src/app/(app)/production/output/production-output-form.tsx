@@ -91,62 +91,6 @@ export function ProductionOutputForm({
     }));
   }, [quantityProduced, selectedProduct]);
 
-  // Lower-bound output implied by the recipe and the actual quantities typed
-  // in: the limiting ingredient determines how many recipe batches the
-  // materials could have produced.
-  const expectedOutput = useMemo(() => {
-    const recipe = selectedProduct?.recipe;
-
-    if (!recipe || expectedUsages.length === 0) {
-      return null;
-    }
-
-    const yieldQuantity = Number(recipe.yieldQuantity);
-
-    if (!Number.isFinite(yieldQuantity) || yieldQuantity <= 0) {
-      return null;
-    }
-
-    let limitingBatches: number | null = null;
-
-    for (const item of recipe.items) {
-      const perBatch = Number(item.quantity);
-
-      if (!Number.isFinite(perBatch) || perBatch <= 0) {
-        continue;
-      }
-
-      const fallback = expectedUsages.find(
-        (usage) => usage.rawMaterial.id === item.rawMaterial.id,
-      );
-      const raw = usageOverrides[item.rawMaterial.id];
-      const used =
-        raw !== undefined && raw.trim() !== ""
-          ? Number(raw)
-          : (fallback?.quantity ?? 0);
-
-      if (!Number.isFinite(used)) {
-        continue;
-      }
-
-      const batches = used / perBatch;
-      limitingBatches =
-        limitingBatches === null ? batches : Math.min(limitingBatches, batches);
-    }
-
-    if (limitingBatches === null) {
-      return null;
-    }
-
-    return Math.floor(limitingBatches * yieldQuantity + 1e-9);
-  }, [expectedUsages, selectedProduct, usageOverrides]);
-
-  const produced = Number(quantityProduced);
-  const shortfall =
-    expectedOutput !== null && Number.isFinite(produced) && produced > 0
-      ? expectedOutput - produced
-      : 0;
-
   function resetUsages() {
     setUsageOverrides({});
   }
@@ -317,33 +261,6 @@ export function ProductionOutputForm({
             </tbody>
           </table>
         </div>
-      ) : null}
-
-      {expectedOutput !== null ? (
-        shortfall > 0 ? (
-          <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
-            <p className="font-semibold">
-              Production shortfall: {shortfall.toLocaleString("en")}{" "}
-              {selectedProduct?.unit.abbreviation} below expected.
-            </p>
-            <p className="mt-1">
-              The materials used should produce at least{" "}
-              {expectedOutput.toLocaleString("en")}{" "}
-              {selectedProduct?.unit.abbreviation}, but only{" "}
-              {produced.toLocaleString("en")} recorded. Management will see this
-              run flagged.
-            </p>
-          </div>
-        ) : (
-          <p className="rounded-md border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-600">
-            Expected output from materials used: at least{" "}
-            <span className="font-semibold text-stone-900">
-              {expectedOutput.toLocaleString("en")}{" "}
-              {selectedProduct?.unit.abbreviation}
-            </span>
-            .
-          </p>
-        )
       ) : null}
 
       <TextareaField label="Notes" name="notes" placeholder="Optional" />

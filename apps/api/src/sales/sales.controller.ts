@@ -14,6 +14,8 @@ import type { Request } from "express";
 
 import { SalesGuard } from "../auth/sales.guard";
 import { getRequestUser } from "../auth/auth.types";
+import type { QueryParams } from "../common/pagination";
+import { DayCloseService } from "./day-close.service";
 import { SalesService } from "./sales.service";
 
 @UseGuards(SalesGuard)
@@ -22,7 +24,19 @@ export class SalesController {
   constructor(
     @Inject(SalesService)
     private readonly sales: SalesService,
+    @Inject(DayCloseService)
+    private readonly dayClose: DayCloseService,
   ) {}
+
+  @Get("day-close")
+  dayClosePreview(@Query("date") date?: string) {
+    return this.dayClose.preview(date);
+  }
+
+  @Post("day-close")
+  submitDayClose(@Body() body: unknown, @Req() request: Request) {
+    return this.dayClose.submit(body, getRequestUser(request));
+  }
 
   @Get("inventory")
   inventory() {
@@ -53,9 +67,22 @@ export class SalesController {
     return this.sales.recordRetailerPayment(id, body, getRequestUser(request));
   }
 
+  @Post("retailers/:id/order-approval-requests")
+  requestRetailerOrderApproval(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.requestRetailerOrderApproval(
+      id,
+      body,
+      getRequestUser(request),
+    );
+  }
+
   @Get("sales")
-  salesList() {
-    return this.sales.listSales();
+  salesList(@Query() query: QueryParams) {
+    return this.sales.listSales(query);
   }
 
   @Post("sales")
@@ -69,8 +96,8 @@ export class SalesController {
   }
 
   @Get("returns")
-  returnsList() {
-    return this.sales.listReturns();
+  returnsList(@Query() query: QueryParams) {
+    return this.sales.listReturns(query);
   }
 
   @Post("returns")
@@ -81,11 +108,6 @@ export class SalesController {
   @Post("pos/sessions")
   createPosSession(@Body() body: unknown, @Req() request: Request) {
     return this.sales.createPosSession(body, getRequestUser(request));
-  }
-
-  @Post("pos/terminals")
-  createPosTerminal(@Body() body: unknown, @Req() request: Request) {
-    return this.sales.createPosTerminal(body, getRequestUser(request));
   }
 
   @Get("pos/terminals/:id")
@@ -124,6 +146,24 @@ export class SalesController {
   @Post("pos/sessions/:id/cancel")
   cancelPosSession(@Param("id") id: string, @Req() request: Request) {
     return this.sales.cancelPosSession(id, getRequestUser(request));
+  }
+
+  @Get("pos/retailers")
+  posRetailers() {
+    return this.sales.listRetailers();
+  }
+
+  @Post("pos/retailers/:id/order-approval-requests")
+  requestPosRetailerOrderApproval(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.requestRetailerOrderApproval(
+      id,
+      body,
+      getRequestUser(request),
+    );
   }
 }
 

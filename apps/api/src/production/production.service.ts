@@ -15,6 +15,15 @@ import { z } from "zod";
 
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
+import {
+  containsFilter,
+  dateRangeFilter,
+  hasPaginatedRequest,
+  paginatedResult,
+  parsePagination,
+  queryText,
+  type QueryParams,
+} from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
 
 const optionalText = (max = 300) =>
@@ -57,7 +66,7 @@ const optionalNonnegativeCount = z.preprocess(
 );
 
 const createRequestSchema = z.object({
-  rawMaterialId: z.string().trim().min(1),
+  productId: z.string().trim().min(1),
   requestedQuantity: quantitySchema,
   neededBy: optionalDate,
   notes: optionalText(500),
@@ -153,6 +162,11 @@ const userSelect = {
 
 const requestInclude = {
   rawMaterial: { select: rawMaterialSelect },
+  productionRequest: {
+    include: {
+      product: { select: productSelect },
+    },
+  },
   requestedBy: { select: userSelect },
   issuedBy: { select: userSelect },
   issues: {
@@ -167,6 +181,15 @@ const requestInclude = {
     orderBy: { createdAt: "asc" },
   },
 } satisfies Prisma.MaterialRequestInclude;
+
+const productionRequestInclude = {
+  product: { select: productSelect },
+  requestedBy: { select: userSelect },
+  materialRequests: {
+    include: requestInclude,
+    orderBy: { rawMaterial: { name: "asc" } },
+  },
+} satisfies Prisma.ProductionRequestInclude;
 
 const runInclude = {
   product: { select: productSelect },
@@ -230,6 +253,10 @@ type MaterialRequestWithIncludes = Prisma.MaterialRequestGetPayload<{
   include: typeof requestInclude;
 }>;
 
+type ProductionRequestWithIncludes = Prisma.ProductionRequestGetPayload<{
+  include: typeof productionRequestInclude;
+}>;
+
 type ProductOption = Prisma.ProductGetPayload<{
   include: typeof productOptionInclude;
 }>;
@@ -246,12 +273,22 @@ type ProductionInventoryMaterial = Prisma.RawMaterialGetPayload<{
   include: typeof productionInventoryInclude;
 }>;
 
-function decimalToNumber(value: Prisma.Decimal | number | string) {
-  return Number(value.toString());
+function decimalToNumber(
+  value: Prisma.Decimal | number | string | null | undefined,
+) {
+  return value === null || value === undefined ? 0 : Number(value.toString());
 }
 
 function roundQuantity(value: number) {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function roundUnitCost(value: number) {
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
 function wholeQuantity(value: number) {
@@ -266,6 +303,101 @@ function toBatchDate(value: Date) {
   return new Date(
     Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()),
   );
+}
+
+function materialRequestWhere(
+  actor: AuthenticatedUser,
+  query: QueryParams | undefined,
+) {
+  const search = queryText(query, "q");
+  const materialId = queryText(query, "material");
+  const status = queryText(query, "status");
+  const createdAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.MaterialRequestWhereInput =
+    actor.role === "ADMIN" ? {} : { requestedById: actor.id };
+
+  if (materialId) {
+    where.rawMaterialId = materialId;
+  }
+
+  if (
+    status &&
+    Object.values(MaterialRequestStatus).includes(status as MaterialRequestStatus)
+  ) {
+    where.status = status as MaterialRequestStatus;
+  }
+
+  if (createdAt) {
+    where.createdAt = createdAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { rawMaterial: { name: containsFilter(search) } },
+      { rawMaterial: { baseUnit: { abbreviation: containsFilter(search) } } },
+      { notes: containsFilter(search) },
+      { responseNotes: containsFilter(search) },
+      { requestedBy: { name: containsFilter(search) } },
+      { requestedBy: { email: containsFilter(search) } },
+    ];
+
+    if (Object.values(MaterialRequestStatus).includes(search as MaterialRequestStatus)) {
+      where.OR.push({ status: search as MaterialRequestStatus });
+    }
+  }
+
+  return where;
+}
+
+function productionRequestWhere(
+  actor: AuthenticatedUser,
+  query: QueryParams | undefined,
+) {
+  const search = queryText(query, "q");
+  const productId = queryText(query, "product");
+  const status = queryText(query, "status");
+  const createdAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.ProductionRequestWhereInput =
+    actor.role === "ADMIN" ? {} : { requestedById: actor.id };
+
+  if (productId) {
+    where.productId = productId;
+  }
+
+  if (
+    status &&
+    Object.values(MaterialRequestStatus).includes(status as MaterialRequestStatus)
+  ) {
+    where.status = status as MaterialRequestStatus;
+  }
+
+  if (createdAt) {
+    where.createdAt = createdAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { product: { name: containsFilter(search) } },
+      { product: { size: containsFilter(search) } },
+      { product: { unit: { abbreviation: containsFilter(search) } } },
+      { notes: containsFilter(search) },
+      { responseNotes: containsFilter(search) },
+      { requestedBy: { name: containsFilter(search) } },
+      { requestedBy: { email: containsFilter(search) } },
+    ];
+
+    if (Object.values(MaterialRequestStatus).includes(search as MaterialRequestStatus)) {
+      where.OR.push({ status: search as MaterialRequestStatus });
+    }
+  }
+
+  return where;
 }
 
 function serializeRequest(request: MaterialRequestWithIncludes) {
@@ -288,6 +420,14 @@ function serializeRequest(request: MaterialRequestWithIncludes) {
     fulfilledAt: request.fulfilledAt?.toISOString() ?? null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
+    productionRequest: request.productionRequest
+      ? {
+          id: request.productionRequest.id,
+          requestedQuantity: request.productionRequest.requestedQuantity.toString(),
+          status: request.productionRequest.status,
+          product: request.productionRequest.product,
+        }
+      : null,
     rawMaterial: request.rawMaterial,
     requestedBy: request.requestedBy,
     issuedBy: request.issuedBy,
@@ -305,6 +445,23 @@ function serializeRequest(request: MaterialRequestWithIncludes) {
         supplier: issue.batch.supplier,
       },
     })),
+  };
+}
+
+function serializeProductionRequest(request: ProductionRequestWithIncludes) {
+  return {
+    id: request.id,
+    requestedQuantity: request.requestedQuantity.toString(),
+    status: request.status,
+    neededBy: request.neededBy?.toISOString() ?? null,
+    notes: request.notes,
+    responseNotes: request.responseNotes,
+    fulfilledAt: request.fulfilledAt?.toISOString() ?? null,
+    createdAt: request.createdAt.toISOString(),
+    updatedAt: request.updatedAt.toISOString(),
+    product: request.product,
+    requestedBy: request.requestedBy,
+    materialRequests: request.materialRequests.map(serializeRequest),
   };
 }
 
@@ -565,14 +722,42 @@ export class ProductionService {
     return materials.map(serializeProductionInventoryItem);
   }
 
-  async listMaterialRequests(actor: AuthenticatedUser) {
-    const requests = await this.prisma.materialRequest.findMany({
-      where: actor.role === "ADMIN" ? undefined : { requestedById: actor.id },
-      include: requestInclude,
-      orderBy: { createdAt: "desc" },
+  async listMaterialRequests(
+    actor: AuthenticatedUser,
+    query?: QueryParams,
+  ) {
+    const where = productionRequestWhere(actor, query);
+    const orderBy = { createdAt: "desc" } as const;
+
+    if (hasPaginatedRequest(query)) {
+      const { page, pageSize, skip, take } = parsePagination(query);
+      const [total, requests] = await this.prisma.$transaction([
+        this.prisma.productionRequest.count({ where }),
+        this.prisma.productionRequest.findMany({
+          where,
+          include: productionRequestInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+
+      return paginatedResult(
+        requests.map(serializeProductionRequest),
+        total,
+        page,
+        pageSize,
+      );
+    }
+
+    const requests = await this.prisma.productionRequest.findMany({
+      where,
+      include: productionRequestInclude,
+      orderBy,
+      take: 200,
     });
 
-    return requests.map(serializeRequest);
+    return requests.map(serializeProductionRequest);
   }
 
   async createMaterialRequest(input: unknown, actor: AuthenticatedUser) {
@@ -582,77 +767,139 @@ export class ProductionService {
       throw new BadRequestException(parsed.error.issues[0]?.message);
     }
 
-    const material = await this.prisma.rawMaterial.findUnique({
-      where: { id: parsed.data.rawMaterialId },
-      select: { id: true, isActive: true },
-    });
+    const request = await this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.findUnique({
+        where: { id: parsed.data.productId },
+        include: productOptionInclude,
+      });
 
-    if (!material?.isActive) {
-      throw new BadRequestException("Selected raw material is not active.");
-    }
+      if (!product?.isActive) {
+        throw new BadRequestException("Selected product is not active.");
+      }
 
-    const request = await this.prisma.materialRequest.create({
-      data: {
-        rawMaterialId: parsed.data.rawMaterialId,
-        requestedQuantity: parsed.data.requestedQuantity,
+      if (!product.recipe?.isActive || product.recipe.items.length === 0) {
+        throw new BadRequestException(
+          "Add an active recipe for this product before requesting production materials.",
+        );
+      }
+
+      const yieldQuantity = decimalToNumber(product.recipe.yieldQuantity);
+
+      if (yieldQuantity <= 0) {
+        throw new BadRequestException("Recipe yield must be greater than zero.");
+      }
+
+      const materialLines = product.recipe.items.map((item) => ({
+        rawMaterialId: item.rawMaterialId,
+        requestedQuantity: wholeQuantity(
+          (decimalToNumber(item.quantity) * parsed.data.requestedQuantity) /
+            yieldQuantity,
+        ),
         neededBy: parsed.data.neededBy,
-        notes: parsed.data.notes,
+        notes: null,
         requestedById: actor.id,
-      },
-      include: requestInclude,
+      }));
+
+      if (materialLines.length === 0) {
+        throw new BadRequestException(
+          "Recipe must include at least one raw material.",
+        );
+      }
+
+      return tx.productionRequest.create({
+        data: {
+          productId: parsed.data.productId,
+          requestedQuantity: parsed.data.requestedQuantity,
+          neededBy: parsed.data.neededBy,
+          notes: parsed.data.notes,
+          requestedById: actor.id,
+          materialRequests: {
+            create: materialLines,
+          },
+        },
+        include: productionRequestInclude,
+      });
     });
 
     await this.audit.record({
       actorId: actor.id,
-      action: "PRODUCTION_MATERIAL_REQUEST_CREATED",
-      entityType: "MaterialRequest",
+      action: "PRODUCTION_PRODUCT_REQUEST_CREATED",
+      entityType: "ProductionRequest",
       entityId: request.id,
       metadata: {
-        rawMaterialId: request.rawMaterialId,
+        productId: request.productId,
         requestedQuantity: request.requestedQuantity.toString(),
+        materialLineCount: request.materialRequests.length,
       },
     });
 
-    return serializeRequest(request);
+    return serializeProductionRequest(request);
   }
 
   async cancelMaterialRequest(id: string, actor: AuthenticatedUser) {
-    const existing = await this.prisma.materialRequest.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        requestedById: true,
-        status: true,
+    const request = await this.prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.productionRequest.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            requestedById: true,
+            status: true,
+          },
+        });
+
+        if (!existing) {
+          throw new NotFoundException("Production request not found.");
+        }
+
+        if (actor.role !== "ADMIN" && existing.requestedById !== actor.id) {
+          throw new BadRequestException("You can only cancel your own requests.");
+        }
+
+        if (existing.status !== MaterialRequestStatus.PENDING) {
+          throw new BadRequestException("Only pending requests can be cancelled.");
+        }
+
+        const cancelled = await tx.productionRequest.updateMany({
+          where: {
+            id,
+            status: MaterialRequestStatus.PENDING,
+            ...(actor.role === "ADMIN" ? {} : { requestedById: actor.id }),
+          },
+          data: { status: MaterialRequestStatus.CANCELLED },
+        });
+
+        if (cancelled.count === 0) {
+          throw new BadRequestException(
+            "This request was updated by someone else. Refresh and try again.",
+          );
+        }
+
+        await tx.materialRequest.updateMany({
+          where: {
+            productionRequestId: id,
+            status: MaterialRequestStatus.PENDING,
+          },
+          data: { status: MaterialRequestStatus.CANCELLED },
+        });
+
+        return tx.productionRequest.findUniqueOrThrow({
+          where: { id },
+          include: productionRequestInclude,
+        });
       },
-    });
-
-    if (!existing) {
-      throw new NotFoundException("Material request not found.");
-    }
-
-    if (actor.role !== "ADMIN" && existing.requestedById !== actor.id) {
-      throw new BadRequestException("You can only cancel your own requests.");
-    }
-
-    if (existing.status !== MaterialRequestStatus.PENDING) {
-      throw new BadRequestException("Only pending requests can be cancelled.");
-    }
-
-    const request = await this.prisma.materialRequest.update({
-      where: { id },
-      data: { status: MaterialRequestStatus.CANCELLED },
-      include: requestInclude,
-    });
+      { timeout: 15000, maxWait: 15000 },
+    );
 
     await this.audit.record({
       actorId: actor.id,
-      action: "PRODUCTION_MATERIAL_REQUEST_CANCELLED",
-      entityType: "MaterialRequest",
+      action: "PRODUCTION_PRODUCT_REQUEST_CANCELLED",
+      entityType: "ProductionRequest",
       entityId: request.id,
       metadata: { status: request.status },
     });
 
-    return serializeRequest(request);
+    return serializeProductionRequest(request);
   }
 
   async listRuns() {
@@ -756,6 +1003,8 @@ export class ProductionService {
           );
         }
 
+        let totalMaterialCost = 0;
+
         for (const usage of materialUsages) {
           const rawMaterial = rawMaterialById.get(usage.rawMaterialId);
 
@@ -777,6 +1026,13 @@ export class ProductionService {
             lockedBatchIds.length > 0
               ? await tx.productionMaterialStockBatch.findMany({
                   where: { id: { in: lockedBatchIds.map((batch) => batch.id) } },
+                  include: {
+                    storeBatch: {
+                      select: {
+                        unitCost: true,
+                      },
+                    },
+                  },
                   orderBy: [{ receivedAt: "asc" }, { createdAt: "asc" }],
                 })
               : [];
@@ -813,6 +1069,11 @@ export class ProductionService {
             );
             const balanceAfter = roundQuantity(
               batchRemaining - quantityFromBatch,
+            );
+            const unitCost = decimalToNumber(batch.storeBatch?.unitCost);
+
+            totalMaterialCost = roundMoney(
+              totalMaterialCost + quantityFromBatch * unitCost,
             );
 
             await tx.productionMaterialStockBatch.update({
@@ -864,6 +1125,11 @@ export class ProductionService {
             select: { batchNumber: true },
           });
           const batchNumber = (latestBatch?.batchNumber ?? 0) + 1;
+          const batchUnitCost =
+            parsed.data.quantityProduced > 0
+              ? roundUnitCost(totalMaterialCost / parsed.data.quantityProduced)
+              : 0;
+          const batchTotalCost = roundMoney(batchUnitCost * quantityTransferred);
 
           const batch = await tx.salesProductBatch.create({
             data: {
@@ -873,6 +1139,8 @@ export class ProductionService {
               batchDate: toBatchDate(producedAt),
               quantityReceived: quantityTransferred,
               quantityRemaining: quantityTransferred,
+              unitCost: batchUnitCost,
+              totalCost: batchTotalCost,
               receivedAt: producedAt,
               notes: parsed.data.notes,
               createdById: actor.id,

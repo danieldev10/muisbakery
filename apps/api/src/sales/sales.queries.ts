@@ -20,6 +20,19 @@ export const userSelect = {
   email: true,
 } satisfies Prisma.UserSelect;
 
+export const retailerOrderApprovalSelect = {
+  id: true,
+  approvedAmount: true,
+  status: true,
+  reason: true,
+  expiresAt: true,
+  usedAt: true,
+  createdAt: true,
+  reviewedAt: true,
+  requestedBy: { select: userSelect },
+  approvedBy: { select: userSelect },
+} satisfies Prisma.RetailerOrderApprovalSelect;
+
 export const retailerSelect = {
   id: true,
   name: true,
@@ -33,6 +46,11 @@ export const retailerSelect = {
   createdAt: true,
   updatedAt: true,
   createdBy: { select: userSelect },
+  orderApprovals: {
+    select: retailerOrderApprovalSelect,
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  },
 } satisfies Prisma.RetailerSelect;
 
 export const retailerPaymentSelect = {
@@ -47,7 +65,6 @@ export const retailerPaymentSelect = {
     select: {
       id: true,
       name: true,
-      creditLimit: true,
     },
   },
   createdBy: { select: userSelect },
@@ -98,6 +115,7 @@ export const inventoryInclude = {
 export const saleInclude = {
   createdBy: { select: userSelect },
   retailer: { select: retailerSelect },
+  retailerApproval: { select: retailerOrderApprovalSelect },
   items: {
     include: {
       product: { select: productSelect },
@@ -208,6 +226,10 @@ export type ProductInventory = Prisma.ProductGetPayload<{
 
 export type RetailerWithCreatedBy = Prisma.RetailerGetPayload<{
   select: typeof retailerSelect;
+}>;
+
+export type RetailerOrderApprovalWithIncludes = Prisma.RetailerOrderApprovalGetPayload<{
+  select: typeof retailerOrderApprovalSelect;
 }>;
 
 export type RetailerPaymentWithIncludes = Prisma.RetailerPaymentGetPayload<{

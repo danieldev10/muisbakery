@@ -4,6 +4,7 @@ import { AuthModule } from "../auth/auth.module";
 import { SalesModule } from "../sales/sales.module";
 import { ExpenseCategoriesController } from "./expense-categories/expense-categories.controller";
 import { ExpenseCategoriesService } from "./expense-categories/expense-categories.service";
+import { PosTerminalsController } from "./pos-terminals/pos-terminals.controller";
 import { ProductsController } from "./products/products.controller";
 import { ProductsService } from "./products/products.service";
 import { RawMaterialsController } from "./raw-materials/raw-materials.controller";
@@ -28,6 +29,7 @@ import { UsersService } from "./users/users.service";
     ProductsController,
     RecipesController,
     AdminRetailersController,
+    PosTerminalsController,
     ExpenseCategoriesController,
   ],
   providers: [

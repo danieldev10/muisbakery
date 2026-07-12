@@ -98,8 +98,8 @@ export default async function ManagementProfitLossPage({
       </div>
 
       <Card
-        title="Profit & loss statement"
-        description="Estimated from recorded sales, issued materials, expenses, and losses."
+        title="Operational profit & loss statement"
+        description="Calculated from recorded sales, sold-batch production cost, expenses, and losses. This is an operational report for day-to-day decisions, not a final accounting statement — there is no cash/bank ledger or period close yet."
       >
         <TableShell
           head={
@@ -117,9 +117,15 @@ export default async function ManagementProfitLossPage({
           />
           <StatementRow
             label="Cost of goods sold"
-            detail="Raw materials issued to production, at recorded unit costs"
-            amount={`- ${formatMoney(report.costs.materialIssuedCost)}`}
+            detail="Finished-good batches sold this month, at captured production cost"
+            amount={`- ${formatMoney(report.costs.costOfGoodsSold)}`}
             amountClass={lossClass}
+          />
+          <StatementRow
+            label="Materials issued to production"
+            detail="Operational movement, shown for comparison; unsold goods remain inventory"
+            amount={formatMoney(report.costs.materialIssuedCost)}
+            amountClass="text-stone-600"
           />
           <StatementRow
             label="Gross profit"

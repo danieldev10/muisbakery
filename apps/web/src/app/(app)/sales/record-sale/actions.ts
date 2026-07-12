@@ -32,6 +32,7 @@ export async function createSale(
   const result = await apiSend("/sales/sales", "POST", {
     customerType: getString(formData, "customerType"),
     retailerId: getOptionalString(formData, "retailerId"),
+    retailerApprovalId: getOptionalString(formData, "retailerApprovalId"),
     paymentMethod: getString(formData, "paymentMethod"),
     customerName: getOptionalString(formData, "customerName"),
     soldAt: getOptionalString(formData, "soldAt"),

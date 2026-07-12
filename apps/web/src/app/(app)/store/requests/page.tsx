@@ -3,20 +3,17 @@ import {
   EmptyState,
   TableShell,
 } from "@/components/admin/layout";
-import type { MaterialRequest } from "@/lib/operations/types";
+import type { MaterialRequest, StoreOptions } from "@/lib/operations/types";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import {
-  pageNumber,
-  paginate,
+  paginatedApiPath,
+  type PaginatedResponse,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import { formatProductName } from "@/lib/product-label";
 import {
-  firstParam,
-  matchesDateRange,
-  matchesSearch,
-  matchesSelect,
   optionLabel,
 } from "@/lib/table-filters";
 
@@ -48,78 +45,57 @@ export default async function StoreRequestsPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const requests = await apiGet<MaterialRequest[]>("/store/material-requests");
-  const query = firstParam(params, "q");
-  const materialFilter = firstParam(params, "material");
-  const statusFilter = firstParam(params, "status");
-  const from = firstParam(params, "from");
-  const to = firstParam(params, "to");
-  const materialOptions = [
-    ...new Map(
-      requests.map((request) => [
-        request.rawMaterial.id,
-        {
-          label: `${request.rawMaterial.name} (${request.rawMaterial.baseUnit.abbreviation})`,
-          value: request.rawMaterial.id,
-        },
+  const [options, result] = await Promise.all([
+    apiGet<StoreOptions>("/store/options"),
+    apiGet<PaginatedResponse<MaterialRequest>>(
+      paginatedApiPath("/store/material-requests", params, [
+        "q",
+        "material",
+        "status",
+        "from",
+        "to",
       ]),
-    ).values(),
-  ];
+    ),
+  ]);
+  const requests = result.items;
+  const pagination = result.pagination;
+  const materialOptions = options.rawMaterials.map((material) => ({
+    label: `${material.name} (${material.baseUnit.abbreviation})`,
+    value: material.id,
+  }));
   const statusOptions = [
-    ...new Set(requests.map((request) => request.status)),
+    "PENDING",
+    "PARTIALLY_ISSUED",
+    "FULFILLED",
+    "CANCELLED",
+    "REJECTED",
   ].map((status) => ({ label: optionLabel(status), value: status }));
-  const filteredRequests = requests.filter(
-    (request) =>
-      matchesSearch(query, [
-        request.rawMaterial.name,
-        request.rawMaterial.baseUnit.abbreviation,
-        request.status,
-        optionLabel(request.status),
-        request.notes,
-        request.responseNotes,
-        request.requestedBy.name,
-        request.requestedBy.email,
-        request.issuedBy?.name,
-        request.issuedBy?.email,
-      ]) &&
-      matchesSelect(materialFilter, request.rawMaterial.id) &&
-      matchesSelect(statusFilter, request.status) &&
-      matchesDateRange(request.createdAt, from, to),
-  );
-  const { pageItems, ...pagination } = paginate(
-    filteredRequests,
-    pageNumber(params.page),
-  );
 
   return (
-    <Card title={`Production requests (${filteredRequests.length} of ${requests.length})`}>
-        {requests.length > 0 ? (
-          <TableToolbar
-            basePath="/store/requests"
-            dateFilters={[
-              { label: "From", name: "from" },
-              { label: "To", name: "to" },
-            ]}
-            searchParams={params}
-            searchPlaceholder="Search material, requester, status, or notes"
-            selectFilters={[
-              {
-                label: "Material",
-                name: "material",
-                options: materialOptions,
-              },
-              {
-                label: "Status",
-                name: "status",
-                options: statusOptions,
-              },
-            ]}
-          />
-        ) : null}
-        {requests.length === 0 ? (
+    <Card title={`Production requests (${pagination.total})`}>
+        <TableToolbar
+          basePath="/store/requests"
+          dateFilters={[
+            { label: "From", name: "from" },
+            { label: "To", name: "to" },
+          ]}
+          searchParams={params}
+          searchPlaceholder="Search material, requester, status, or notes"
+          selectFilters={[
+            {
+              label: "Material",
+              name: "material",
+              options: materialOptions,
+            },
+            {
+              label: "Status",
+              name: "status",
+              options: statusOptions,
+            },
+          ]}
+        />
+        {pagination.total === 0 ? (
           <EmptyState>No material requests yet.</EmptyState>
-        ) : filteredRequests.length === 0 ? (
-          <EmptyState>No material requests match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -134,7 +110,7 @@ export default async function StoreRequestsPage({
               </>
             }
           >
-            {pageItems.map((request) => {
+            {requests.map((request) => {
               const unit = request.rawMaterial.baseUnit.abbreviation;
               const canIssue =
                 request.status === "PENDING" ||
@@ -143,6 +119,15 @@ export default async function StoreRequestsPage({
               return (
                 <tr className="align-top" key={request.id}>
                   <td className="py-3 pr-4">
+                    {request.productionRequest ? (
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-[1.1px] text-[var(--brand-burgundy)]">
+                        {formatProductName(request.productionRequest.product)} ·{" "}
+                        {formatQuantity(
+                          request.productionRequest.requestedQuantity,
+                          request.productionRequest.product.unit.abbreviation,
+                        )}
+                      </p>
+                    ) : null}
                     <p className="font-medium text-stone-900">
                       {request.rawMaterial.name}
                     </p>

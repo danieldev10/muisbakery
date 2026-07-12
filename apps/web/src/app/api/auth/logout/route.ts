@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getApiBaseUrl } from "@/lib/api";
+import { getInternalApiHeaders } from "@/lib/internal-api";
 
 type HeadersWithSetCookie = Headers & {
   getSetCookie?: () => string[];
@@ -23,6 +24,7 @@ export async function POST() {
   const apiResponse = await fetch(`${getApiBaseUrl()}/auth/logout`, {
     method: "POST",
     cache: "no-store",
+    headers: getInternalApiHeaders(),
   });
 
   const data: unknown = await apiResponse.json().catch(() => ({ ok: true }));

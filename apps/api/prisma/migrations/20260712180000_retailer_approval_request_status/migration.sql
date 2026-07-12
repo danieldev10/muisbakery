@@ -1,0 +1,1 @@
+ALTER TYPE "RetailerOrderApprovalStatus" ADD VALUE IF NOT EXISTS 'PENDING';

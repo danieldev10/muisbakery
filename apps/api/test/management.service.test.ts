@@ -77,6 +77,12 @@ test("ManagementService.profitLoss calculates revenue, material costs, and recor
           { quantity: 2, batch: { unitCost: 200 } },
         ],
       },
+      saleItemBatch: {
+        findMany: async () => [
+          { quantity: 4, batch: { unitCost: 100 } },
+          { quantity: 2, batch: { unitCost: 200 } },
+        ],
+      },
       productionWaste: {
         findMany: async () => [
           {
@@ -125,6 +131,7 @@ test("ManagementService.profitLoss calculates revenue, material costs, and recor
   assert.equal(result.revenue.balanceDue, "3000.00");
   assert.equal(result.costs.materialPurchasedCost, "2000.00");
   assert.equal(result.costs.materialIssuedCost, "800.00");
+  assert.equal(result.costs.costOfGoodsSold, "800.00");
   assert.equal(result.losses.productionWasteQuantity, "3");
   assert.equal(result.losses.productionWasteEstimatedValue, "4500.00");
   assert.equal(result.losses.wasteReturnedToProductionQuantity, "2");

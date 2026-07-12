@@ -111,7 +111,7 @@ export class UsersService {
 
     const target = await this.prisma.user.findUnique({
       where: { id },
-      select: { id: true, role: true },
+      select: userSelect,
     });
 
     if (!target) {
@@ -165,6 +165,18 @@ export class UsersService {
         role: user.role,
         isActive: user.isActive,
         passwordChanged: Boolean(parsed.data.password),
+        before: {
+          name: target.name,
+          email: target.email,
+          role: target.role,
+          isActive: target.isActive,
+        },
+        after: {
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          isActive: user.isActive,
+        },
       },
     });
 

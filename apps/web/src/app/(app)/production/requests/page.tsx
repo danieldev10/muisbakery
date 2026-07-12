@@ -13,22 +13,17 @@ import {
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type {
-  MaterialRequest,
   MaterialRequestStatus,
+  ProductionRequest,
   ProductionOptions,
 } from "@/lib/operations/types";
+import { formatProductName } from "@/lib/product-label";
 import {
-  pageNumber,
-  paginate,
+  paginatedApiPath,
+  type PaginatedResponse,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
-import {
-  firstParam,
-  matchesDateRange,
-  matchesSearch,
-  matchesSelect,
-} from "@/lib/table-filters";
 
 import { cancelMaterialRequest, createMaterialRequest } from "./actions";
 import { RequestStatusBadge } from "./request-status-badge";
@@ -63,74 +58,68 @@ export default async function ProductionRequestsPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const [options, requests] = await Promise.all([
+  const [options, result] = await Promise.all([
     apiGet<ProductionOptions>("/production/options"),
-    apiGet<MaterialRequest[]>("/production/material-requests"),
+    apiGet<PaginatedResponse<ProductionRequest>>(
+      paginatedApiPath("/production/material-requests", params, [
+        "q",
+        "product",
+        "status",
+        "from",
+        "to",
+      ]),
+    ),
   ]);
-  const materialOptions = options.rawMaterials.map((material) => ({
-    value: material.id,
-    label: `${material.name} (${material.baseUnit.abbreviation})`,
-  }));
-  const query = firstParam(params, "q");
-  const materialFilter = firstParam(params, "material");
-  const statusFilter = firstParam(params, "status");
-  const from = firstParam(params, "from");
-  const to = firstParam(params, "to");
+  const requests = result.items;
+  const pagination = result.pagination;
+  const productOptions = options.products
+    .filter((product) => product.recipe)
+    .map((product) => ({
+      value: product.id,
+      label: formatProductName(product),
+    }));
   const statusOptions = [
-    ...new Set(requests.map((request) => request.status)),
-  ].map((status) => ({ label: statusLabel(status), value: status }));
-  const filteredRequests = requests.filter(
-    (request) =>
-      matchesSearch(query, [
-        request.rawMaterial.name,
-        request.rawMaterial.baseUnit.abbreviation,
-        request.status,
-        statusLabel(request.status),
-        request.notes,
-        request.responseNotes,
-        request.requestedBy.name,
-        request.requestedBy.email,
-      ]) &&
-      matchesSelect(materialFilter, request.rawMaterial.id) &&
-      matchesSelect(statusFilter, request.status) &&
-      matchesDateRange(request.createdAt, from, to),
-  );
-  const { pageItems, ...pagination } = paginate(
-    filteredRequests,
-    pageNumber(params.page),
-  );
+    "PENDING",
+    "PARTIALLY_ISSUED",
+    "FULFILLED",
+    "CANCELLED",
+    "REJECTED",
+  ].map((status) => ({
+    label: statusLabel(status as MaterialRequestStatus),
+    value: status,
+  }));
 
   return (
     <>
       <Card>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
-            Material requests ({filteredRequests.length} of {requests.length})
+            Production requests ({pagination.total})
           </h2>
-          {materialOptions.length === 0 ? (
+          {productOptions.length === 0 ? (
             <AdminModal
-              description="Active raw materials are required before Production can create requests."
+              description="Active products with recipes are required before Production can create requests."
               title="New request"
               triggerLabel="New request"
             >
               <EmptyState>
-                Ask an Admin to add raw materials before requesting stock.
+                Ask an Admin to add product recipes before requesting stock.
               </EmptyState>
             </AdminModal>
           ) : (
             <AdminFormModal
               action={createMaterialRequest}
-              description="Ask Store to issue raw materials from FIFO stock."
-              submitLabel="Request material"
-              title="New material request"
+              description="Ask Store to issue the recipe materials needed for this product output."
+              submitLabel="Request product"
+              title="New production request"
               triggerLabel="New request"
             >
               <div className="grid gap-4 sm:grid-cols-3">
                 <SelectField
-                  label="Raw material"
-                  name="rawMaterialId"
-                  options={materialOptions}
-                  placeholder="Select material"
+                  label="Product"
+                  name="productId"
+                  options={productOptions}
+                  placeholder="Select product"
                   required
                 />
                 <Field
@@ -156,40 +145,35 @@ export default async function ProductionRequestsPage({
             </AdminFormModal>
           )}
         </div>
-        {requests.length > 0 ? (
-          <TableToolbar
-            basePath="/production/requests"
-            dateFilters={[
-              { label: "Created from", name: "from" },
-              { label: "Created to", name: "to" },
-            ]}
-            searchParams={params}
-            searchPlaceholder="Search material, requester, status, or notes"
-            selectFilters={[
-              {
-                label: "Material",
-                name: "material",
-                options: materialOptions,
-              },
-              {
-                label: "Status",
-                name: "status",
-                options: statusOptions,
-              },
-            ]}
-          />
-        ) : null}
-        {requests.length === 0 ? (
-          <EmptyState>No material requests yet.</EmptyState>
-        ) : filteredRequests.length === 0 ? (
-          <EmptyState>No material requests match the current filters.</EmptyState>
+        <TableToolbar
+          basePath="/production/requests"
+          dateFilters={[
+            { label: "Created from", name: "from" },
+            { label: "Created to", name: "to" },
+          ]}
+          searchParams={params}
+          searchPlaceholder="Search product, requester, status, or notes"
+          selectFilters={[
+            {
+              label: "Product",
+              name: "product",
+              options: productOptions,
+            },
+            {
+              label: "Status",
+              name: "status",
+              options: statusOptions,
+            },
+          ]}
+        />
+        {pagination.total === 0 ? (
+          <EmptyState>No production requests yet.</EmptyState>
         ) : (
           <TableShell
             head={
               <>
-                <th className="py-2 pr-4">Material</th>
+                <th className="py-2 pr-4">Product</th>
                 <th className="py-2 pr-4">Requested</th>
-                <th className="py-2 pr-4">Issued</th>
                 <th className="py-2 pr-4">Status</th>
                 <th className="py-2 pr-4">Needed by</th>
                 <th className="py-2 pr-4">Created</th>
@@ -197,14 +181,14 @@ export default async function ProductionRequestsPage({
               </>
             }
           >
-            {pageItems.map((request) => {
-              const unit = request.rawMaterial.baseUnit.abbreviation;
+            {requests.map((request) => {
+              const unit = request.product.unit.abbreviation;
 
               return (
                 <tr className="align-top" key={request.id}>
                   <td className="py-3 pr-4">
                     <p className="font-medium text-stone-900">
-                      {request.rawMaterial.name}
+                      {formatProductName(request.product)}
                     </p>
                     {request.notes ? (
                       <p className="mt-1 max-w-56 text-xs text-stone-500">
@@ -214,12 +198,6 @@ export default async function ProductionRequestsPage({
                   </td>
                   <td className="py-3 pr-4 text-stone-600">
                     {formatQuantity(request.requestedQuantity, unit)}
-                  </td>
-                  <td className="py-3 pr-4 text-stone-600">
-                    <p>{formatQuantity(request.issuedQuantity, unit)}</p>
-                    <p className="text-xs text-stone-500">
-                      {formatQuantity(request.remainingQuantity, unit)} left
-                    </p>
                   </td>
                   <td className="py-3 pr-4">
                     <RequestStatusBadge

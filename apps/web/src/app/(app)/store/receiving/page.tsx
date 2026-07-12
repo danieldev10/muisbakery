@@ -7,17 +7,11 @@ import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { RawMaterialReceipt, StoreOptions } from "@/lib/operations/types";
 import {
-  pageNumber,
-  paginate,
+  paginatedApiPath,
+  type PaginatedResponse,
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
-import {
-  firstParam,
-  matchesDateRange,
-  matchesSearch,
-  matchesSelect,
-} from "@/lib/table-filters";
 
 import { receiveRawMaterial } from "./actions";
 import { ReceiveMaterialModal } from "./receive-material-modal";
@@ -41,35 +35,20 @@ export default async function StoreReceivingPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const [options, receipts] = await Promise.all([
+  const [options, result] = await Promise.all([
     apiGet<StoreOptions>("/store/options"),
-    apiGet<RawMaterialReceipt[]>("/store/receipts"),
+    apiGet<PaginatedResponse<RawMaterialReceipt>>(
+      paginatedApiPath("/store/receipts", params, [
+        "q",
+        "material",
+        "supplier",
+        "from",
+        "to",
+      ]),
+    ),
   ]);
-  const query = firstParam(params, "q");
-  const materialFilter = firstParam(params, "material");
-  const supplierFilter = firstParam(params, "supplier");
-  const from = firstParam(params, "from");
-  const to = firstParam(params, "to");
-  const filteredReceipts = receipts.filter(
-    (receipt) =>
-      matchesSearch(query, [
-        receipt.batch.batchNumber,
-        receipt.batch.batchLabel,
-        receipt.rawMaterial.name,
-        receipt.supplier?.name,
-        receipt.reference,
-        receipt.quantity,
-        receipt.createdBy?.name,
-        receipt.createdBy?.email,
-      ]) &&
-      matchesSelect(materialFilter, receipt.rawMaterial.id) &&
-      matchesSelect(supplierFilter, receipt.supplier?.id ?? "") &&
-      matchesDateRange(receipt.receivedAt, from, to),
-  );
-  const { pageItems, ...pagination } = paginate(
-    filteredReceipts,
-    pageNumber(params.page),
-  );
+  const receipts = result.items;
+  const pagination = result.pagination;
 
   const materialOptions = options.rawMaterials.map((material) => ({
     value: material.id,
@@ -84,7 +63,7 @@ export default async function StoreReceivingPage({
     <Card>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-base font-semibold leading-tight text-[var(--text-primary)]">
-          Recent receipts ({filteredReceipts.length} of {receipts.length})
+          Recent receipts ({pagination.total})
         </h2>
         <ReceiveMaterialModal
           action={receiveRawMaterial}
@@ -94,33 +73,29 @@ export default async function StoreReceivingPage({
       </div>
 
       <div>
-        {receipts.length > 0 ? (
-          <TableToolbar
-            basePath="/store/receiving"
-            dateFilters={[
-              { label: "From", name: "from" },
-              { label: "To", name: "to" },
-            ]}
-            searchParams={params}
-            searchPlaceholder="Search batch, material, supplier, or reference"
-            selectFilters={[
-              {
-                label: "Material",
-                name: "material",
-                options: materialOptions,
-              },
-              {
-                label: "Supplier",
-                name: "supplier",
-                options: supplierOptions,
-              },
-            ]}
-          />
-        ) : null}
-        {receipts.length === 0 ? (
+        <TableToolbar
+          basePath="/store/receiving"
+          dateFilters={[
+            { label: "From", name: "from" },
+            { label: "To", name: "to" },
+          ]}
+          searchParams={params}
+          searchPlaceholder="Search batch, material, supplier, or reference"
+          selectFilters={[
+            {
+              label: "Material",
+              name: "material",
+              options: materialOptions,
+            },
+            {
+              label: "Supplier",
+              name: "supplier",
+              options: supplierOptions,
+            },
+          ]}
+        />
+        {pagination.total === 0 ? (
           <EmptyState>No receipts yet.</EmptyState>
-        ) : filteredReceipts.length === 0 ? (
-          <EmptyState>No receipts match the current filters.</EmptyState>
         ) : (
           <TableShell
             head={
@@ -133,7 +108,7 @@ export default async function StoreReceivingPage({
               </>
             }
           >
-            {pageItems.map((receipt) => (
+            {receipts.map((receipt) => (
               <tr className="align-top" key={receipt.id}>
                 <td className="py-3 pr-4 font-medium text-stone-900">
                   Batch {receipt.batch.batchNumber}

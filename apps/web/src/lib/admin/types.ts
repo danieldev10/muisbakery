@@ -84,6 +84,23 @@ export type ExpenseCategory = {
   isActive: boolean;
 };
 
+export type PosTerminal = {
+  id: string;
+  name: string | null;
+  displayToken: string;
+  isActive: boolean;
+  offlineEnabled: boolean;
+  lastSeenAt: string | null;
+  lastSyncedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  currentSession: {
+    id: string;
+    status: string;
+    createdAt: string;
+  } | null;
+};
+
 export type FormState = {
   ok: boolean;
   error: string | null;

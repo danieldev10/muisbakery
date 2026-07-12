@@ -28,7 +28,6 @@ export async function createRetailer(
     phone: getOptionalString(formData, "phone"),
     email: getOptionalString(formData, "email"),
     address: getOptionalString(formData, "address"),
-    creditLimit: getString(formData, "creditLimit"),
     notes: getOptionalString(formData, "notes"),
   });
 
@@ -50,10 +49,72 @@ export async function updateRetailer(
     phone: getOptionalString(formData, "phone") ?? null,
     email: getOptionalString(formData, "email") ?? null,
     address: getOptionalString(formData, "address") ?? null,
-    creditLimit: getString(formData, "creditLimit"),
     notes: getOptionalString(formData, "notes") ?? null,
     isActive: getString(formData, "isActive") === "true",
   });
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateRetailerViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function createRetailerOrderApproval(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const retailerId = getString(formData, "retailerId");
+  const result = await apiSend(
+    `${PATH}/${retailerId}/order-approvals`,
+    "POST",
+    {
+      approvedAmount: getString(formData, "approvedAmount"),
+      expiresAt: getOptionalString(formData, "expiresAt"),
+      reason: getOptionalString(formData, "reason"),
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateRetailerViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function revokeRetailerOrderApproval(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const retailerId = getString(formData, "retailerId");
+  const approvalId = getString(formData, "approvalId");
+  const result = await apiSend(
+    `${PATH}/${retailerId}/order-approvals/${approvalId}`,
+    "PATCH",
+    { status: "REVOKED" },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateRetailerViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function approveRetailerOrderApproval(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const retailerId = getString(formData, "retailerId");
+  const approvalId = getString(formData, "approvalId");
+  const result = await apiSend(
+    `${PATH}/${retailerId}/order-approvals/${approvalId}`,
+    "PATCH",
+    { status: "APPROVED" },
+  );
 
   if (!result.ok) {
     return { ok: false, error: result.message };
