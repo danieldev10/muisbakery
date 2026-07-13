@@ -694,6 +694,13 @@ enum DayCloseStatus {
   APPROVED
 }
 
+enum PosOfflineSyncStatus {
+  SYNCED
+  DUPLICATE
+  CONFLICT
+  FAILED
+}
+
 // Close-of-day record: Sales submits the drawer count against the system's
 // expected totals; Management signs it off. One close per business date.
 model SalesDayClose {
@@ -764,6 +771,7 @@ model Sale {
   items      SaleItem[]
   posSession PosSession?
   retailerPaymentAllocations RetailerPaymentAllocation[]
+  offlineSyncAttempts PosOfflineSyncAttempt[]
 
   @@index([soldAt])
   @@index([terminalId])
@@ -836,12 +844,36 @@ model PosTerminal {
   stockAllocations PosTerminalStockAllocation[]
   retailerCreditAllocations PosTerminalRetailerCreditAllocation[]
   retailerOrderApprovals RetailerOrderApproval[]
+  offlineSyncAttempts PosOfflineSyncAttempt[]
 
   @@index([isActive])
   @@index([offlineEnabled])
   @@index([pairedById])
   @@index([createdById])
   @@index([createdAt])
+}
+
+model PosOfflineSyncAttempt {
+  id              String               @id @default(cuid())
+  terminalId      String
+  clientRequestId String
+  status          PosOfflineSyncStatus
+  saleId          String?
+  payload         Json
+  errorMessage    String?
+  conflictCode    String?
+  attemptedAt     DateTime             @default(now())
+  syncedAt        DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  terminal PosTerminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+  sale     Sale?       @relation(fields: [saleId], references: [id], onDelete: SetNull)
+
+  @@unique([terminalId, clientRequestId])
+  @@index([status])
+  @@index([saleId])
+  @@index([attemptedAt])
 }
 
 model PosTerminalStockAllocation {

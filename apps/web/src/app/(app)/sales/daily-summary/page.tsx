@@ -7,6 +7,7 @@ import {
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type {
   CustomerType,
   DayClosePreview,
@@ -153,6 +154,79 @@ export default async function SalesDailySummaryPage({
     filteredSales,
     pageNumber(query.page),
   );
+  const reportSections = [
+    {
+      title: "Summary",
+      rows: [
+        {
+          Date: formatDate(summary.date),
+          Sales: summary.salesCount,
+          Revenue: formatMoney(summary.totalRevenue),
+          Paid: formatMoney(summary.amountPaid),
+          "Balance due": formatMoney(summary.balanceDue),
+          Damaged: summary.damagedQuantity,
+          Returned: summary.returnedToStockQuantity,
+        },
+      ],
+    },
+    {
+      title: "Payment methods",
+      rows: filteredPaymentSummary.map((entry) => ({
+        Method: paymentLabels[entry.method],
+        Sales: entry.count,
+        Amount: formatMoney(entry.amount),
+      })),
+    },
+    {
+      title: "Product sales",
+      rows: filteredProductSummary.map((entry) => ({
+        Product: formatProductName(entry.product),
+        Quantity: formatQuantity(
+          entry.quantitySold,
+          entry.product.unit.abbreviation,
+        ),
+        Revenue: formatMoney(entry.revenue),
+      })),
+    },
+    {
+      title: "Sales",
+      rows: filteredSales.map((sale) => ({
+        Sale: `#${sale.saleNumber}`,
+        Customer:
+          sale.customerType === "RETAILER"
+            ? sale.retailer?.name ?? sale.customerName ?? "Retailer"
+            : "Individual",
+        Payment: paymentLabels[sale.paymentMethod],
+        Total: formatMoney(sale.totalAmount),
+        Paid: formatMoney(sale.amountPaid),
+        "Balance due": formatMoney(sale.balanceDue),
+        Items: sale.items
+          .map(
+            (item) =>
+              `${formatProductName(item.product)} x ${formatQuantity(
+                item.quantity,
+                item.product.unit.abbreviation,
+              )}`,
+          )
+          .join("; "),
+        Time: formatDateTime(sale.soldAt),
+      })),
+    },
+    {
+      title: "Returns",
+      rows: summary.returns.map((entry) => ({
+        Product: formatProductName(entry.product),
+        Disposition:
+          entry.disposition === "DAMAGED" ? "Damaged" : "Returned to stock",
+        Quantity: formatQuantity(
+          entry.quantity,
+          entry.product.unit.abbreviation,
+        ),
+        Reason: entry.reason ?? "",
+        "Recorded at": formatDateTime(entry.recordedAt),
+      })),
+    },
+  ];
   const canSubmitClose =
     !dayClose.close ||
     (dayClose.needsReclose && dayClose.close.status === "SUBMITTED");
@@ -161,26 +235,34 @@ export default async function SalesDailySummaryPage({
   return (
     <>
       <Card>
-        <form className="flex flex-col gap-3 sm:flex-row sm:items-end" method="GET">
-          <div className="grid gap-1.5">
-            <label className="text-sm font-medium text-stone-700" htmlFor="date">
-              Date
-            </label>
-            <input
-              className="h-10 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
-              defaultValue={date}
-              id="date"
-              name="date"
-              type="date"
-            />
-          </div>
-          <button
-            className="h-10 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900"
-            type="submit"
-          >
-            View summary
-          </button>
-        </form>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <form className="flex flex-col gap-3 sm:flex-row sm:items-end" method="GET">
+            <div className="grid gap-1.5">
+              <label className="text-sm font-medium text-stone-700" htmlFor="date">
+                Date
+              </label>
+              <input
+                className="h-10 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+                defaultValue={date}
+                id="date"
+                name="date"
+                type="date"
+              />
+            </div>
+            <button
+              className="h-10 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900"
+              type="submit"
+            >
+              View summary
+            </button>
+          </form>
+          <ReportExportActions
+            filename={`sales-daily-summary-${summary.date}`}
+            sections={reportSections}
+            subtitle={`Date: ${formatDate(summary.date)}`}
+            title="Sales daily summary"
+          />
+        </div>
       </Card>
 
       <div className="grid gap-4 md:grid-cols-4">

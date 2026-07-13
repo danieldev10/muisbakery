@@ -1,3 +1,4 @@
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type { ManagementDashboardReport } from "@/lib/management/types";
 import { apiGet } from "@/lib/server-api";
 
@@ -21,10 +22,69 @@ export default async function ManagementDashboardPage({
   const report = await apiGet<ManagementDashboardReport>(
     `/management/dashboard?month=${encodeURIComponent(month)}`,
   );
+  const reportSections = [
+    {
+      title: "Summary",
+      rows: [
+        {
+          Month: report.month.label,
+          Revenue: formatMoney(report.summary.totalRevenue),
+          "Gross profit": formatMoney(report.summary.estimatedGrossProfit),
+          "Net profit": formatMoney(report.summary.estimatedNetProfit),
+          Expenses: formatMoney(report.summary.operatingExpenses),
+          "Raw material stock": formatMoney(report.summary.rawMaterialStockValue),
+          "Finished goods stock": formatMoney(report.summary.finishedGoodsStockValue),
+          "Production runs": report.summary.productionRuns,
+          "Products sold": formatQuantity(report.summary.productsSold),
+          "Low stock alerts": report.summary.lowStockAlerts,
+        },
+      ],
+    },
+    {
+      title: "Profitability",
+      rows: report.charts.profitability.map((entry) => ({
+        Metric: entry.label,
+        Value: formatMoney(entry.value),
+        Detail: entry.detail,
+      })),
+    },
+    {
+      title: "Stock value mix",
+      rows: report.charts.stockValue.map((entry) => ({
+        Metric: entry.label,
+        Value: formatMoney(entry.value),
+        Detail: entry.detail,
+      })),
+    },
+    {
+      title: "Production output",
+      rows: report.charts.productionOutput.map((entry) => ({
+        Product: entry.label,
+        Quantity: formatQuantity(entry.value),
+        Detail: entry.detail,
+      })),
+    },
+    {
+      title: "Sales by product",
+      rows: report.charts.salesRevenue.map((entry) => ({
+        Product: entry.label,
+        Revenue: formatMoney(entry.value),
+        Detail: entry.detail,
+      })),
+    },
+  ];
 
   return (
     <ManagementPageShell>
       <MonthFilter month={report.month.value} />
+      <div className="flex justify-end">
+        <ReportExportActions
+          filename={`management-dashboard-${report.month.value}`}
+          sections={reportSections}
+          subtitle={`Month: ${report.month.label}`}
+          title="Management dashboard"
+        />
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard

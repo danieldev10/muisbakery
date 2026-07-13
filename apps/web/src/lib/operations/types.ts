@@ -541,6 +541,68 @@ export type PairedPosTerminal = PosTerminal & {
   deviceSecret: string;
 };
 
+export type PosOfflineSnapshot = {
+  terminal: PosTerminal;
+  products: Array<{
+    allocation: PosTerminal["stockAllocations"][number];
+    inventory: SalesInventoryItem;
+  }>;
+  retailerCreditAllocations: PosTerminal["retailerCreditAllocations"];
+  serverTime: string;
+  snapshotVersion: string;
+};
+
+export type PosOfflineSalePayload = {
+  terminalId: string;
+  clientRequestId: string;
+  customerType: CustomerType;
+  retailerId?: string;
+  retailerApprovalId?: string;
+  paymentMethod: PaymentMethod;
+  customerName?: string;
+  soldAt: string;
+  discount?: string;
+  amountPaid?: string;
+  notes?: string;
+  items: Array<{
+    productId: string;
+    quantity: string;
+    unitPrice?: string | null;
+  }>;
+};
+
+export type PosOfflineSyncStatus =
+  | "PENDING"
+  | "SYNCING"
+  | "SYNCED"
+  | "DUPLICATE"
+  | "CONFLICT"
+  | "FAILED";
+
+export type PosOfflineQueuedSale = {
+  clientRequestId: string;
+  terminalId: string;
+  status: PosOfflineSyncStatus;
+  payload: PosOfflineSalePayload;
+  createdAt: string;
+  updatedAt: string;
+  errorMessage: string | null;
+  syncedSale: Sale | null;
+};
+
+export type PosOfflineSyncResult = {
+  clientRequestId: string;
+  status: Exclude<PosOfflineSyncStatus, "PENDING" | "SYNCING">;
+  sale: Sale | null;
+  errorMessage: string | null;
+};
+
+export type PosOfflineSyncResponse = {
+  terminalId: string;
+  serverTime: string;
+  results: PosOfflineSyncResult[];
+};
+
 export type DayCloseStatus = "SUBMITTED" | "APPROVED";
 
 export type SalesDayClose = {

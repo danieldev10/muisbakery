@@ -242,6 +242,19 @@ export const posTerminalInclude = {
   pairedBy: { select: userSelect },
 } satisfies Prisma.PosTerminalInclude;
 
+export const posOfflineSyncAttemptInclude = {
+  terminal: {
+    select: {
+      id: true,
+      name: true,
+      offlineEnabled: true,
+    },
+  },
+  sale: {
+    include: saleInclude,
+  },
+} satisfies Prisma.PosOfflineSyncAttemptInclude;
+
 export type ProductInventory = Prisma.ProductGetPayload<{
   include: typeof inventoryInclude;
 }>;
@@ -277,3 +290,8 @@ export type PosSessionWithIncludes = Prisma.PosSessionGetPayload<{
 export type PosTerminalWithIncludes = Prisma.PosTerminalGetPayload<{
   include: typeof posTerminalInclude;
 }>;
+
+export type PosOfflineSyncAttemptWithIncludes =
+  Prisma.PosOfflineSyncAttemptGetPayload<{
+    include: typeof posOfflineSyncAttemptInclude;
+  }>;

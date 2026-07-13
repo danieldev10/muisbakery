@@ -129,9 +129,30 @@ export class SalesController {
     return this.sales.getPosTerminal(id, terminalSecret);
   }
 
+  @Get("pos/terminals/:id/offline-snapshot")
+  getPosOfflineSnapshot(
+    @Param("id") id: string,
+    @Headers(posTerminalSecretHeader) terminalSecret?: string,
+  ) {
+    return this.sales.getPosOfflineSnapshot(id, terminalSecret);
+  }
+
   @Post("pos/terminals/pair")
   pairPosTerminal(@Body() body: unknown, @Req() request: Request) {
     return this.sales.pairPosTerminal(body, getRequestUser(request));
+  }
+
+  @Post("pos/sync")
+  syncOfflinePosSales(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Headers(posTerminalSecretHeader) terminalSecret?: string,
+  ) {
+    return this.sales.syncOfflinePosSales(
+      body,
+      getRequestUser(request),
+      terminalSecret,
+    );
   }
 
   @Get("pos/sessions/:id")

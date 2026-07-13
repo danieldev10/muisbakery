@@ -3,7 +3,9 @@ import { test } from "node:test";
 
 import type { PosSession, SalesInventoryItem } from "../src/lib/operations/types";
 import {
+  buildOfflineSalePayload,
   calculateSessionTotals,
+  createLocalPosSession,
   formatMoney,
   formatQuantity,
   productAvailable,
@@ -60,6 +62,53 @@ test("POS display helpers format money, quantities, and available stock", () => 
   assert.equal(productAvailable(inventoryItem({ totalRemaining: "5.9" })), 5);
   assert.equal(roundCount(3.9), 3);
   assert.equal(roundCount(-2), 0);
+});
+
+test("createLocalPosSession builds an offline-ready active POS session", () => {
+  const created = createLocalPosSession({
+    id: "offline-session-1",
+    terminalId: "terminal-1",
+    terminalDisplayToken: "display-token",
+    createdAt: "2026-07-13T09:00:00.000Z",
+  });
+
+  assert.equal(created.id, "offline-session-1");
+  assert.equal(created.status, "ACTIVE");
+  assert.equal(created.terminal?.id, "terminal-1");
+  assert.equal(created.terminal?.offlineEnabled, true);
+  assert.equal(created.paymentMethod, "CASH");
+  assert.equal(created.items.length, 0);
+});
+
+test("buildOfflineSalePayload converts a local session to a sync-safe sale", () => {
+  const localSession = updateSessionProductQuantity(
+    createLocalPosSession({
+      id: "offline-session-1",
+      terminalId: "terminal-1",
+      terminalDisplayToken: "display-token",
+      createdAt: "2026-07-13T09:00:00.000Z",
+    }),
+    inventoryItem(),
+    2,
+  );
+  const payload = buildOfflineSalePayload({
+    session: localSession,
+    terminalId: "terminal-1",
+    clientRequestId: "offline:terminal-1:request-1",
+    soldAt: "2026-07-13T09:05:00.000Z",
+  });
+
+  assert.equal(payload.terminalId, "terminal-1");
+  assert.equal(payload.clientRequestId, "offline:terminal-1:request-1");
+  assert.equal(payload.paymentMethod, "CASH");
+  assert.equal(payload.soldAt, "2026-07-13T09:05:00.000Z");
+  assert.deepEqual(payload.items, [
+    {
+      productId: "product-1",
+      quantity: "2",
+      unitPrice: "3000",
+    },
+  ]);
 });
 
 test("calculateSessionTotals keeps non-credit cash payments following the current total", () => {

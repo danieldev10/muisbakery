@@ -7,6 +7,7 @@ import {
   CustomerType,
   FinishedProductStockMovementType,
   PaymentMethod,
+  PosOfflineSyncStatus,
   PosSessionStatus,
   SalesReturnDisposition,
 } from "@prisma/client";
@@ -1209,4 +1210,281 @@ test("SalesService.updatePosTerminal can rotate the display token", async () => 
       pairingCodeRotated: false,
     },
   );
+});
+
+test("SalesService.syncOfflinePosSales treats repeated client request IDs as duplicates", async () => {
+  const attempts: Array<Record<string, unknown>> = [];
+  const sale = {
+    id: "sale-1",
+    saleNumber: 72,
+    clientRequestId: "offline:terminal-1:request-1",
+    terminalId: "terminal-1",
+    customerType: CustomerType.INDIVIDUAL,
+    retailerId: null,
+    retailerApprovalId: null,
+    paymentMethod: PaymentMethod.CASH,
+    customerName: null,
+    soldAt: new Date("2026-07-13T09:00:00.000Z"),
+    subtotal: 6000,
+    discount: 0,
+    totalAmount: 6000,
+    amountPaid: 6000,
+    balanceDue: 0,
+    notes: "Offline POS checkout.",
+    createdAt: new Date("2026-07-13T09:00:01.000Z"),
+    createdBy: null,
+    terminal: { id: "terminal-1", name: "Front counter" },
+    retailer: null,
+    retailerApproval: null,
+    items: [
+      {
+        id: "sale-item-1",
+        quantity: 2,
+        unitPrice: 3000,
+        lineTotal: 6000,
+        product,
+        batchIssues: [],
+      },
+    ],
+  };
+  const service = createSalesService(
+    {
+      posTerminal: {
+        findUnique: async ({
+          select,
+        }: {
+          select?: Record<string, unknown>;
+        }) =>
+          select && "offlineEnabled" in select
+            ? { id: "terminal-1", offlineEnabled: true }
+            : {
+                id: "terminal-1",
+                displayToken: "display-token",
+                isActive: true,
+                deviceSecretHash: hashSecret("secret"),
+              },
+        update: async () => terminalRecord({ lastSyncedAt: new Date() }),
+      },
+      sale: {
+        findUnique: async () => sale,
+      },
+      posOfflineSyncAttempt: {
+        upsert: async ({ create }: { create: Record<string, unknown> }) => {
+          attempts.push(create);
+        },
+      },
+    },
+    createAuditMock().audit,
+  );
+
+  const result = await service.syncOfflinePosSales(
+    {
+      terminalId: "terminal-1",
+      sales: [
+        {
+          terminalId: "terminal-1",
+          clientRequestId: "offline:terminal-1:request-1",
+          customerType: CustomerType.INDIVIDUAL,
+          paymentMethod: PaymentMethod.CASH,
+          soldAt: "2026-07-13T09:00:00.000Z",
+          items: [{ productId: product.id, quantity: "2", unitPrice: "3000" }],
+        },
+      ],
+    },
+    actor,
+    "secret",
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]?.status, PosOfflineSyncStatus.DUPLICATE);
+  assert.equal(result.results[0]?.sale?.id, "sale-1");
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0]?.status, PosOfflineSyncStatus.DUPLICATE);
+  assert.equal(attempts[0]?.saleId, "sale-1");
+});
+
+test("SalesService.listPosOfflineSyncAttempts filters reconciliation records", async () => {
+  let findManyArgs: Record<string, unknown> | null = null;
+  const attemptedAt = new Date("2026-07-13T10:00:00.000Z");
+  const service = createSalesService(
+    {
+      posOfflineSyncAttempt: {
+        findMany: async (args: Record<string, unknown>) => {
+          findManyArgs = args;
+
+          return [
+            {
+              id: "attempt-1",
+              terminalId: "terminal-1",
+              terminal: {
+                id: "terminal-1",
+                name: "Front counter",
+                offlineEnabled: true,
+              },
+              clientRequestId: "offline:terminal-1:request-1",
+              status: PosOfflineSyncStatus.CONFLICT,
+              sale: null,
+              payload: { clientRequestId: "offline:terminal-1:request-1" },
+              errorMessage: "Insufficient allocated stock.",
+              conflictCode: "BUSINESS_RULE",
+              attemptedAt,
+              syncedAt: null,
+              createdAt: attemptedAt,
+              updatedAt: attemptedAt,
+            },
+          ];
+        },
+      },
+    },
+    createAuditMock().audit,
+  );
+
+  const result = await service.listPosOfflineSyncAttempts({
+    q: "stock",
+    status: PosOfflineSyncStatus.CONFLICT,
+    terminalId: "terminal-1",
+    from: "2026-07-13",
+    to: "2026-07-13",
+  });
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.id, "attempt-1");
+  assert.equal(result[0]?.terminal.name, "Front counter");
+  assert.equal(result[0]?.status, PosOfflineSyncStatus.CONFLICT);
+  assert.equal(
+    (findManyArgs?.where as { status?: unknown }).status,
+    PosOfflineSyncStatus.CONFLICT,
+  );
+  assert.equal(
+    (findManyArgs?.where as { terminalId?: unknown }).terminalId,
+    "terminal-1",
+  );
+  assert.ok((findManyArgs?.where as { attemptedAt?: unknown }).attemptedAt);
+});
+
+test("SalesService.retryPosOfflineSyncAttempt marks invalid payloads as failed", async () => {
+  const attemptedAt = new Date("2026-07-13T10:15:00.000Z");
+  let upsertArgs: {
+    create?: Record<string, unknown>;
+    update?: Record<string, unknown>;
+  } | null = null;
+  const baseAttempt = {
+    id: "attempt-1",
+    terminalId: "terminal-1",
+    terminal: {
+      id: "terminal-1",
+      name: "Front counter",
+      offlineEnabled: true,
+    },
+    clientRequestId: "offline:terminal-1:bad-request",
+    status: PosOfflineSyncStatus.CONFLICT,
+    sale: null,
+    payload: { clientRequestId: "offline:terminal-1:bad-request" },
+    errorMessage: "Previous sync failed.",
+    conflictCode: "BUSINESS_RULE",
+    attemptedAt,
+    syncedAt: null,
+    createdAt: attemptedAt,
+    updatedAt: attemptedAt,
+  };
+  const service = createSalesService(
+    {
+      posOfflineSyncAttempt: {
+        findUnique: async () => baseAttempt,
+        findUniqueOrThrow: async () => ({
+          ...baseAttempt,
+          status: PosOfflineSyncStatus.FAILED,
+          errorMessage: "Required",
+          conflictCode: "INVALID_PAYLOAD",
+          updatedAt: new Date("2026-07-13T10:16:00.000Z"),
+        }),
+        upsert: async (args: {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          upsertArgs = args;
+        },
+      },
+    },
+    createAuditMock().audit,
+  );
+
+  const result = await service.retryPosOfflineSyncAttempt("attempt-1", actor);
+
+  assert.equal(result.status, PosOfflineSyncStatus.FAILED);
+  assert.equal(result.conflictCode, "INVALID_PAYLOAD");
+  assert.equal(upsertArgs?.update?.status, PosOfflineSyncStatus.FAILED);
+  assert.equal(upsertArgs?.update?.conflictCode, "INVALID_PAYLOAD");
+});
+
+test("SalesService.retryPosOfflineSyncAttempt rejects mismatched payload identity", async () => {
+  const attemptedAt = new Date("2026-07-13T10:30:00.000Z");
+  let saleLookupCalled = false;
+  let upsertArgs: {
+    create?: Record<string, unknown>;
+    update?: Record<string, unknown>;
+  } | null = null;
+  const baseAttempt = {
+    id: "attempt-1",
+    terminalId: "terminal-1",
+    terminal: {
+      id: "terminal-1",
+      name: "Front counter",
+      offlineEnabled: true,
+    },
+    clientRequestId: "offline:terminal-1:request-1",
+    status: PosOfflineSyncStatus.CONFLICT,
+    sale: null,
+    payload: {
+      terminalId: "terminal-2",
+      clientRequestId: "offline:terminal-2:request-2",
+      customerType: CustomerType.INDIVIDUAL,
+      paymentMethod: PaymentMethod.CASH,
+      soldAt: "2026-07-13T10:30:00.000Z",
+      items: [{ productId: product.id, quantity: "1", unitPrice: "3000" }],
+    },
+    errorMessage: "Previous sync failed.",
+    conflictCode: "BUSINESS_RULE",
+    attemptedAt,
+    syncedAt: null,
+    createdAt: attemptedAt,
+    updatedAt: attemptedAt,
+  };
+  const service = createSalesService(
+    {
+      sale: {
+        findUnique: async () => {
+          saleLookupCalled = true;
+          return null;
+        },
+      },
+      posOfflineSyncAttempt: {
+        findUnique: async () => baseAttempt,
+        findUniqueOrThrow: async () => ({
+          ...baseAttempt,
+          status: PosOfflineSyncStatus.FAILED,
+          errorMessage: "Sync payload identity does not match this attempt.",
+          conflictCode: "INVALID_PAYLOAD",
+          updatedAt: new Date("2026-07-13T10:31:00.000Z"),
+        }),
+        upsert: async (args: {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          upsertArgs = args;
+        },
+      },
+    },
+    createAuditMock().audit,
+  );
+
+  const result = await service.retryPosOfflineSyncAttempt("attempt-1", actor);
+
+  assert.equal(result.status, PosOfflineSyncStatus.FAILED);
+  assert.equal(result.conflictCode, "INVALID_PAYLOAD");
+  assert.equal(
+    upsertArgs?.update?.errorMessage,
+    "Sync payload identity does not match this attempt.",
+  );
+  assert.equal(saleLookupCalled, false);
 });

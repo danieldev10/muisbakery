@@ -80,6 +80,12 @@ const saleItemSchema = z.object({
   unitPrice: optionalMoneySchema,
 });
 
+const clientRequestIdSchema = z
+  .string()
+  .trim()
+  .min(1, "Offline sale is missing its local request ID.")
+  .max(120, "Offline sale request ID is too long.");
+
 export const createSaleSchema = z
   .object({
     customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
@@ -149,6 +155,95 @@ export const createSaleSchema = z
         path: ["retailerApprovalId"],
       });
     }
+  });
+
+export const syncOfflinePosSaleSchema = z
+  .object({
+    terminalId: z.string().trim().min(1),
+    clientRequestId: clientRequestIdSchema,
+    customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
+    retailerId: optionalId,
+    retailerApprovalId: optionalId,
+    paymentMethod: z.enum(PaymentMethod),
+    customerName: optionalText(160),
+    soldAt: optionalDate,
+    discount: optionalMoneySchema,
+    amountPaid: optionalMoneySchema,
+    notes: optionalText(500),
+    items: z.array(saleItemSchema).min(1, "Add at least one sale item."),
+  })
+  .superRefine((value, context) => {
+    const productIds = new Set<string>();
+
+    value.items.forEach((item, index) => {
+      if (productIds.has(item.productId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Each product can only appear once on a sale.",
+          path: ["items", index, "productId"],
+        });
+      }
+      productIds.add(item.productId);
+    });
+
+    if (value.customerType === CustomerType.RETAILER && !value.retailerId) {
+      context.addIssue({
+        code: "custom",
+        message: "Select a retailer for retailer sales.",
+        path: ["retailerId"],
+      });
+    }
+
+    if (value.customerType === CustomerType.INDIVIDUAL && value.retailerId) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer can only be selected for retailer sales.",
+        path: ["retailerId"],
+      });
+    }
+
+    if (
+      value.customerType === CustomerType.INDIVIDUAL &&
+      value.retailerApprovalId
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer approval can only be selected for retailer sales.",
+        path: ["retailerApprovalId"],
+      });
+    }
+
+    if (
+      value.customerType === CustomerType.RETAILER &&
+      value.paymentMethod !== PaymentMethod.CREDIT &&
+      value.retailerApprovalId
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer approval is only needed for credit sales.",
+        path: ["retailerApprovalId"],
+      });
+    }
+  });
+
+export const syncOfflinePosBatchSchema = z
+  .object({
+    terminalId: z.string().trim().min(1),
+    sales: z
+      .array(syncOfflinePosSaleSchema)
+      .min(1, "Add at least one offline sale to sync.")
+      .max(50, "Sync at most 50 offline sales at a time."),
+  })
+  .superRefine((value, context) => {
+    value.sales.forEach((sale, index) => {
+      if (sale.terminalId !== value.terminalId) {
+        context.addIssue({
+          code: "custom",
+          message: "Offline sale terminal does not match this sync request.",
+          path: ["sales", index, "terminalId"],
+        });
+      }
+    });
   });
 
 export const recordReturnSchema = z
@@ -302,3 +397,4 @@ export const recordRetailerPaymentSchema = z.object({
 });
 
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
+export type SyncOfflinePosSaleInput = z.infer<typeof syncOfflinePosSaleSchema>;

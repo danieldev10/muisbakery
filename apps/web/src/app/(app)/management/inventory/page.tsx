@@ -2,6 +2,7 @@ import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { InlineActionForm } from "@/components/admin/inline-action-form";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type { ManagementInventoryReport } from "@/lib/management/types";
 import {
   pageNumber,
@@ -142,9 +143,102 @@ export default async function ManagementInventoryPage({
     filteredFinishedProducts,
     pageNumber(params.productsPage),
   );
+  const reportSections = [
+    {
+      title: "Valuation",
+      rows: [
+        {
+          "Raw materials": formatMoney(report.valuation.rawMaterials),
+          "Finished goods": formatMoney(report.valuation.finishedGoods),
+          "Finished goods cost": formatMoney(report.valuation.finishedGoodsCost),
+          "Finished goods retail": formatMoney(
+            report.valuation.finishedGoodsRetail,
+          ),
+          "Total stock value": formatMoney(report.valuation.totalStockValue),
+          "Total retail value": formatMoney(report.valuation.totalRetailValue),
+        },
+      ],
+    },
+    {
+      title: "Raw material stock",
+      rows: filteredStockedRawMaterials.map((item) => ({
+        Material: item.rawMaterial.name,
+        Remaining: formatQuantity(
+          item.totalRemaining,
+          item.rawMaterial.baseUnit.abbreviation,
+        ),
+        Value: formatMoney(item.estimatedValue),
+        Batches: item.batches.length,
+      })),
+    },
+    {
+      title: "Raw material batches",
+      rows: filteredBatchMaterials.flatMap((item) =>
+        item.batches
+          .filter(
+            (batch) =>
+              matchesSearch(batchQuery, [
+                item.rawMaterial.name,
+                item.rawMaterial.baseUnit.abbreviation,
+                batch.batchNumber,
+                batch.batchLabel,
+                batch.supplier?.name,
+                batch.quantityRemaining,
+                batch.unitCost,
+                batch.estimatedValue,
+              ]) &&
+              matchesSelect(batchSupplier, batch.supplier?.id ?? "") &&
+              matchesDateRange(batch.receivedAt, batchFrom, batchTo),
+          )
+          .map((batch) => ({
+            Material: item.rawMaterial.name,
+            Batch: batch.batchLabel,
+            Supplier: batch.supplier?.name ?? "",
+            Remaining: formatQuantity(
+              batch.quantityRemaining,
+              item.rawMaterial.baseUnit.abbreviation,
+            ),
+            "Unit cost": batch.unitCost ? formatMoney(batch.unitCost) : "",
+            Value: formatMoney(batch.estimatedValue),
+            "Received at": formatDate(batch.receivedAt),
+          })),
+      ),
+    },
+    {
+      title: "Finished goods",
+      rows: filteredFinishedProducts.map((item) => ({
+        Product: formatProductName(item.product),
+        Remaining: formatQuantity(
+          item.totalRemaining,
+          item.product.unit.abbreviation,
+        ),
+        "Cost value": formatMoney(item.estimatedCostValue),
+        "Retail value": formatMoney(item.estimatedRetailValue),
+        Batches: item.batches.length,
+      })),
+    },
+    {
+      title: "Managed raw material costs",
+      rows: filteredCostMaterials.map((item) => ({
+        Material: item.rawMaterial.name,
+        "Base unit": item.rawMaterial.baseUnit.abbreviation,
+        "Current unit cost": item.rawMaterial.unitCost
+          ? formatMoney(item.rawMaterial.unitCost)
+          : "",
+      })),
+    },
+  ];
 
   return (
     <ManagementPageShell>
+      <div className="flex justify-end">
+        <ReportExportActions
+          filename="management-inventory"
+          sections={reportSections}
+          title="Management inventory report"
+        />
+      </div>
+
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard
           label="Raw materials"

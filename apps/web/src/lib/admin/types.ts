@@ -1,4 +1,5 @@
 import type { AppRole } from "@/lib/roles";
+import type { Sale } from "@/lib/operations/types";
 
 export type AdminUser = {
   id: string;
@@ -137,6 +138,31 @@ export type PosTerminal = {
     createdAt: string;
     updatedAt: string;
   }>;
+};
+
+export type PosOfflineSyncStatus =
+  | "SYNCED"
+  | "DUPLICATE"
+  | "CONFLICT"
+  | "FAILED";
+
+export type PosOfflineSyncAttempt = {
+  id: string;
+  terminal: {
+    id: string;
+    name: string | null;
+    offlineEnabled: boolean;
+  };
+  clientRequestId: string;
+  status: PosOfflineSyncStatus;
+  sale: Sale | null;
+  payload: unknown;
+  errorMessage: string | null;
+  conflictCode: string | null;
+  attemptedAt: string;
+  syncedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type FormState = {

@@ -2,6 +2,7 @@ import { PaymentMethod } from "@prisma/client";
 
 import type {
   PosSessionWithIncludes,
+  PosOfflineSyncAttemptWithIncludes,
   PosTerminalWithIncludes,
   ProductInventory,
   RetailerOrderApprovalWithIncludes,
@@ -369,5 +370,24 @@ export function serializePairedPosTerminal(
   return {
     ...serializePosTerminal(terminal),
     deviceSecret,
+  };
+}
+
+export function serializePosOfflineSyncAttempt(
+  attempt: PosOfflineSyncAttemptWithIncludes,
+) {
+  return {
+    id: attempt.id,
+    terminal: attempt.terminal,
+    clientRequestId: attempt.clientRequestId,
+    status: attempt.status,
+    sale: attempt.sale ? serializeSale(attempt.sale) : null,
+    payload: attempt.payload,
+    errorMessage: attempt.errorMessage,
+    conflictCode: attempt.conflictCode,
+    attemptedAt: attempt.attemptedAt.toISOString(),
+    syncedAt: attempt.syncedAt?.toISOString() ?? null,
+    createdAt: attempt.createdAt.toISOString(),
+    updatedAt: attempt.updatedAt.toISOString(),
   };
 }

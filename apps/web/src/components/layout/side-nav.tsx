@@ -50,6 +50,7 @@ const iconByHref: Record<string, IconComponent> = {
   "/admin/suppliers": Truck,
   "/admin/retailers": ReceiptText,
   "/admin/pos-terminals": MonitorUp,
+  "/admin/pos-sync": History,
   "/admin/recipes": BookOpen,
   "/admin/units": Boxes,
   "/admin/expense-categories": CircleDollarSign,

@@ -7,6 +7,7 @@ import { AdminFormModal } from "@/components/admin/form-modal";
 import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type { ManagementExpensesReport } from "@/lib/management/types";
 import {
   pageNumber,
@@ -75,10 +76,55 @@ export default async function ManagementExpensesPage({
     label: category.name,
     value: category.id,
   }));
+  const reportSections = [
+    {
+      title: "Summary",
+      rows: [
+        {
+          Month: report.month.label,
+          "Total operating expenses": formatMoney(report.summary.totalAmount),
+          Expenses: report.summary.count,
+          "Voided expenses": report.summary.voidedCount,
+          "Largest category": topCategory?.category.name ?? "",
+        },
+      ],
+    },
+    {
+      title: "By category",
+      rows: report.summary.byCategory.map((entry) => ({
+        Category: entry.category.name,
+        Expenses: entry.count,
+        Amount: formatMoney(entry.amount),
+      })),
+    },
+    {
+      title: "Expenses",
+      rows: filteredExpenses.map((expense) => ({
+        Date: formatDate(expense.incurredAt),
+        Category: expense.category.name,
+        Amount: formatMoney(expense.amount),
+        Vendor: expense.vendor ?? "",
+        Payment: paymentLabels[expense.paymentMethod],
+        "Recorded by": expense.createdBy?.name ?? expense.createdBy?.email ?? "",
+        Status: expense.voidedAt ? "Voided" : "Active",
+        Notes: expense.voidedAt
+          ? `Voided: ${expense.voidReason ?? ""}`
+          : expense.notes ?? "",
+      })),
+    },
+  ];
 
   return (
     <ManagementPageShell>
       <MonthFilter month={report.month.value} />
+      <div className="flex justify-end">
+        <ReportExportActions
+          filename={`management-expenses-${report.month.value}`}
+          sections={reportSections}
+          subtitle={`Month: ${report.month.label}`}
+          title="Management expenses"
+        />
+      </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard

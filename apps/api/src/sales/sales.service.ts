@@ -11,6 +11,7 @@ import {
   CustomerType,
   FinishedProductStockMovementType,
   PaymentMethod,
+  PosOfflineSyncStatus,
   PosSessionStatus,
   Prisma,
   RetailerOrderApprovalStatus,
@@ -41,6 +42,8 @@ import {
   requestRetailerOrderApprovalSchema,
   setTerminalRetailerCreditAllocationSchema,
   setTerminalStockAllocationSchema,
+  syncOfflinePosBatchSchema,
+  syncOfflinePosSaleSchema,
   updateRetailerOrderApprovalSchema,
   recordReturnSchema,
   updateRetailerSchema,
@@ -48,9 +51,11 @@ import {
   updatePosSessionSchema,
   upsertPosSessionItemSchema,
   type CreateSaleInput,
+  type SyncOfflinePosSaleInput,
 } from "./sales.schemas";
 import {
   inventoryInclude,
+  posOfflineSyncAttemptInclude,
   posSessionInclude,
   posTerminalInclude,
   productSelect,
@@ -66,6 +71,7 @@ import {
 import {
   serializeInventoryItem,
   serializePairedPosTerminal,
+  serializePosOfflineSyncAttempt,
   serializePosSession,
   serializePosTerminal,
   serializeRetailer,
@@ -91,6 +97,10 @@ function numericSearch(value: string | undefined) {
 
   const parsed = Number.parseInt(value.replace(/^#/, ""), 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function jsonPayload(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
 function hashSecret(value: string) {
@@ -228,6 +238,43 @@ function returnWhere(query: QueryParams | undefined) {
     ) {
       where.OR.push({ disposition: search as SalesReturnDisposition });
     }
+  }
+
+  return where;
+}
+
+function offlineSyncWhere(query: QueryParams | undefined) {
+  const search = queryText(query, "q");
+  const status = queryText(query, "status");
+  const terminalId = queryText(query, "terminalId");
+  const attemptedAt = dateRangeFilter(
+    queryText(query, "from"),
+    queryText(query, "to"),
+  );
+  const where: Prisma.PosOfflineSyncAttemptWhereInput = {};
+
+  if (
+    status &&
+    Object.values(PosOfflineSyncStatus).includes(status as PosOfflineSyncStatus)
+  ) {
+    where.status = status as PosOfflineSyncStatus;
+  }
+
+  if (terminalId) {
+    where.terminalId = terminalId;
+  }
+
+  if (attemptedAt) {
+    where.attemptedAt = attemptedAt;
+  }
+
+  if (search) {
+    where.OR = [
+      { clientRequestId: containsFilter(search) },
+      { errorMessage: containsFilter(search) },
+      { conflictCode: containsFilter(search) },
+      { terminal: { name: containsFilter(search) } },
+    ];
   }
 
   return where;
@@ -1161,6 +1208,357 @@ export class SalesService {
     });
 
     return serializePosTerminal(terminal);
+  }
+
+  async getPosOfflineSnapshot(id: string, deviceSecret: string | undefined) {
+    await this.assertTerminalDevice(id, deviceSecret);
+
+    const terminal = await this.prisma.posTerminal.update({
+      where: { id },
+      data: { lastSeenAt: new Date() },
+      include: posTerminalInclude,
+    });
+
+    if (!terminal.offlineEnabled) {
+      throw new BadRequestException(
+        "Offline mode is not enabled for this POS terminal.",
+      );
+    }
+
+    const productIds = terminal.stockAllocations.map(
+      (allocation) => allocation.productId,
+    );
+    const products =
+      productIds.length > 0
+        ? await this.prisma.product.findMany({
+            where: { id: { in: productIds } },
+            include: inventoryInclude,
+            orderBy: { name: "asc" },
+          })
+        : [];
+    const productInventoryById = new Map(
+      products.map((product) => [product.id, serializeInventoryItem(product)]),
+    );
+    const serializedTerminal = serializePosTerminal(terminal);
+    const allocationVersion = terminal.stockAllocations
+      .map(
+        (allocation) =>
+          `${allocation.id}:${allocation.allocatedQuantity}:${allocation.soldQuantity}:${allocation.updatedAt.getTime()}`,
+      )
+      .join("|");
+    const creditVersion = terminal.retailerCreditAllocations
+      .map(
+        (allocation) =>
+          `${allocation.id}:${allocation.allocatedAmount.toString()}:${allocation.usedAmount.toString()}:${allocation.isActive}:${allocation.updatedAt.getTime()}`,
+      )
+      .join("|");
+
+    return {
+      terminal: serializedTerminal,
+      products: serializedTerminal.stockAllocations.map((allocation) => ({
+        allocation,
+        inventory: productInventoryById.get(allocation.product.id) ?? {
+          product: allocation.product,
+          totalRemaining: "0",
+          batches: [],
+        },
+      })),
+      retailerCreditAllocations:
+        serializedTerminal.retailerCreditAllocations.filter(
+          (allocation) => allocation.isActive,
+        ),
+      serverTime: new Date().toISOString(),
+      snapshotVersion: hashSecret(
+        `${terminal.id}:${terminal.updatedAt.getTime()}:${allocationVersion}:${creditVersion}`,
+      ),
+    };
+  }
+
+  async syncOfflinePosSales(
+    input: unknown,
+    actor: AuthenticatedUser,
+    deviceSecret?: string,
+  ) {
+    const parsed = syncOfflinePosBatchSchema.safeParse(input ?? {});
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    await this.assertTerminalDevice(parsed.data.terminalId, deviceSecret);
+
+    const terminal = await this.prisma.posTerminal.findUnique({
+      where: { id: parsed.data.terminalId },
+      select: { id: true, offlineEnabled: true },
+    });
+
+    if (!terminal) {
+      throw new NotFoundException("POS terminal not found.");
+    }
+
+    if (!terminal.offlineEnabled) {
+      throw new BadRequestException(
+        "Offline mode is not enabled for this POS terminal.",
+      );
+    }
+
+    const results = [];
+
+    for (const sale of parsed.data.sales) {
+      results.push(await this.syncOfflinePosSale(sale, actor));
+    }
+
+    await this.prisma.posTerminal.update({
+      where: { id: parsed.data.terminalId },
+      data: {
+        lastSeenAt: new Date(),
+        lastSyncedAt: new Date(),
+      },
+    });
+
+    return {
+      terminalId: parsed.data.terminalId,
+      serverTime: new Date().toISOString(),
+      results,
+    };
+  }
+
+  private async recordOfflineSyncAttempt(input: {
+    terminalId: string;
+    clientRequestId: string;
+    status: PosOfflineSyncStatus;
+    payload: unknown;
+    saleId?: string | null;
+    errorMessage?: string | null;
+    conflictCode?: string | null;
+    syncedAt?: Date | null;
+  }) {
+    await this.prisma.posOfflineSyncAttempt.upsert({
+      where: {
+        terminalId_clientRequestId: {
+          terminalId: input.terminalId,
+          clientRequestId: input.clientRequestId,
+        },
+      },
+      create: {
+        terminalId: input.terminalId,
+        clientRequestId: input.clientRequestId,
+        status: input.status,
+        saleId: input.saleId ?? null,
+        payload: jsonPayload(input.payload),
+        errorMessage: input.errorMessage ?? null,
+        conflictCode: input.conflictCode ?? null,
+        attemptedAt: new Date(),
+        syncedAt: input.syncedAt ?? null,
+      },
+      update: {
+        status: input.status,
+        saleId: input.saleId ?? null,
+        payload: jsonPayload(input.payload),
+        errorMessage: input.errorMessage ?? null,
+        conflictCode: input.conflictCode ?? null,
+        attemptedAt: new Date(),
+        syncedAt: input.syncedAt ?? null,
+      },
+    });
+  }
+
+  private async syncOfflinePosSale(
+    sale: SyncOfflinePosSaleInput,
+    actor: AuthenticatedUser,
+  ) {
+    const payload = jsonPayload(sale);
+    const existing = await this.prisma.sale.findUnique({
+      where: { clientRequestId: sale.clientRequestId },
+      include: saleInclude,
+    });
+
+    if (existing) {
+      await this.recordOfflineSyncAttempt({
+        terminalId: sale.terminalId,
+        clientRequestId: sale.clientRequestId,
+        status: PosOfflineSyncStatus.DUPLICATE,
+        payload,
+        saleId: existing.id,
+        syncedAt: new Date(),
+      });
+
+      return {
+        clientRequestId: sale.clientRequestId,
+        status: PosOfflineSyncStatus.DUPLICATE,
+        sale: serializeSale(existing),
+        errorMessage: null,
+      };
+    }
+
+    try {
+      const created = await this.prisma.$transaction(
+        async (tx) =>
+          this.createSaleInTransaction(
+            tx,
+            {
+              ...sale,
+              terminalId: sale.terminalId,
+              clientRequestId: sale.clientRequestId,
+            } satisfies CreateSaleInput,
+            actor,
+          ),
+        { timeout: 15000, maxWait: 15000 },
+      );
+
+      await this.auditSaleRecorded(created, actor);
+      await this.recordOfflineSyncAttempt({
+        terminalId: sale.terminalId,
+        clientRequestId: sale.clientRequestId,
+        status: PosOfflineSyncStatus.SYNCED,
+        payload,
+        saleId: created.id,
+        syncedAt: new Date(),
+      });
+
+      return {
+        clientRequestId: sale.clientRequestId,
+        status: PosOfflineSyncStatus.SYNCED,
+        sale: serializeSale(created),
+        errorMessage: null,
+      };
+    } catch (error: unknown) {
+      const expectedConflict =
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ConflictException;
+      const errorMessage =
+        error instanceof Error ? error.message : "Offline sale sync failed.";
+      const status = expectedConflict
+        ? PosOfflineSyncStatus.CONFLICT
+        : PosOfflineSyncStatus.FAILED;
+
+      if (!expectedConflict) {
+        this.logger.error(
+          `Offline POS sync failed terminal=${sale.terminalId} request=${sale.clientRequestId} reason=${errorMessage}`,
+        );
+      }
+
+      await this.recordOfflineSyncAttempt({
+        terminalId: sale.terminalId,
+        clientRequestId: sale.clientRequestId,
+        status,
+        payload,
+        errorMessage,
+        conflictCode: expectedConflict ? "BUSINESS_RULE" : "SERVER_ERROR",
+        syncedAt: null,
+      });
+
+      return {
+        clientRequestId: sale.clientRequestId,
+        status,
+        sale: null,
+        errorMessage,
+      };
+    }
+  }
+
+  async listPosOfflineSyncAttempts(query?: QueryParams) {
+    const where = offlineSyncWhere(query);
+    const orderBy = { attemptedAt: "desc" } as const;
+
+    if (hasPaginatedRequest(query)) {
+      const { page, pageSize, skip, take } = parsePagination(query);
+      const [total, attempts] = await this.prisma.$transaction([
+        this.prisma.posOfflineSyncAttempt.count({ where }),
+        this.prisma.posOfflineSyncAttempt.findMany({
+          where,
+          include: posOfflineSyncAttemptInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+
+      return paginatedResult(
+        attempts.map(serializePosOfflineSyncAttempt),
+        total,
+        page,
+        pageSize,
+      );
+    }
+
+    const attempts = await this.prisma.posOfflineSyncAttempt.findMany({
+      where,
+      include: posOfflineSyncAttemptInclude,
+      orderBy,
+      take: 200,
+    });
+
+    return attempts.map(serializePosOfflineSyncAttempt);
+  }
+
+  async retryPosOfflineSyncAttempt(id: string, actor: AuthenticatedUser) {
+    const attempt = await this.prisma.posOfflineSyncAttempt.findUnique({
+      where: { id },
+      include: posOfflineSyncAttemptInclude,
+    });
+
+    if (!attempt) {
+      throw new NotFoundException("Offline POS sync attempt not found.");
+    }
+
+    if (
+      attempt.status === PosOfflineSyncStatus.SYNCED ||
+      attempt.status === PosOfflineSyncStatus.DUPLICATE
+    ) {
+      return serializePosOfflineSyncAttempt(attempt);
+    }
+
+    const parsed = syncOfflinePosSaleSchema.safeParse(attempt.payload);
+
+    if (!parsed.success) {
+      await this.recordOfflineSyncAttempt({
+        terminalId: attempt.terminalId,
+        clientRequestId: attempt.clientRequestId,
+        status: PosOfflineSyncStatus.FAILED,
+        payload: attempt.payload,
+        errorMessage: parsed.error.issues[0]?.message ?? "Invalid sync payload.",
+        conflictCode: "INVALID_PAYLOAD",
+      });
+
+      const updated = await this.prisma.posOfflineSyncAttempt.findUniqueOrThrow({
+        where: { id },
+        include: posOfflineSyncAttemptInclude,
+      });
+
+      return serializePosOfflineSyncAttempt(updated);
+    }
+
+    if (
+      parsed.data.terminalId !== attempt.terminalId ||
+      parsed.data.clientRequestId !== attempt.clientRequestId
+    ) {
+      await this.recordOfflineSyncAttempt({
+        terminalId: attempt.terminalId,
+        clientRequestId: attempt.clientRequestId,
+        status: PosOfflineSyncStatus.FAILED,
+        payload: attempt.payload,
+        errorMessage: "Sync payload identity does not match this attempt.",
+        conflictCode: "INVALID_PAYLOAD",
+      });
+
+      const updated = await this.prisma.posOfflineSyncAttempt.findUniqueOrThrow({
+        where: { id },
+        include: posOfflineSyncAttemptInclude,
+      });
+
+      return serializePosOfflineSyncAttempt(updated);
+    }
+
+    await this.syncOfflinePosSale(parsed.data, actor);
+
+    const updated = await this.prisma.posOfflineSyncAttempt.findUniqueOrThrow({
+      where: { id },
+      include: posOfflineSyncAttemptInclude,
+    });
+
+    return serializePosOfflineSyncAttempt(updated);
   }
 
   async setPosTerminalStockAllocation(

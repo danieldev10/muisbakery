@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Card, EmptyState, TableShell } from "@/components/admin/layout";
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type { ManagementProfitLossReport } from "@/lib/management/types";
 import { apiGet } from "@/lib/server-api";
 
@@ -61,10 +62,107 @@ export default async function ManagementProfitLossPage({
   const report = await apiGet<ManagementProfitLossReport>(
     `/management/profit-loss?month=${encodeURIComponent(month)}`,
   );
+  const reportSections = [
+    {
+      title: "Statement",
+      rows: [
+        {
+          Line: "Sales revenue",
+          Detail: `${report.revenue.salesCount} sales, net of ${formatMoney(report.revenue.discount)} discounts`,
+          Amount: formatMoney(report.revenue.totalRevenue),
+        },
+        {
+          Line: "Cost of goods sold",
+          Detail: "Finished-good batches sold this month",
+          Amount: `- ${formatMoney(report.costs.costOfGoodsSold)}`,
+        },
+        {
+          Line: "Materials issued to production",
+          Detail: "Operational movement shown for comparison",
+          Amount: formatMoney(report.costs.materialIssuedCost),
+        },
+        {
+          Line: "Gross profit",
+          Detail: `${formatPercent(report.profit.grossMarginPercent)} of revenue`,
+          Amount: formatMoney(report.profit.estimatedGrossProfit),
+        },
+        {
+          Line: "Operating expenses",
+          Detail: `${report.expenses.count} recorded expenses`,
+          Amount: `- ${formatMoney(report.expenses.totalOperatingExpenses)}`,
+        },
+        {
+          Line: "Recorded losses",
+          Detail: "Damaged production waste and damaged returns",
+          Amount: `- ${formatMoney(report.losses.totalEstimatedLoss)}`,
+        },
+        {
+          Line: "Net profit",
+          Detail: `${formatPercent(report.profit.netMarginPercent)} of revenue`,
+          Amount: formatMoney(report.profit.estimatedNetProfit),
+        },
+      ],
+    },
+    {
+      title: "Revenue",
+      rows: [
+        { Metric: "Subtotal", Amount: formatMoney(report.revenue.subtotal) },
+        { Metric: "Discount", Amount: formatMoney(report.revenue.discount) },
+        { Metric: "Amount paid", Amount: formatMoney(report.revenue.amountPaid) },
+        { Metric: "Balance due", Amount: formatMoney(report.revenue.balanceDue) },
+      ],
+    },
+    {
+      title: "Operating expenses by category",
+      rows: report.expenses.byCategory.map((entry) => ({
+        Category: entry.category.name,
+        Expenses: entry.count,
+        Amount: formatMoney(entry.amount),
+      })),
+    },
+    {
+      title: "Recorded losses",
+      rows: [
+        {
+          Loss: "Production waste",
+          Quantity: formatQuantity(report.losses.productionWasteQuantity),
+          "Estimated value": formatMoney(
+            report.losses.productionWasteEstimatedValue,
+          ),
+        },
+        {
+          Loss: "Damaged returns",
+          Quantity: formatQuantity(report.losses.damagedReturnsQuantity),
+          "Estimated value": formatMoney(
+            report.losses.damagedReturnsEstimatedValue,
+          ),
+        },
+        {
+          Loss: "Waste returned to production",
+          Quantity: formatQuantity(
+            report.losses.wasteReturnedToProductionQuantity,
+          ),
+          "Estimated value": "Reused - no loss",
+        },
+      ],
+    },
+    {
+      title: "Calculation notes",
+      rows: report.notes.map((note) => ({ Note: note })),
+    },
+  ];
 
   return (
     <ManagementPageShell>
       <MonthFilter month={report.month.value} />
+      <div className="flex justify-end">
+        <ReportExportActions
+          filename={`management-profit-loss-${report.month.value}`}
+          sections={reportSections}
+          subtitle={`Month: ${report.month.label}`}
+          title="Management operational profit and loss"
+        />
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard

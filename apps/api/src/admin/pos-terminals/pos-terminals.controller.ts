@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -13,6 +14,7 @@ import type { Request } from "express";
 
 import { AdminGuard } from "../../auth/admin.guard";
 import { getRequestUser } from "../../auth/auth.types";
+import type { QueryParams } from "../../common/pagination";
 import { SalesService } from "../../sales/sales.service";
 
 @UseGuards(AdminGuard)
@@ -31,6 +33,16 @@ export class PosTerminalsController {
   @Post()
   create(@Body() body: unknown, @Req() request: Request) {
     return this.sales.createPosTerminal(body, getRequestUser(request));
+  }
+
+  @Get("offline-sync")
+  offlineSyncAttempts(@Query() query: QueryParams) {
+    return this.sales.listPosOfflineSyncAttempts(query);
+  }
+
+  @Post("offline-sync/:id/retry")
+  retryOfflineSyncAttempt(@Param("id") id: string, @Req() request: Request) {
+    return this.sales.retryPosOfflineSyncAttempt(id, getRequestUser(request));
   }
 
   @Patch(":id")

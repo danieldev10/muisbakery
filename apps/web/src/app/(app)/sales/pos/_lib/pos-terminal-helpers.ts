@@ -1,6 +1,7 @@
 import type {
   CustomerType,
   PaymentMethod,
+  PosOfflineSalePayload,
   PosSession,
   PosSessionItem,
   SalesInventoryItem,
@@ -27,6 +28,9 @@ export type PosSessionPatch = {
   retailerApprovalId?: string | null;
   customerName?: string | null;
   paymentMethod?: PaymentMethod;
+  discount?: string;
+  amountPaid?: string | null;
+  notes?: string | null;
 };
 
 export function formatMoney(value: string | number) {
@@ -166,4 +170,66 @@ export function updateSessionProductQuantity(
     items: nextItems,
     updatedAt: new Date().toISOString(),
   });
+}
+
+export function createLocalPosSession(input: {
+  id: string;
+  terminalId: string;
+  terminalDisplayToken: string;
+  createdAt: string;
+}): PosSession {
+  return {
+    id: input.id,
+    displayToken: "",
+    terminal: {
+      id: input.terminalId,
+      displayToken: input.terminalDisplayToken,
+      offlineEnabled: true,
+    },
+    status: "ACTIVE",
+    customerType: "INDIVIDUAL",
+    retailer: null,
+    retailerApprovalId: null,
+    customerName: null,
+    paymentMethod: "CASH",
+    discount: "0.00",
+    amountPaid: "0.00",
+    balanceDue: "0.00",
+    subtotal: "0.00",
+    totalAmount: "0.00",
+    notes: null,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    completedAt: null,
+    completedSale: null,
+    items: [],
+  };
+}
+
+export function buildOfflineSalePayload(input: {
+  session: PosSession;
+  terminalId: string;
+  clientRequestId: string;
+  soldAt: string;
+}): PosOfflineSalePayload {
+  return {
+    terminalId: input.terminalId,
+    clientRequestId: input.clientRequestId,
+    customerType: input.session.customerType,
+    retailerId: input.session.retailer?.id,
+    retailerApprovalId: input.session.retailerApprovalId ?? undefined,
+    paymentMethod: input.session.paymentMethod,
+    customerName: input.session.customerName ?? undefined,
+    soldAt: input.soldAt,
+    discount: input.session.discount,
+    amountPaid: input.session.amountPaid,
+    notes: input.session.notes
+      ? `Offline POS checkout. ${input.session.notes}`
+      : `Offline POS checkout from ${input.session.id}.`,
+    items: input.session.items.map((item) => ({
+      productId: item.product.id,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+    })),
+  };
 }

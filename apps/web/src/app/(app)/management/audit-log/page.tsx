@@ -1,6 +1,7 @@
 import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type { ManagementAuditReport } from "@/lib/management/types";
 import {
   paginatedApiPath,
@@ -46,10 +47,45 @@ export default async function ManagementAuditLogPage({
     label: entry.entityType,
     value: entry.entityType,
   }));
+  const reportSections = [
+    {
+      title: "Role activity",
+      rows: report.roleActivity.map((entry) => ({
+        Role: entry.role,
+        Actions: entry.count,
+      })),
+    },
+    {
+      title: "Record activity",
+      rows: report.entityActivity.map((entry) => ({
+        Record: entry.entityType,
+        Actions: entry.count,
+      })),
+    },
+    {
+      title: "Latest events",
+      rows: report.entries.map((entry) => ({
+        Action: formatAction(entry.action),
+        Record: entry.entityType,
+        Reference: entry.entityId ?? "",
+        Actor: entry.actor?.name ?? entry.actor?.email ?? "System",
+        Role: entry.actor?.role ?? "",
+        Time: formatDateTime(entry.createdAt),
+      })),
+    },
+  ];
 
   return (
     <ManagementPageShell>
       <Card title={`Latest events (${pagination.total})`}>
+        <div className="mb-4 flex justify-end">
+          <ReportExportActions
+            filename="management-audit-log"
+            sections={reportSections}
+            subtitle="Current filtered page"
+            title="Management audit log"
+          />
+        </div>
         <TableToolbar
           basePath="/management/audit-log"
           dateFilters={[

@@ -1,6 +1,7 @@
 import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type { ManagementSalesReport } from "@/lib/management/types";
 import type { DayCloseListReport } from "@/lib/operations/types";
 import {
@@ -140,10 +141,107 @@ export default async function ManagementSalesPage({
     filteredReturns,
     pageNumber(query.returnsPage),
   );
+  const reportSections = [
+    {
+      title: "Summary",
+      rows: [
+        {
+          Month: report.month.label,
+          Sales: report.summary.salesCount,
+          Revenue: formatMoney(report.summary.totalRevenue),
+          Paid: formatMoney(report.summary.amountPaid),
+          "Balance due": formatMoney(report.summary.balanceDue),
+          "Products sold": formatQuantity(report.summary.quantitySold),
+          "Damaged quantity": formatQuantity(report.summary.damagedQuantity),
+          "Returned to stock": formatQuantity(
+            report.summary.returnedToStockQuantity,
+          ),
+        },
+      ],
+    },
+    {
+      title: "Daily close-outs",
+      rows: dayCloses.closes.map((close) => ({
+        Date: formatBusinessDate(close.businessDate),
+        Sales: close.salesCount,
+        "Expected cash": formatMoney(close.expectedCash),
+        "Counted cash": formatMoney(close.countedCash),
+        Variance: formatMoney(close.cashVariance),
+        Credit: formatMoney(close.creditTotal),
+        Damaged: close.damagedQuantity,
+        Returned: close.returnedQuantity,
+        Status: close.status,
+        "Submitted by":
+          close.submittedBy?.name ?? close.submittedBy?.email ?? "",
+      })),
+    },
+    {
+      title: "Payment methods",
+      rows: filteredPaymentSummary.map((entry) => ({
+        Method: paymentLabels[entry.method],
+        Sales: entry.count,
+        Amount: formatMoney(entry.amount),
+      })),
+    },
+    {
+      title: "Product sales",
+      rows: filteredProductSummary.map((entry) => ({
+        Product: formatProductName(entry.product),
+        Quantity: formatQuantity(
+          entry.quantitySold,
+          entry.product.unit.abbreviation,
+        ),
+        Revenue: formatMoney(entry.revenue),
+      })),
+    },
+    {
+      title: "Sales",
+      rows: filteredSales.map((sale) => ({
+        Sale: `#${sale.saleNumber}`,
+        Payment: paymentLabels[sale.paymentMethod],
+        Total: formatMoney(sale.totalAmount),
+        Paid: formatMoney(sale.amountPaid),
+        "Balance due": formatMoney(sale.balanceDue),
+        Cashier: sale.createdBy?.name ?? sale.createdBy?.email ?? "",
+        Items: sale.items
+          .map(
+            (item) =>
+              `${formatProductName(item.product)} x ${formatQuantity(
+                item.quantity,
+                item.product.unit.abbreviation,
+              )}`,
+          )
+          .join("; "),
+        "Sold at": formatDateTime(sale.soldAt),
+      })),
+    },
+    {
+      title: "Returns",
+      rows: filteredReturns.map((entry) => ({
+        Product: formatProductName(entry.product),
+        Disposition: returnLabels[entry.disposition],
+        Quantity: formatQuantity(
+          entry.quantity,
+          entry.product.unit.abbreviation,
+        ),
+        Reason: entry.reason ?? "",
+        "Recorded by": entry.createdBy?.name ?? entry.createdBy?.email ?? "",
+        "Recorded at": formatDateTime(entry.recordedAt),
+      })),
+    },
+  ];
 
   return (
     <ManagementPageShell>
       <MonthFilter month={report.month.value} />
+      <div className="flex justify-end">
+        <ReportExportActions
+          filename={`management-sales-${report.month.value}`}
+          sections={reportSections}
+          subtitle={`Month: ${report.month.label}`}
+          title="Management sales report"
+        />
+      </div>
 
       <div className="grid gap-4 md:grid-cols-4">
         <MetricCard

@@ -1,6 +1,7 @@
 import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
+import { ReportExportActions } from "@/components/reports/report-export-actions";
 import type { ManagementProductionReport } from "@/lib/management/types";
 import {
   pageNumber,
@@ -102,10 +103,110 @@ export default async function ManagementProductionPage({
     filteredRuns,
     pageNumber(query.page),
   );
+  const reportSections = [
+    {
+      title: "Summary",
+      rows: [
+        {
+          Month: report.month.label,
+          Runs: report.summary.runsCount,
+          Produced: formatQuantity(report.summary.quantityProduced),
+          "Sent to Sales": formatQuantity(report.summary.quantityTransferred),
+          Waste: formatQuantity(report.summary.wasteQuantity),
+          "Undercut runs": report.summary.undercutRuns,
+        },
+      ],
+    },
+    {
+      title: "Output by product",
+      rows: filteredOutputByProduct.map((entry) => ({
+        Product: formatProductName(entry.product),
+        Runs: entry.runsCount,
+        Produced: formatQuantity(
+          entry.quantityProduced,
+          entry.product.unit.abbreviation,
+        ),
+        Sent: formatQuantity(
+          entry.quantityTransferred,
+          entry.product.unit.abbreviation,
+        ),
+        Waste: formatQuantity(
+          entry.wasteQuantity,
+          entry.product.unit.abbreviation,
+        ),
+      })),
+    },
+    {
+      title: "Waste by product",
+      rows: filteredWasteByProduct.map((entry) => ({
+        Product: formatProductName(entry.product),
+        Entries: entry.count,
+        Quantity: formatQuantity(
+          entry.quantity,
+          entry.product.unit.abbreviation,
+        ),
+        Value: formatMoney(entry.estimatedRetailValue),
+      })),
+    },
+    {
+      title: "Raw material usage",
+      rows: filteredMaterialUsage.map((entry) => ({
+        "Raw material": entry.rawMaterial.name,
+        Expected: formatQuantity(
+          entry.expectedQuantity,
+          entry.rawMaterial.baseUnit.abbreviation,
+        ),
+        "Actual used": formatQuantity(
+          entry.actualQuantity,
+          entry.rawMaterial.baseUnit.abbreviation,
+        ),
+      })),
+    },
+    {
+      title: "Production runs",
+      rows: filteredRuns.map((run) => ({
+        Product: formatProductName(run.product),
+        Produced: formatQuantity(
+          run.quantityProduced,
+          run.product.unit.abbreviation,
+        ),
+        Expected: run.expectedQuantity
+          ? formatQuantity(run.expectedQuantity, run.product.unit.abbreviation)
+          : "",
+        Shortfall: run.shortfallQuantity
+          ? formatQuantity(run.shortfallQuantity, run.product.unit.abbreviation)
+          : "",
+        Sent: formatQuantity(
+          run.quantityTransferred,
+          run.product.unit.abbreviation,
+        ),
+        Waste: formatQuantity(run.wasteQuantity, run.product.unit.abbreviation),
+        Materials: run.materialUsages
+          .map(
+            (usage) =>
+              `${usage.rawMaterial.name}: ${formatQuantity(
+                usage.actualQuantity,
+                usage.rawMaterial.baseUnit.abbreviation,
+              )}`,
+          )
+          .join("; "),
+        "Produced at": formatDateTime(run.producedAt),
+        "Created by": run.createdBy?.name ?? run.createdBy?.email ?? "",
+      })),
+    },
+  ];
 
   return (
     <ManagementPageShell>
       <MonthFilter month={report.month.value} />
+      <div className="flex justify-end">
+        <ReportExportActions
+          filename={`management-production-${report.month.value}`}
+          sections={reportSections}
+          subtitle={`Month: ${report.month.label}`}
+          title="Management production report"
+        />
+      </div>
 
       <div className="grid gap-4 md:grid-cols-5">
         <MetricCard label="Runs" value={report.summary.runsCount} />
