@@ -355,6 +355,14 @@ export default async function SalesDailySummaryPage({
           )}
         </div>
 
+        {dayClose.unresolvedOfflineSyncs > 0 ? (
+          <p className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {dayClose.unresolvedOfflineSyncs} offline sale(s) have not synced
+            cleanly. The day cannot be closed until they are resolved in
+            Admin&apos;s POS sync review.
+          </p>
+        ) : null}
+
         {dayClose.close && dayClose.needsReclose ? (
           <p
             className={`mb-4 rounded-md border px-3 py-2 text-sm ${

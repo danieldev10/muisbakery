@@ -1,6 +1,11 @@
-const CACHE_NAME = "muisbakery-pos-v3";
+const CACHE_NAME = "muisbakery-pos-v4";
 const POS_PATH = "/sales/pos";
-const SHELL_PATHS = ["/logo.JPG", "/manifest.webmanifest"];
+const SHELL_PATHS = [
+  "/logo.JPG",
+  "/manifest.webmanifest",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+];
 const OFFLINE_POS_FALLBACK_HTML = `<!doctype html>
 <html lang="en">
   <head>
@@ -93,6 +98,7 @@ function shouldHandle(requestUrl) {
     requestUrl.pathname === POS_PATH ||
     requestUrl.pathname === "/logo.JPG" ||
     requestUrl.pathname === "/manifest.webmanifest" ||
+    requestUrl.pathname.startsWith("/icons/") ||
     requestUrl.pathname === "/_next/image" ||
     requestUrl.pathname.startsWith("/_next/static/")
   );
@@ -191,9 +197,38 @@ async function cachedResponse(request) {
   return cache.match(request);
 }
 
+// The web server redirects here when it is up but cannot reach the API. For
+// the POS page that must behave like being offline, not like being signed
+// out — the paired device has everything it needs locally.
+function isApiUnreachableRedirect(response) {
+  if (!response.redirected) {
+    return false;
+  }
+
+  const finalUrl = new URL(response.url);
+
+  return (
+    finalUrl.origin === self.location.origin &&
+    finalUrl.pathname === "/login" &&
+    finalUrl.searchParams.get("reason") === "api-unreachable"
+  );
+}
+
 async function handleRequest(event, requestUrl) {
   try {
     const response = await fetch(event.request);
+
+    if (
+      isPosNavigation(event, requestUrl) &&
+      isApiUnreachableRedirect(response)
+    ) {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(POS_PATH, { ignoreVary: true });
+
+      if (cached) {
+        return cached;
+      }
+    }
 
     if (shouldCacheResponse(requestUrl, response)) {
       const cache = await caches.open(CACHE_NAME);

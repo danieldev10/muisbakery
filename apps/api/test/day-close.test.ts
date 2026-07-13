@@ -41,6 +41,7 @@ function makePrisma({
   existingClose = null as Record<string, unknown> | null,
   createError = null as Error | null,
   approveCount = 1,
+  unresolvedOfflineSyncs = 0,
 } = {}) {
   const created: Record<string, unknown>[] = [];
   const updated: Record<string, unknown>[] = [];
@@ -73,6 +74,9 @@ function makePrisma({
       },
       retailerPayment: {
         findMany: async () => [{ paymentMethod: "CASH", amount: "1000.00" }],
+      },
+      posOfflineSyncAttempt: {
+        count: async () => unresolvedOfflineSyncs,
       },
       salesDayClose: {
         findUnique: async () => existingClose,
@@ -137,6 +141,26 @@ test("needsReclose stays false when the submitted close still matches the day's 
 
   assert.ok(preview.close);
   assert.equal(preview.needsReclose, false);
+});
+
+test("the day cannot be closed over unresolved offline sync attempts", async () => {
+  const { prisma, created } = makePrisma({ unresolvedOfflineSyncs: 2 });
+  const { audit } = createAuditMock();
+  const service = new DayCloseService(prisma as never, audit as never);
+
+  await assert.rejects(
+    service.submit(
+      { date: "2026-07-12", countedCash: "6000.00" },
+      AUTH_ACTOR,
+    ),
+    (error) =>
+      error instanceof ConflictException &&
+      /2 offline sale\(s\) have not synced cleanly/.test(error.message),
+  );
+  assert.equal(created.length, 0);
+
+  const preview = await service.preview("2026-07-12");
+  assert.equal(preview.unresolvedOfflineSyncs, 2);
 });
 
 test("needsReclose flips when sales are recorded after the close was submitted", async () => {

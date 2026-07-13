@@ -122,7 +122,7 @@ function payloadSummary(attempt: PosOfflineSyncAttempt) {
 function SyncDetailsModal({ attempt }: { attempt: PosOfflineSyncAttempt }) {
   return (
     <AdminModal
-      description="Inspect the original offline sale payload and server reconciliation state."
+      description="Terminal, sale, and server reconciliation state for this offline sync."
       title="Offline sync details"
       triggerClassName={secondaryButtonClass}
       triggerIcon={null}
@@ -185,15 +185,6 @@ function SyncDetailsModal({ attempt }: { attempt: PosOfflineSyncAttempt }) {
             </p>
           </section>
         ) : null}
-
-        <section>
-          <p className="mb-2 text-sm font-semibold text-[var(--text-primary)]">
-            Raw payload
-          </p>
-          <pre className="max-h-80 overflow-auto rounded-[5px] border border-[color:var(--border-muted)] bg-stone-950 p-3 text-xs leading-5 text-stone-100">
-            {JSON.stringify(attempt.payload, null, 2)}
-          </pre>
-        </section>
       </div>
     </AdminModal>
   );

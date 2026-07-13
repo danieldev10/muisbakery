@@ -56,7 +56,7 @@ function OfflineBadge({ enabled }: { enabled: boolean }) {
           : "inline-flex items-center rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-muted)] px-2.5 py-0.5 text-xs font-medium text-[var(--text-muted)]"
       }
     >
-      {enabled ? "Offline enabled" : "Offline disabled"}
+      {enabled ? "Enabled" : "Disabled"}
     </span>
   );
 }
@@ -72,10 +72,6 @@ function formatMoney(value: string | number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-}
-
-function formatCount(count: number, singular: string, plural = `${singular}s`) {
-  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function pairingLabel(terminal: PosTerminal) {
@@ -137,6 +133,16 @@ function PosTerminalDetailsModal({ terminal }: { terminal: PosTerminal }) {
             value={<OfflineBadge enabled={terminal.offlineEnabled} />}
           />
           <DetailRow label="Pairing" value={pairingLabel(terminal)} />
+          <DetailRow
+            label="Pairing code"
+            value={
+              terminal.pairedAt
+                ? "Used — device paired"
+                : terminal.pairable
+                  ? `Active · expires ${formatDate(terminal.pairingCodeExpiresAt)}`
+                  : "None set — add one via Edit"
+            }
+          />
           <DetailRow
             label="Paired at"
             value={formatDate(terminal.pairedAt)}
@@ -389,20 +395,7 @@ export default async function PosTerminalsPage({
                 {pairingLabel(terminal)}
               </td>
               <td className="py-3 pr-4">
-                <div className="grid gap-1.5">
-                  <OfflineBadge enabled={terminal.offlineEnabled} />
-                  <p className="text-xs text-stone-500">
-                    {formatCount(
-                      terminal.stockAllocations.length,
-                      "stock allocation",
-                    )}
-                    {" · "}
-                    {formatCount(
-                      terminal.retailerCreditAllocations.length,
-                      "credit allocation",
-                    )}
-                  </p>
-                </div>
+                <OfflineBadge enabled={terminal.offlineEnabled} />
               </td>
               <td className="py-3 pr-4 text-stone-600">
                 {formatDate(terminal.lastSeenAt)}

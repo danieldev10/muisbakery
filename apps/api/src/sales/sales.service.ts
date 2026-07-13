@@ -1423,6 +1423,37 @@ export class SalesService {
         errorMessage: null,
       };
     } catch (error: unknown) {
+      // A racing sync for the same clientRequestId can win between the
+      // duplicate check and the insert; the unique constraint then fires
+      // here. That is a duplicate, not a failure — return the winner's sale.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const winner = await this.prisma.sale.findUnique({
+          where: { clientRequestId: sale.clientRequestId },
+          include: saleInclude,
+        });
+
+        if (winner) {
+          await this.recordOfflineSyncAttempt({
+            terminalId: sale.terminalId,
+            clientRequestId: sale.clientRequestId,
+            status: PosOfflineSyncStatus.DUPLICATE,
+            payload,
+            saleId: winner.id,
+            syncedAt: new Date(),
+          });
+
+          return {
+            clientRequestId: sale.clientRequestId,
+            status: PosOfflineSyncStatus.DUPLICATE,
+            sale: serializeSale(winner),
+            errorMessage: null,
+          };
+        }
+      }
+
       const expectedConflict =
         error instanceof BadRequestException ||
         error instanceof NotFoundException ||

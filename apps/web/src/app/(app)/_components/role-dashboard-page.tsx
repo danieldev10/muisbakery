@@ -12,7 +12,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ComponentType } from "react";
 
-import { getCurrentUser } from "@/lib/auth";
+import { API_UNREACHABLE, getCurrentUser } from "@/lib/auth";
 import type { AppRole } from "@/lib/roles";
 import { getRoleHome } from "@/lib/roles";
 import { apiGet } from "@/lib/server-api";
@@ -498,6 +498,10 @@ export async function RoleDashboardPage({
   expectedRole: AppRole;
 }) {
   const user = await getCurrentUser();
+
+  if (user === API_UNREACHABLE) {
+    redirect("/login?reason=api-unreachable");
+  }
 
   if (!user) {
     redirect("/login");

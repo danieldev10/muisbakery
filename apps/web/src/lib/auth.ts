@@ -10,6 +10,18 @@ export type CurrentUser = {
   role: AppRole;
 };
 
+/**
+ * Distinguishes "the API rejected this session" (null → send to login) from
+ * "the API could not be reached at all" — the latter must not strand an
+ * offline-capable POS device on the login page.
+ */
+export const API_UNREACHABLE = "unreachable" as const;
+
+export type CurrentUserResult =
+  | CurrentUser
+  | null
+  | typeof API_UNREACHABLE;
+
 function serializeCookies(cookieStore: Awaited<ReturnType<typeof cookies>>) {
   return cookieStore
     .getAll()
@@ -31,14 +43,20 @@ function isCurrentUser(value: unknown): value is CurrentUser {
   );
 }
 
-export async function getCurrentUser() {
+export async function getCurrentUser(): Promise<CurrentUserResult> {
   const cookieStore = await cookies();
-  const response = await fetch(`${getApiBaseUrl()}/auth/me`, {
-    cache: "no-store",
-    headers: {
-      cookie: serializeCookies(cookieStore),
-    },
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${getApiBaseUrl()}/auth/me`, {
+      cache: "no-store",
+      headers: {
+        cookie: serializeCookies(cookieStore),
+      },
+    });
+  } catch {
+    return API_UNREACHABLE;
+  }
 
   if (!response.ok) {
     return null;

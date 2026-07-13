@@ -639,6 +639,7 @@ export type DayClosePreview = {
   };
   close: SalesDayClose | null;
   needsReclose: boolean;
+  unresolvedOfflineSyncs: number;
 };
 
 export type DayCloseListReport = {

@@ -117,20 +117,21 @@ function retailersFromOfflineSnapshot(snapshot: PosOfflineSnapshot): Retailer[] 
     }));
 }
 
+// The printed receipt is for the customer: totals and purchase details only,
+// never system state like sync/queue status. Cashier-facing state stays on
+// screen.
 function buildReceiptDocument({
   session,
   terminalName,
-  pending,
+  saleNumber,
 }: {
   session: PosSession;
   terminalName: string | null | undefined;
-  pending?: boolean;
+  saleNumber?: number | null;
 }): ReceiptDocument {
-  const saleNumber = session.completedSale?.saleNumber
-    ? `#${session.completedSale.saleNumber}`
-    : pending
-      ? "Pending offline sync"
-      : session.id;
+  const resolvedSaleNumber =
+    session.completedSale?.saleNumber ?? saleNumber ?? null;
+  const saleLabel = resolvedSaleNumber ? `#${resolvedSaleNumber}` : null;
   const soldAt = session.completedSale?.soldAt ?? session.completedAt;
   const itemLines = session.items.map(
     (item) =>
@@ -142,7 +143,7 @@ function buildReceiptDocument({
   const lines = [
     "Muis Bakery",
     "Sales receipt",
-    `Sale: ${saleNumber}`,
+    ...(saleLabel ? [`Sale: ${saleLabel}`] : []),
     `Terminal: ${terminalName ?? "POS terminal"}`,
     `Customer: ${receiptCustomer(session)}`,
     `Payment: ${paymentLabels[session.paymentMethod]}`,
@@ -155,7 +156,6 @@ function buildReceiptDocument({
     `Total: ${formatMoney(session.totalAmount)}`,
     `Paid: ${formatMoney(session.amountPaid)}`,
     `Balance due: ${formatMoney(session.balanceDue)}`,
-    pending ? "Status: Queued offline - valid after sync" : "Status: Paid/recorded",
   ];
   const text = lines.join("\n");
   const htmlRows = session.items
@@ -173,7 +173,7 @@ function buildReceiptDocument({
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>Muis Bakery Receipt ${escapeHtml(saleNumber)}</title>
+        <title>Muis Bakery Receipt${saleLabel ? ` ${escapeHtml(saleLabel)}` : ""}</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
           .receipt { max-width: 360px; }
@@ -186,7 +186,6 @@ function buildReceiptDocument({
           .totals { border-top: 2px solid #111; padding-top: 8px; }
           .totals p { display: flex; justify-content: space-between; }
           .total { font-size: 16px; font-weight: 700; }
-          .status { margin-top: 16px; font-size: 11px; color: #555; }
           @media print { body { margin: 0; } .receipt { max-width: none; } }
         </style>
       </head>
@@ -194,7 +193,7 @@ function buildReceiptDocument({
         <div class="receipt">
           <h1>Muis Bakery</h1>
           <h2>Sales receipt</h2>
-          <p><strong>Sale:</strong> ${escapeHtml(saleNumber)}</p>
+          ${saleLabel ? `<p><strong>Sale:</strong> ${escapeHtml(saleLabel)}</p>` : ""}
           <p><strong>Terminal:</strong> ${escapeHtml(terminalName ?? "POS terminal")}</p>
           <p><strong>Customer:</strong> ${escapeHtml(receiptCustomer(session))}</p>
           <p><strong>Payment:</strong> ${escapeHtml(paymentLabels[session.paymentMethod])}</p>
@@ -217,13 +216,14 @@ function buildReceiptDocument({
             <p><span>Paid</span><span>${escapeHtml(formatMoney(session.amountPaid))}</span></p>
             <p><span>Balance due</span><span>${escapeHtml(formatMoney(session.balanceDue))}</span></p>
           </div>
-          <p class="status">${pending ? "Queued offline - valid after sync." : "Paid/recorded."}</p>
         </div>
       </body>
     </html>`;
 
   return {
-    filename: `muis-bakery-receipt-${String(saleNumber).replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
+    filename: `muis-bakery-receipt-${String(saleLabel ?? session.id)
+      .replace(/[^a-z0-9]+/gi, "-")
+      .toLowerCase()}`,
     html,
     text,
   };
@@ -1238,31 +1238,43 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           clientRequestId: `offline:${currentTerminal.id}:${crypto.randomUUID()}`,
           soldAt,
         });
-        const receipt = buildReceiptDocument({
-          session: {
-            ...session,
-            completedAt: soldAt,
-          },
-          terminalName: currentTerminal.name,
-          pending: true,
-        });
 
         await addQueuedOfflineSale(payload);
         await clearActiveOfflineSession(currentTerminal.id);
         await refreshQueuedSales(currentTerminal.id);
         clearCartSyncs();
         applySession(null);
-        setLastReceipt(receipt);
-        printReceipt(receipt);
-        setSyncMessage(
-          navigator.onLine
-            ? "Sale queued. Syncing now..."
-            : "Sale queued offline. It will sync when the network returns.",
-        );
+
+        // When online, sync before printing so the receipt can carry the
+        // real sale number once the server records it.
+        let syncedSaleNumber: number | null = null;
 
         if (navigator.onLine) {
+          setSyncMessage("Recording sale...");
           await syncPendingOfflineSales();
+
+          const queued = await listQueuedOfflineSales(currentTerminal.id);
+          syncedSaleNumber =
+            queued.find(
+              (record) => record.clientRequestId === payload.clientRequestId,
+            )?.syncedSale?.saleNumber ?? null;
+        } else {
+          setSyncMessage(
+            "Sale queued offline. It will sync when the network returns.",
+          );
         }
+
+        const receipt = buildReceiptDocument({
+          session: {
+            ...session,
+            completedAt: soldAt,
+          },
+          terminalName: currentTerminal.name,
+          saleNumber: syncedSaleNumber,
+        });
+
+        setLastReceipt(receipt);
+        printReceipt(receipt);
 
         return;
       }

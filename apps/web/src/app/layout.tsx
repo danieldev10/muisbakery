@@ -7,6 +7,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Muis Bakery",
   description: "Inventory and sales management for Muis Bakery",
+  icons: {
+    icon: "/icons/icon-192.png",
+    // iOS ignores the web manifest; this is what "Add to Home Screen" uses.
+    apple: "/icons/icon-192.png",
+  },
 };
 
 export default function RootLayout({

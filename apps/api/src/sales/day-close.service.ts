@@ -8,6 +8,7 @@ import {
 import {
   DayCloseStatus,
   PaymentMethod,
+  PosOfflineSyncStatus,
   Prisma,
   SalesReturnDisposition,
 } from "@prisma/client";
@@ -113,6 +114,23 @@ export class DayCloseService {
   ) {}
 
   /**
+   * Offline sales that reached the server but were rejected (CONFLICT) or
+   * errored (FAILED) are unrecorded revenue; the day cannot be closed over
+   * them. Sales still queued on a device that never reached the server are
+   * invisible here — the SW syncs them as soon as the device is online.
+   */
+  private async unresolvedOfflineSyncCount() {
+    return this.prisma.posOfflineSyncAttempt.count({
+      where: {
+        status: {
+          in: [PosOfflineSyncStatus.CONFLICT, PosOfflineSyncStatus.FAILED],
+        },
+        terminal: { isActive: true },
+      },
+    });
+  }
+
+  /**
    * Expected totals are derived from what the system recorded for the day:
    * takings by payment method (sales plus retailer repayments), new credit
    * extended, and damaged/returned stock.
@@ -191,12 +209,13 @@ export class DayCloseService {
       throw new BadRequestException(parsed.error.issues[0]?.message);
     }
 
-    const [expected, close] = await Promise.all([
+    const [expected, close, unresolvedOfflineSyncs] = await Promise.all([
       this.computeExpected(parsed.data),
       this.prisma.salesDayClose.findUnique({
         where: { businessDate: new Date(`${parsed.data}T00:00:00.000Z`) },
         include: dayCloseInclude,
       }),
+      this.unresolvedOfflineSyncCount(),
     ]);
 
     return {
@@ -212,6 +231,7 @@ export class DayCloseService {
       },
       close: close ? serializeDayClose(close) : null,
       needsReclose: close ? !closeMatchesExpected(close, expected) : false,
+      unresolvedOfflineSyncs,
     };
   }
 
@@ -220,6 +240,14 @@ export class DayCloseService {
 
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const unresolvedOfflineSyncs = await this.unresolvedOfflineSyncCount();
+
+    if (unresolvedOfflineSyncs > 0) {
+      throw new ConflictException(
+        `${unresolvedOfflineSyncs} offline sale(s) have not synced cleanly. Resolve them in Admin > POS sync before closing the day.`,
+      );
     }
 
     const expected = await this.computeExpected(parsed.data.date);
