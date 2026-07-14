@@ -5,12 +5,14 @@ import type {
   PosSession,
   Sale,
 } from "@/lib/operations/types";
+import { validateOfflineRetailerCreditSale } from "./offline-retailer-credit";
 
 const DB_NAME = "muisbakery-pos-offline";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const SNAPSHOT_STORE = "snapshots";
 const ACTIVE_SESSION_STORE = "activeSessions";
 const QUEUED_SALE_STORE = "queuedSales";
+const APPROVAL_RESERVATION_STORE = "approvalReservations";
 
 type SnapshotRecord = {
   terminalId: string;
@@ -24,6 +26,15 @@ type ActiveSessionRecord = {
   savedAt: string;
 };
 
+type ApprovalReservationRecord = {
+  approvalId: string;
+  terminalId: string;
+  retailerId: string;
+  clientRequestId: string;
+  amount: number;
+  createdAt: string;
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -33,6 +44,18 @@ function requestToPromise<T>(request: IDBRequest<T>) {
     request.addEventListener("success", () => resolve(request.result));
     request.addEventListener("error", () =>
       reject(request.error ?? new Error("IndexedDB request failed.")),
+    );
+  });
+}
+
+function transactionToPromise(transaction: IDBTransaction) {
+  return new Promise<void>((resolve, reject) => {
+    transaction.addEventListener("complete", () => resolve());
+    transaction.addEventListener("abort", () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction aborted.")),
+    );
+    transaction.addEventListener("error", () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction failed.")),
     );
   });
 }
@@ -69,6 +92,17 @@ function openOfflineDb() {
 
         store.createIndex("terminalId", "terminalId", { unique: false });
         store.createIndex("status", "status", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains(APPROVAL_RESERVATION_STORE)) {
+        const store = db.createObjectStore(APPROVAL_RESERVATION_STORE, {
+          keyPath: "approvalId",
+        });
+
+        store.createIndex("terminalId", "terminalId", { unique: false });
+        store.createIndex("clientRequestId", "clientRequestId", {
+          unique: true,
+        });
       }
     });
 
@@ -177,7 +211,66 @@ export async function addQueuedOfflineSale(
     syncedSale: null,
   };
 
-  await writeStore(QUEUED_SALE_STORE, (store) => store.put(record));
+  const db = await openOfflineDb();
+  const transaction = db.transaction(
+    [SNAPSHOT_STORE, QUEUED_SALE_STORE, APPROVAL_RESERVATION_STORE],
+    "readwrite",
+  );
+  const completion = transactionToPromise(transaction);
+  const snapshotStore = transaction.objectStore(SNAPSHOT_STORE);
+  const queuedSaleStore = transaction.objectStore(QUEUED_SALE_STORE);
+  const approvalStore = transaction.objectStore(APPROVAL_RESERVATION_STORE);
+
+  try {
+    const [snapshotRecord, queuedSales, approvalReservations] =
+      await Promise.all([
+        requestToPromise<SnapshotRecord | undefined>(
+          snapshotStore.get(payload.terminalId),
+        ),
+        requestToPromise<PosOfflineQueuedSale[]>(queuedSaleStore.getAll()),
+        requestToPromise<ApprovalReservationRecord[]>(approvalStore.getAll()),
+      ]);
+
+    if (!snapshotRecord) {
+      throw new Error(
+        "This terminal has no offline snapshot. Connect once before checking out offline.",
+      );
+    }
+
+    const reservation = validateOfflineRetailerCreditSale({
+      snapshot: snapshotRecord.snapshot,
+      payload,
+      queuedSales,
+      reservedApprovalIds: new Set(
+        approvalReservations.map((entry) => entry.approvalId),
+      ),
+    });
+
+    await requestToPromise(queuedSaleStore.add(record));
+
+    if (reservation?.approvalId) {
+      await requestToPromise(
+        approvalStore.add({
+          approvalId: reservation.approvalId,
+          terminalId: reservation.terminalId,
+          retailerId: reservation.retailerId,
+          clientRequestId: payload.clientRequestId,
+          amount: reservation.amount,
+          createdAt,
+        } satisfies ApprovalReservationRecord),
+      );
+    }
+
+    await completion;
+  } catch (error) {
+    try {
+      transaction.abort();
+    } catch {
+      // The browser may already have aborted the failed transaction.
+    }
+    await completion.catch(() => undefined);
+    throw error;
+  }
 
   return record;
 }
@@ -199,12 +292,21 @@ export async function updateQueuedOfflineSale(
     syncedSale?: Sale | null;
   },
 ) {
-  const current = await readStore<PosOfflineQueuedSale | undefined>(
-    QUEUED_SALE_STORE,
-    (store) => store.get(clientRequestId),
+  const db = await openOfflineDb();
+  const transaction = db.transaction(
+    [QUEUED_SALE_STORE, APPROVAL_RESERVATION_STORE],
+    "readwrite",
+  );
+  const completion = transactionToPromise(transaction);
+  const queuedSaleStore = transaction.objectStore(QUEUED_SALE_STORE);
+  const approvalStore = transaction.objectStore(APPROVAL_RESERVATION_STORE);
+  const current = await requestToPromise<PosOfflineQueuedSale | undefined>(
+    queuedSaleStore.get(clientRequestId),
   );
 
   if (!current) {
+    transaction.abort();
+    await completion.catch(() => undefined);
     return null;
   }
 
@@ -216,7 +318,18 @@ export async function updateQueuedOfflineSale(
     updatedAt: nowIso(),
   };
 
-  await writeStore(QUEUED_SALE_STORE, (store) => store.put(next));
+  await requestToPromise(queuedSaleStore.put(next));
+
+  if (
+    (next.status === "SYNCED" || next.status === "DUPLICATE") &&
+    current.payload.retailerApprovalId
+  ) {
+    await requestToPromise(
+      approvalStore.delete(current.payload.retailerApprovalId),
+    );
+  }
+
+  await completion;
 
   return next;
 }

@@ -41,6 +41,11 @@ export class SalesController {
     return this.dayClose.submit(body, getRequestUser(request));
   }
 
+  @Post("day-close/prepare")
+  prepareDayClose(@Body() body: unknown, @Req() request: Request) {
+    return this.dayClose.prepare(body, getRequestUser(request));
+  }
+
   @Get("inventory")
   inventory() {
     return this.sales.inventory();
@@ -140,6 +145,21 @@ export class SalesController {
   @Post("pos/terminals/pair")
   pairPosTerminal(@Body() body: unknown, @Req() request: Request) {
     return this.sales.pairPosTerminal(body, getRequestUser(request));
+  }
+
+  @Post("pos/terminals/:id/day-close-readiness")
+  async confirmPosTerminalDayCloseReadiness(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Headers(posTerminalSecretHeader) terminalSecret?: string,
+  ) {
+    await this.sales.authenticatePosTerminal(id, terminalSecret);
+    return this.dayClose.confirmTerminalReadiness(
+      id,
+      body,
+      getRequestUser(request),
+    );
   }
 
   @Post("pos/sync")

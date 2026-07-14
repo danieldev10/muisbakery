@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+  BusinessDayStatus,
   CustomerType,
   FinishedProductStockMovementType,
   PaymentMethod,
@@ -31,8 +32,13 @@ import {
   type QueryParams,
 } from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
-import { recordBusinessDayActivity } from "./business-day";
+import {
+  BusinessDayPostingLockedException,
+  businessDateForInstant,
+  recordBusinessDayActivity,
+} from "./business-day";
 import { PosDisplayEvents } from "./pos-display-events";
+import { consumeRetailerOrderApproval } from "./retailer-credit";
 import {
   createPosSessionSchema,
   createPosTerminalSchema,
@@ -63,6 +69,7 @@ import {
   posSessionInclude,
   posTerminalInclude,
   productSelect,
+  retailerOrderApprovalSelect,
   retailerPaymentSelect,
   retailerSelect,
   returnInclude,
@@ -1290,6 +1297,54 @@ export class SalesService {
     return existing;
   }
 
+  async authenticatePosTerminal(
+    id: string,
+    deviceSecret: string | undefined,
+  ) {
+    return this.assertTerminalDevice(id, deviceSecret);
+  }
+
+  private async terminalDayCloseBarrier(terminalId: string, now = new Date()) {
+    const businessDate = businessDateForInstant(now);
+    const state = await this.prisma.businessDayState.findUnique({
+      where: { businessDate },
+      select: {
+        status: true,
+        closeCutoffAt: true,
+        terminalReadiness: {
+          where: { terminalId },
+          select: {
+            confirmedAt: true,
+            syncedThroughAt: true,
+            overriddenAt: true,
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (
+      !state ||
+      state.status === BusinessDayStatus.OPEN ||
+      state.status === BusinessDayStatus.STALE
+    ) {
+      return null;
+    }
+
+    const readiness = state.terminalReadiness[0];
+
+    return {
+      businessDate: businessDate.toISOString().slice(0, 10),
+      status: state.status,
+      cutoffAt: state.closeCutoffAt?.toISOString() ?? null,
+      checkoutBlocked: true,
+      terminalConfirmed: Boolean(
+        readiness?.overriddenAt ||
+          (readiness?.confirmedAt && readiness.syncedThroughAt),
+      ),
+    };
+  }
+
   async getPosTerminal(id: string, deviceSecret: string | undefined) {
     await this.assertTerminalDevice(id, deviceSecret);
 
@@ -1318,6 +1373,67 @@ export class SalesService {
     }
 
     const serializedTerminal = serializePosTerminal(terminal);
+    const activeCreditAllocations =
+      serializedTerminal.retailerCreditAllocations.filter(
+        (allocation) => allocation.isActive,
+      );
+    const now = new Date();
+    const retailers = await this.prisma.retailer.findMany({
+      where: { isActive: true },
+      select: {
+        ...retailerSelect,
+        orderApprovals: {
+          where: {
+            terminalId: terminal.id,
+            status: RetailerOrderApprovalStatus.APPROVED,
+            usedAt: null,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          },
+          select: retailerOrderApprovalSelect,
+          orderBy: { createdAt: "asc" },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+    const outstandingByRetailer = new Map(
+      (
+        await this.prisma.sale.groupBy({
+          by: ["retailerId"],
+          where: {
+            retailerId: { in: retailers.map((retailer) => retailer.id) },
+            balanceDue: { gt: 0 },
+          },
+          _sum: { balanceDue: true },
+        })
+      ).flatMap((balance) =>
+        balance.retailerId
+          ? [
+              [
+                balance.retailerId,
+                decimalToNumber(balance._sum.balanceDue ?? 0),
+              ] as const,
+            ]
+          : [],
+      ),
+    );
+    const creditAllocationByRetailer = new Map(
+      activeCreditAllocations.map((allocation) => [
+        allocation.retailer.id,
+        allocation,
+      ]),
+    );
+    const offlineRetailers = retailers.map((retailer) => {
+      const allocation = creditAllocationByRetailer.get(retailer.id);
+
+      return {
+        ...serializeRetailer(retailer, {
+          outstandingBalance: outstandingByRetailer.get(retailer.id) ?? 0,
+        }),
+        creditLimit: allocation?.allocatedAmount ?? "0.00",
+        availableCredit: allocation?.remainingAmount ?? "0.00",
+        orderApprovalRequests: [],
+      };
+    });
     const allocationVersion = terminal.stockAllocations
       .map(
         (allocation) =>
@@ -1333,6 +1449,17 @@ export class SalesService {
       .map(
         (allocation) =>
           `${allocation.id}:${allocation.allocatedAmount.toString()}:${allocation.usedAmount.toString()}:${allocation.isActive}:${allocation.updatedAt.getTime()}`,
+      )
+      .join("|");
+    const retailerVersion = retailers
+      .map(
+        (retailer) =>
+          `${retailer.id}:${retailer.updatedAt.getTime()}:${outstandingByRetailer.get(retailer.id) ?? 0}:${retailer.orderApprovals
+            .map(
+              (approval) =>
+                `${approval.id}:${approval.approvedAmount.toString()}:${approval.expiresAt?.getTime() ?? "none"}`,
+            )
+            .join(",")}`,
       )
       .join("|");
 
@@ -1359,12 +1486,12 @@ export class SalesService {
         },
       })),
       retailerCreditAllocations:
-        serializedTerminal.retailerCreditAllocations.filter(
-          (allocation) => allocation.isActive,
-        ),
+        activeCreditAllocations,
+      retailers: offlineRetailers,
+      dayCloseBarrier: await this.terminalDayCloseBarrier(terminal.id, now),
       serverTime: new Date().toISOString(),
       snapshotVersion: hashSecret(
-        `${terminal.id}:${terminal.updatedAt.getTime()}:${allocationVersion}:${creditVersion}`,
+        `${terminal.id}:${terminal.updatedAt.getTime()}:${allocationVersion}:${creditVersion}:${retailerVersion}`,
       ),
     };
   }
@@ -1415,6 +1542,9 @@ export class SalesService {
       terminalId: parsed.data.terminalId,
       serverTime: new Date().toISOString(),
       results,
+      dayCloseBarrier: await this.terminalDayCloseBarrier(
+        parsed.data.terminalId,
+      ),
     };
   }
 
@@ -1487,7 +1617,7 @@ export class SalesService {
     }
 
     try {
-      const created = await this.prisma.$transaction(
+      const createdRecord = await this.prisma.$transaction(
         async (tx) =>
           this.createSaleInTransaction(
             tx,
@@ -1500,6 +1630,10 @@ export class SalesService {
           ),
         { timeout: 15000, maxWait: 15000 },
       );
+      const created = await this.prisma.sale.findUniqueOrThrow({
+        where: { id: createdRecord.id },
+        include: saleInclude,
+      });
 
       await this.auditSaleRecorded(created, actor);
       await this.recordOfflineSyncAttempt({
@@ -1571,7 +1705,12 @@ export class SalesService {
         status,
         payload,
         errorMessage,
-        conflictCode: expectedConflict ? "BUSINESS_RULE" : "SERVER_ERROR",
+        conflictCode:
+          error instanceof BusinessDayPostingLockedException
+            ? error.conflictCode
+            : expectedConflict
+              ? "BUSINESS_RULE"
+              : "SERVER_ERROR",
         syncedAt: null,
       });
 
@@ -2546,7 +2685,7 @@ export class SalesService {
     // Sale creation and session completion happen in one transaction: the
     // conditional status flip claims the session first, so concurrent
     // checkouts cannot both create a sale (and deduct stock twice).
-    const { sale, updated } = await this.prisma
+    const { saleId, sessionId } = await this.prisma
       .$transaction(
         async (tx) => {
           const claimed = await tx.posSession.updateMany({
@@ -2572,10 +2711,9 @@ export class SalesService {
           const updatedSession = await tx.posSession.update({
             where: { id: session.id },
             data: { completedSaleId: createdSale.id },
-            include: posSessionInclude,
           });
 
-          return { sale: createdSale, updated: updatedSession };
+          return { saleId: createdSale.id, sessionId: updatedSession.id };
         },
         { timeout: 15000, maxWait: 15000 },
       )
@@ -2587,6 +2725,14 @@ export class SalesService {
         );
         throw error;
       });
+    const sale = await this.prisma.sale.findUniqueOrThrow({
+      where: { id: saleId },
+      include: saleInclude,
+    });
+    const updated = await this.prisma.posSession.findUniqueOrThrow({
+      where: { id: sessionId },
+      include: posSessionInclude,
+    });
 
     await this.auditSaleRecorded(sale, actor);
 
@@ -2750,10 +2896,14 @@ export class SalesService {
       }
     }
 
-    const sale = await this.prisma.$transaction(
+    const createdRecord = await this.prisma.$transaction(
       async (tx) => this.createSaleInTransaction(tx, parsed.data, actor),
       { timeout: 15000, maxWait: 15000 },
     );
+    const sale = await this.prisma.sale.findUniqueOrThrow({
+      where: { id: createdRecord.id },
+      include: saleInclude,
+    });
 
     await this.auditSaleRecorded(sale, actor);
 
@@ -2938,6 +3088,15 @@ export class SalesService {
         if (!approval || approval.retailerId !== retailer.id) {
           throw new BadRequestException(
             "Select a valid Admin approval for this retailer.",
+          );
+        }
+
+        if (
+          terminal?.offlineEnabled &&
+          approval.terminalId !== terminal.id
+        ) {
+          throw new BadRequestException(
+            "Offline retailer approvals must be assigned to this POS terminal.",
           );
         }
 
@@ -3194,13 +3353,7 @@ export class SalesService {
     });
 
     if (retailerApprovalId) {
-      await tx.retailerOrderApproval.update({
-        where: { id: retailerApprovalId },
-        data: {
-          status: RetailerOrderApprovalStatus.USED,
-          usedAt: new Date(),
-        },
-      });
+      await consumeRetailerOrderApproval(tx, retailerApprovalId);
     }
 
     if (terminalRetailerCreditAllocation) {
@@ -3330,10 +3483,7 @@ export class SalesService {
       }
     }
 
-    return tx.sale.findUniqueOrThrow({
-      where: { id: createdSale.id },
-      include: saleInclude,
-    });
+    return createdSale;
   }
 
   private async auditSaleRecorded(
@@ -3416,18 +3566,16 @@ export class SalesService {
 
   async summary(dateInput?: string) {
     const { start, end } = toDayRange(dateInput);
-    const [sales, returns] = await Promise.all([
-      this.prisma.sale.findMany({
-        where: { soldAt: { gte: start, lt: end } },
-        include: saleInclude,
-        orderBy: { soldAt: "desc" },
-      }),
-      this.prisma.salesProductReturn.findMany({
-        where: { recordedAt: { gte: start, lt: end } },
-        include: returnInclude,
-        orderBy: { recordedAt: "desc" },
-      }),
-    ]);
+    const sales = await this.prisma.sale.findMany({
+      where: { soldAt: { gte: start, lt: end } },
+      include: saleInclude,
+      orderBy: { soldAt: "desc" },
+    });
+    const returns = await this.prisma.salesProductReturn.findMany({
+      where: { recordedAt: { gte: start, lt: end } },
+      include: returnInclude,
+      orderBy: { recordedAt: "desc" },
+    });
 
     const productSummary = new Map<
       string,

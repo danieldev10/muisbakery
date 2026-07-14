@@ -10,6 +10,31 @@ import { actor, createAuditMock } from "./helpers";
 
 const AUTH_ACTOR = actor as never;
 const BUSINESS_DATE = new Date("2026-07-12T00:00:00.000Z");
+const CUTOFF = new Date("2026-07-12T19:00:00.000Z");
+
+function readinessRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "readiness-1",
+    businessDate: BUSINESS_DATE,
+    terminalId: "terminal-1",
+    cutoffAt: CUTOFF,
+    confirmedAt: CUTOFF,
+    syncedThroughAt: CUTOFF,
+    pendingSaleCount: 0,
+    overriddenAt: null,
+    overriddenById: null,
+    overrideReason: null,
+    createdAt: CUTOFF,
+    updatedAt: CUTOFF,
+    terminal: {
+      id: "terminal-1",
+      name: "Front Counter",
+      lastSyncedAt: CUTOFF,
+    },
+    overriddenBy: null,
+    ...overrides,
+  };
+}
 
 function stateRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -61,6 +86,8 @@ function makePrisma({
   closeUpdateCount,
   sales,
   retailerPayments,
+  readiness = [] as Record<string, unknown>[],
+  terminals = [] as Array<{ id: string }>,
 } = {}) {
   let close = existingClose ? { ...existingClose } : null;
   let state = existingState
@@ -75,6 +102,7 @@ function makePrisma({
   const created: Record<string, unknown>[] = [];
   const closeUpdates: Record<string, unknown>[] = [];
   const stateUpdates: Record<string, unknown>[] = [];
+  let readinessRows = readiness.map((row) => ({ ...row }));
   const saleRows =
     sales ??
     [
@@ -111,6 +139,7 @@ function makePrisma({
         : null,
       businessDayState: {
         ...state,
+        terminalReadiness: readinessRows,
         reopenedBy: state.reopenedById
           ? { id: state.reopenedById, name: actor.name, email: actor.email, role: actor.role }
           : null,
@@ -120,6 +149,7 @@ function makePrisma({
 
   const prisma: Record<string, unknown> = {};
   Object.assign(prisma, {
+    $executeRaw: async () => 0,
     $queryRaw: async () => [],
     $transaction: async (callback: (tx: unknown) => unknown) => callback(prisma),
     sale: { findMany: async () => saleRows },
@@ -135,8 +165,9 @@ function makePrisma({
     },
     posOfflineSyncAttempt: { count: async () => unresolvedOfflineSyncs },
     businessDayState: {
-      findUnique: async () => ({ ...state }),
+      findUnique: async () => ({ ...state, terminalReadiness: readinessRows }),
       findUniqueOrThrow: async () => ({ ...state }),
+      findMany: async () => [],
       upsert: async () => ({ ...state }),
       update: async (args: { data: Record<string, unknown> }) => {
         const increment = (
@@ -177,6 +208,95 @@ function makePrisma({
         };
         stateUpdates.push(args.data);
         return { count: 1 };
+      },
+    },
+    posTerminal: {
+      findMany: async () => terminals,
+      findUniqueOrThrow: async ({ where }: { where: { id: string } }) => {
+        const readinessTerminal = readinessRows.find(
+          (row) => row.terminalId === where.id,
+        )?.terminal as
+          | { id: string; name: string | null; lastSyncedAt: Date | null }
+          | undefined;
+
+        return (
+          readinessTerminal ?? {
+            id: where.id,
+            name: `Terminal ${where.id}`,
+            lastSyncedAt: null,
+          }
+        );
+      },
+      update: async () => ({}),
+    },
+    user: {
+      findUnique: async ({ where }: { where: { id: string } }) => ({
+        id: where.id,
+        name: actor.name,
+        email: actor.email,
+        role: actor.role,
+      }),
+    },
+    posTerminalDayCloseReadiness: {
+      findMany: async (args?: {
+        where?: { terminalId?: { in?: string[] } | string };
+        select?: unknown;
+      }) => {
+        const terminalFilter = args?.where?.terminalId;
+        const ids =
+          typeof terminalFilter === "string"
+            ? [terminalFilter]
+            : terminalFilter?.in;
+        const rows = ids
+          ? readinessRows.filter((row) => ids.includes(String(row.terminalId)))
+          : readinessRows;
+        return args?.select
+          ? rows.map((row) => ({ id: row.id, terminalId: row.terminalId }))
+          : rows;
+      },
+      findUnique: async () => readinessRows[0] ?? null,
+      deleteMany: async () => {
+        readinessRows = [];
+        return { count: 1 };
+      },
+      createMany: async (args: {
+        data: Array<Record<string, unknown>>;
+      }) => {
+        readinessRows = args.data.map((row, index) =>
+          readinessRow({
+            ...row,
+            id: `readiness-${index + 1}`,
+            terminalId: String(row.terminalId),
+            terminal: {
+              id: String(row.terminalId),
+              name: `Terminal ${index + 1}`,
+              lastSyncedAt: null,
+            },
+            confirmedAt: null,
+            syncedThroughAt: null,
+            pendingSaleCount: null,
+          }),
+        );
+        return { count: readinessRows.length };
+      },
+      update: async (args: {
+        where: { id: string };
+        data: Record<string, unknown>;
+      }) => {
+        readinessRows = readinessRows.map((row) =>
+          row.id === args.where.id ? { ...row, ...args.data } : row,
+        );
+        return readinessRows.find((row) => row.id === args.where.id);
+      },
+      updateMany: async (args: {
+        where: { id?: { in?: string[] } };
+        data: Record<string, unknown>;
+      }) => {
+        const ids = args.where.id?.in ?? [];
+        readinessRows = readinessRows.map((row) =>
+          ids.includes(String(row.id)) ? { ...row, ...args.data } : row,
+        );
+        return { count: ids.length };
       },
     },
     salesDayClose: {
@@ -244,6 +364,118 @@ test("day-close preview derives expected takings and exposes business-day state"
   assert.equal(preview.close, null);
 });
 
+test("starting a close freezes the day and snapshots every paired offline terminal", async () => {
+  const fixture = makePrisma({
+    terminals: [{ id: "terminal-1" }, { id: "terminal-2" }],
+  });
+  const { audit, records } = createAuditMock();
+  const service = new DayCloseService(fixture.prisma as never, audit as never);
+
+  const result = await service.prepare({ date: "2026-07-12" }, AUTH_ACTOR);
+
+  assert.equal(result.status, "CLOSING");
+  assert.equal(result.terminalReadiness.required, 2);
+  assert.equal(result.terminalReadiness.pending, 2);
+  assert.equal(fixture.getState().status, "CLOSING");
+  assert.ok(fixture.getState().closeCutoffAt instanceof Date);
+  assert.equal(records[0]?.action, "SALES_DAY_CLOSE_STARTED");
+});
+
+test("submission is blocked until every cutoff terminal is ready", async () => {
+  const fixture = makePrisma({
+    existingState: stateRow({ status: "CLOSING", closeCutoffAt: CUTOFF }),
+    readiness: [
+      readinessRow({
+        confirmedAt: null,
+        syncedThroughAt: null,
+        pendingSaleCount: null,
+      }),
+    ],
+  });
+  const { audit } = createAuditMock();
+  const service = new DayCloseService(fixture.prisma as never, audit as never);
+
+  await assert.rejects(
+    service.submit({ date: "2026-07-12", countedCash: "6000" }, AUTH_ACTOR),
+    (error) =>
+      error instanceof ConflictException && /have not confirmed/i.test(error.message),
+  );
+});
+
+test("a paired terminal can confirm only after its local queue is empty", async () => {
+  const fixture = makePrisma({
+    existingState: stateRow({ status: "CLOSING", closeCutoffAt: CUTOFF }),
+    readiness: [
+      readinessRow({
+        confirmedAt: null,
+        syncedThroughAt: null,
+        pendingSaleCount: null,
+      }),
+    ],
+  });
+  const { audit, records } = createAuditMock();
+  const service = new DayCloseService(fixture.prisma as never, audit as never);
+
+  await assert.rejects(
+    service.confirmTerminalReadiness(
+      "terminal-1",
+      {
+        date: "2026-07-12",
+        cutoffAt: CUTOFF,
+        pendingSaleCount: 1,
+      },
+      AUTH_ACTOR,
+    ),
+    (error) => error instanceof ConflictException && /pending/i.test(error.message),
+  );
+
+  const result = await service.confirmTerminalReadiness(
+    "terminal-1",
+    { date: "2026-07-12", cutoffAt: CUTOFF, pendingSaleCount: 0 },
+    AUTH_ACTOR,
+  );
+
+  assert.equal(result.ready, true);
+  assert.equal(result.pendingSaleCount, 0);
+  assert.equal(records[0]?.action, "POS_TERMINAL_DAY_CLOSE_CONFIRMED");
+});
+
+test("Management override requires a reason and records the selected terminal list", async () => {
+  const fixture = makePrisma({
+    existingState: stateRow({ status: "CLOSING", closeCutoffAt: CUTOFF }),
+    readiness: [
+      readinessRow({
+        confirmedAt: null,
+        syncedThroughAt: null,
+        pendingSaleCount: null,
+      }),
+    ],
+  });
+  const { audit, records } = createAuditMock();
+  const service = new DayCloseService(fixture.prisma as never, audit as never);
+
+  await assert.rejects(
+    service.overrideTerminalReadiness(
+      { date: "2026-07-12", terminalIds: ["terminal-1"], reason: "" },
+      AUTH_ACTOR,
+    ),
+    BadRequestException,
+  );
+
+  const result = await service.overrideTerminalReadiness(
+    {
+      date: "2026-07-12",
+      terminalIds: ["terminal-1"],
+      reason: "Terminal hardware failure verified by supervisor",
+    },
+    AUTH_ACTOR,
+  );
+
+  assert.equal(result.terminalReadiness.pending, 0);
+  assert.equal(records[0]?.action, "MANAGEMENT_DAY_CLOSE_TERMINALS_OVERRIDDEN");
+  assert.deepEqual(records[0]?.metadata?.terminalIds, ["terminal-1"]);
+});
+
 test("a matching submitted close remains current", async () => {
   const fixture = makePrisma({ existingClose: closeRow() });
   const { audit } = createAuditMock();
@@ -291,7 +523,10 @@ test("a changed activity version marks a submitted close for recount", async () 
 });
 
 test("the day cannot be submitted over unresolved offline sync attempts", async () => {
-  const fixture = makePrisma({ unresolvedOfflineSyncs: 2 });
+  const fixture = makePrisma({
+    unresolvedOfflineSyncs: 2,
+    existingState: stateRow({ status: "CLOSING", closeCutoffAt: CUTOFF }),
+  });
   const { audit } = createAuditMock();
   const service = new DayCloseService(fixture.prisma as never, audit as never);
 
@@ -306,7 +541,11 @@ test("the day cannot be submitted over unresolved offline sync attempts", async 
 
 test("submission captures the locked activity version and cash variance", async () => {
   const fixture = makePrisma({
-    existingState: stateRow({ activityVersion: 4 }),
+    existingState: stateRow({
+      activityVersion: 4,
+      status: "CLOSING",
+      closeCutoffAt: CUTOFF,
+    }),
   });
   const { audit, records } = createAuditMock();
   const service = new DayCloseService(fixture.prisma as never, audit as never);
@@ -327,7 +566,11 @@ test("submission captures the locked activity version and cash variance", async 
 test("a stale close can be recounted and resubmitted at the current version", async () => {
   const fixture = makePrisma({
     existingClose: closeRow({ submittedActivityVersion: 2 }),
-    existingState: stateRow({ status: "STALE", activityVersion: 3 }),
+    existingState: stateRow({
+      status: "CLOSING",
+      activityVersion: 3,
+      closeCutoffAt: CUTOFF,
+    }),
   });
   const { audit, records } = createAuditMock();
   const service = new DayCloseService(fixture.prisma as never, audit as never);
@@ -450,19 +693,22 @@ test("approved-day postings are rejected until Management reopens the day", asyn
   assert.equal(fixture.getState().activityVersion, 7);
 });
 
-test("financial activity increments the version and makes a submitted close stale", async () => {
+test("financial activity is blocked while a close is submitted", async () => {
   const fixture = makePrisma({
     existingState: stateRow({ status: "SUBMITTED", activityVersion: 7 }),
   });
 
-  await recordBusinessDayActivity(
-    fixture.prisma as never,
-    new Date("2026-07-12T20:00:00.000Z"),
+  await assert.rejects(
+    recordBusinessDayActivity(
+      fixture.prisma as never,
+      new Date("2026-07-12T20:00:00.000Z"),
+    ),
+    (error) =>
+      error instanceof ConflictException && /being closed/i.test(error.message),
   );
 
-  assert.equal(fixture.getState().activityVersion, 8);
-  assert.equal(fixture.getState().status, "STALE");
-  assert.ok(fixture.getState().lastActivityAt instanceof Date);
+  assert.equal(fixture.getState().activityVersion, 7);
+  assert.equal(fixture.getState().status, "SUBMITTED");
 });
 
 test("Management reopen requires a reason and invalidates the approved version", async () => {
@@ -503,6 +749,8 @@ test("Sales can submit a fresh close after an explicit Management reopen", async
   });
   const { audit } = createAuditMock();
   const service = new DayCloseService(fixture.prisma as never, audit as never);
+
+  await service.prepare({ date: "2026-07-12" }, AUTH_ACTOR);
 
   const result = await service.submit(
     { date: "2026-07-12", countedCash: "6000" },

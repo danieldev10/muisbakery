@@ -561,6 +561,8 @@ export type PosOfflineSnapshot = {
     inventory: SalesInventoryItem;
   }>;
   retailerCreditAllocations: PosTerminal["retailerCreditAllocations"];
+  retailers: Retailer[];
+  dayCloseBarrier?: PosDayCloseBarrier | null;
   serverTime: string;
   snapshotVersion: string;
 };
@@ -614,10 +616,49 @@ export type PosOfflineSyncResponse = {
   terminalId: string;
   serverTime: string;
   results: PosOfflineSyncResult[];
+  dayCloseBarrier?: PosDayCloseBarrier | null;
+};
+
+export type PosDayCloseBarrier = {
+  businessDate: string;
+  status: "CLOSING" | "SUBMITTED" | "APPROVED";
+  cutoffAt: string | null;
+  checkoutBlocked: true;
+  terminalConfirmed: boolean;
 };
 
 export type DayCloseStatus = "SUBMITTED" | "APPROVED";
-export type BusinessDayStatus = "OPEN" | "SUBMITTED" | "STALE" | "APPROVED";
+export type BusinessDayStatus =
+  | "OPEN"
+  | "CLOSING"
+  | "SUBMITTED"
+  | "STALE"
+  | "APPROVED";
+
+export type TerminalDayCloseReadiness = {
+  id: string;
+  businessDate: string;
+  cutoffAt: string;
+  terminal: {
+    id: string;
+    name: string | null;
+    lastSyncedAt: string | null;
+  };
+  confirmedAt: string | null;
+  syncedThroughAt: string | null;
+  pendingSaleCount: number | null;
+  overriddenAt: string | null;
+  overriddenBy: UserRef | null;
+  overrideReason: string | null;
+  ready: boolean;
+};
+
+export type TerminalReadinessSummary = {
+  required: number;
+  ready: number;
+  pending: number;
+  terminals: TerminalDayCloseReadiness[];
+};
 
 export type SalesDayClose = {
   id: string;
@@ -642,6 +683,7 @@ export type SalesDayClose = {
     reopenedAt: string | null;
     reopenedBy: UserRef | null;
     reopenReason: string | null;
+    terminalReadiness: TerminalReadinessSummary;
   };
   submittedAt: string;
   submittedBy: UserRef | null;
@@ -667,6 +709,7 @@ export type DayClosePreview = {
     activityVersion: number;
     lastActivityAt: string | null;
     closeCutoffAt: string | null;
+    terminalReadiness: TerminalReadinessSummary;
   };
   needsReclose: boolean;
   unresolvedOfflineSyncs: number;
@@ -681,4 +724,10 @@ export type DayCloseListReport = {
     end: string;
   };
   closes: SalesDayClose[];
+  preparations: Array<{
+    businessDate: string;
+    status: "CLOSING";
+    cutoffAt: string | null;
+    terminalReadiness: TerminalReadinessSummary;
+  }>;
 };

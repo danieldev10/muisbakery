@@ -131,6 +131,7 @@ model User {
   dayClosesSubmitted          SalesDayClose[]                   @relation("DayCloseSubmittedBy")
   dayClosesReviewed           SalesDayClose[]                   @relation("DayCloseReviewedBy")
   businessDaysReopened        BusinessDayState[]                @relation("BusinessDayReopenedBy")
+  terminalCloseOverrides      PosTerminalDayCloseReadiness[]    @relation("TerminalDayCloseOverriddenBy")
   terminalStockBatchesCreated PosTerminalStockBatch[]           @relation("PosTerminalStockBatchCreatedBy")
   terminalStockMovements      PosTerminalStockMovement[]        @relation("PosTerminalStockMovementActor")
 
@@ -712,6 +713,7 @@ enum DayCloseStatus {
 
 enum BusinessDayStatus {
   OPEN
+  CLOSING
   SUBMITTED
   STALE
   APPROVED
@@ -773,6 +775,7 @@ model BusinessDayState {
 
   close      SalesDayClose?
   reopenedBy User?          @relation("BusinessDayReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull)
+  terminalReadiness PosTerminalDayCloseReadiness[]
 
   @@index([status])
   @@index([reopenedById])
@@ -829,6 +832,33 @@ model Sale {
   @@index([retailerApprovalId])
   @@index([paymentMethod])
   @@index([createdById])
+}
+
+// Snapshot of the offline terminals that had to synchronize for a specific
+// business-day cutoff. Rows remain for audit even if a terminal is later
+// deactivated or reconfigured.
+model PosTerminalDayCloseReadiness {
+  id               String   @id @default(cuid())
+  businessDate     DateTime @db.Date
+  terminalId       String
+  cutoffAt         DateTime
+  confirmedAt      DateTime?
+  syncedThroughAt  DateTime?
+  pendingSaleCount Int?
+  overriddenAt     DateTime?
+  overriddenById   String?
+  overrideReason   String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  businessDay  BusinessDayState @relation(fields: [businessDate], references: [businessDate], onDelete: Restrict)
+  terminal     PosTerminal      @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+  overriddenBy User?            @relation("TerminalDayCloseOverriddenBy", fields: [overriddenById], references: [id], onDelete: SetNull)
+
+  @@unique([businessDate, terminalId])
+  @@index([terminalId, cutoffAt])
+  @@index([businessDate, confirmedAt])
+  @@index([overriddenById])
 }
 
 model PosSession {
@@ -896,6 +926,7 @@ model PosTerminal {
   retailerCreditAllocations PosTerminalRetailerCreditAllocation[]
   retailerOrderApprovals RetailerOrderApproval[]
   offlineSyncAttempts PosOfflineSyncAttempt[]
+  dayCloseReadiness PosTerminalDayCloseReadiness[]
 
   @@index([isActive])
   @@index([offlineEnabled])

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
+const LOCAL_DATABASE_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
 function createAdapter() {
   const connectionString = process.env.DATABASE_URL;
 
@@ -12,7 +14,8 @@ function createAdapter() {
   }
 
   const caPath = join(process.cwd(), "certs", "prod-ca-2021.crt");
-  const ssl = existsSync(caPath)
+  const databaseHost = new URL(connectionString).hostname;
+  const ssl = !LOCAL_DATABASE_HOSTS.has(databaseHost) && existsSync(caPath)
     ? {
         ca: readFileSync(caPath, "utf8"),
         rejectUnauthorized: true,

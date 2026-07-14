@@ -62,6 +62,7 @@ import {
   unresolvedOfflineSales,
   updateQueuedOfflineSale,
 } from "./_lib/offline-pos-store";
+import { deriveOfflineRetailers } from "./_lib/offline-retailer-credit";
 
 type ReceiptDocument = {
   filename: string;
@@ -90,30 +91,6 @@ function receiptCustomer(session: PosSession) {
   }
 
   return session.customerName ?? "Individual";
-}
-
-function retailersFromOfflineSnapshot(snapshot: PosOfflineSnapshot): Retailer[] {
-  return snapshot.retailerCreditAllocations
-    .filter((allocation) => allocation.isActive)
-    .map((allocation) => ({
-      id: allocation.retailer.id,
-      name: allocation.retailer.name,
-      contactPerson: allocation.retailer.contactPerson,
-      phone: null,
-      email: null,
-      address: null,
-      creditLimit: allocation.allocatedAmount,
-      outstandingBalance: "0.00",
-      availableCredit: allocation.remainingAmount,
-      requiresOrderApproval: false,
-      orderApprovals: [],
-      orderApprovalRequests: [],
-      notes: null,
-      isActive: allocation.isActive,
-      createdAt: allocation.createdAt,
-      updatedAt: allocation.updatedAt,
-      createdBy: null,
-    }));
 }
 
 // The printed receipt is for the customer: totals and purchase details only,
@@ -279,6 +256,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   const [approvalRequestBusy, setApprovalRequestBusy] = useState(false);
   const [approvalRequestSent, setApprovalRequestSent] = useState(false);
   const [cartSyncCount, setCartSyncCount] = useState(0);
+  const [sessionPatchBusy, setSessionPatchBusy] = useState(false);
   const [origin] = useState(() =>
     typeof window === "undefined" ? "" : window.location.origin,
   );
@@ -299,6 +277,8 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   );
   const sessionRef = useRef<PosSession | null>(null);
   const sessionStartPromiseRef = useRef<Promise<PosSession | null> | null>(null);
+  const sessionPatchQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sessionPatchCountRef = useRef(0);
   const nextCartSyncIdRef = useRef(1);
   const cartSyncsRef = useRef(
     new Map<
@@ -362,11 +342,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
           if (cached) {
             setOfflineSnapshot(cached);
-            setRetailers((current) =>
-              current.length > 0
-                ? current
-                : retailersFromOfflineSnapshot(cached),
-            );
             applyTerminal(cached.terminal);
             return cached.terminal;
           }
@@ -433,9 +408,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
       await saveOfflineSnapshot(snapshot);
       setOfflineSnapshot(snapshot);
-      setRetailers((current) =>
-        current.length > 0 ? current : retailersFromOfflineSnapshot(snapshot),
-      );
       applyTerminal(snapshot.terminal);
       return snapshot;
     }
@@ -449,9 +421,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     }
 
     setOfflineSnapshot(cached);
-    setRetailers((current) =>
-      current.length > 0 ? current : retailersFromOfflineSnapshot(cached),
-    );
     applyTerminal(cached.terminal);
     return cached;
   }, [applyTerminal]);
@@ -471,6 +440,44 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
     return snapshot;
   }, [applySession, prepareOfflineSnapshot, refreshQueuedSales]);
+
+  const confirmDayCloseReadiness = useCallback(
+    async (snapshot: PosOfflineSnapshot | null, pendingSaleCount: number) => {
+      const barrier = snapshot?.dayCloseBarrier;
+
+      if (
+        !snapshot ||
+        !barrier ||
+        barrier.status !== "CLOSING" ||
+        !barrier.cutoffAt ||
+        barrier.terminalConfirmed ||
+        pendingSaleCount !== 0
+      ) {
+        return snapshot;
+      }
+
+      await apiJson(
+        `/terminals/${snapshot.terminal.id}/day-close-readiness`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            date: barrier.businessDate,
+            cutoffAt: barrier.cutoffAt,
+            pendingSaleCount: 0,
+          }),
+        },
+      );
+
+      const confirmedSnapshot: PosOfflineSnapshot = {
+        ...snapshot,
+        dayCloseBarrier: { ...barrier, terminalConfirmed: true },
+      };
+      await saveOfflineSnapshot(confirmedSnapshot);
+      setOfflineSnapshot(confirmedSnapshot);
+      return confirmedSnapshot;
+    },
+    [],
+  );
 
   async function claimTerminal() {
     const setupId = terminalSetupId.trim();
@@ -643,6 +650,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       ),
     [queuedOfflineSales],
   );
+  const availableRetailers = useMemo(
+    () =>
+      terminal?.offlineEnabled && offlineSnapshot
+        ? deriveOfflineRetailers(offlineSnapshot, unresolvedQueuedSales)
+        : retailers,
+    [offlineSnapshot, retailers, terminal?.offlineEnabled, unresolvedQueuedSales],
+  );
   const offlineQueuedQuantityByProductId = useMemo(() => {
     const quantities = new Map<string, number>();
 
@@ -706,9 +720,8 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       ? offlineSnapshot.products.map((entry) => entry.inventory)
       : options.products;
 
-  const active = session?.status === "ACTIVE";
   const selectedRetailer: Retailer | null =
-    retailers.find((retailer) => retailer.id === retailerId) ??
+    availableRetailers.find((retailer) => retailer.id === retailerId) ??
     session?.retailer ??
     null;
   const selectedApproval =
@@ -800,49 +813,93 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   }
 
   async function patchSession(patch: PosSessionPatch) {
-    if (!session || !active) {
-      return;
-    }
-
     const currentTerminal = terminalRef.current;
 
     if (currentTerminal?.offlineEnabled) {
-      const nextCustomerType = patch.customerType ?? session.customerType;
-      const nextRetailer =
-        nextCustomerType === "RETAILER"
-          ? retailers.find(
-              (retailer) =>
-                retailer.id ===
-                (patch.retailerId === undefined
-                  ? session.retailer?.id
-                  : patch.retailerId),
-            ) ?? session.retailer
-          : null;
-      const nextSession = calculateSessionTotals({
-        ...session,
-        customerType: nextCustomerType,
-        retailer: nextRetailer,
-        retailerApprovalId:
+      sessionPatchCountRef.current += 1;
+      setSessionPatchBusy(true);
+
+      const operation = sessionPatchQueueRef.current.then(async () => {
+        const currentSession = sessionRef.current;
+
+        if (!currentSession || currentSession.status !== "ACTIVE") {
+          return;
+        }
+
+        const nextCustomerType =
+          patch.customerType ?? currentSession.customerType;
+        const nextPaymentMethod =
+          patch.paymentMethod ?? currentSession.paymentMethod;
+        const nextAmountPaid =
+          patch.amountPaid !== undefined
+            ? patch.amountPaid ?? "0.00"
+            : patch.paymentMethod !== undefined &&
+                patch.paymentMethod !== currentSession.paymentMethod
+              ? nextPaymentMethod === "CREDIT"
+                ? "0.00"
+                : currentSession.totalAmount
+              : currentSession.amountPaid;
+        const nextRetailer =
           nextCustomerType === "RETAILER"
-            ? patch.retailerApprovalId === undefined
-              ? session.retailerApprovalId
-              : patch.retailerApprovalId
-            : null,
-        customerName:
-          nextCustomerType === "RETAILER"
-            ? nextRetailer?.name ?? null
-            : patch.customerName === undefined
-              ? session.customerName
-              : patch.customerName,
-        paymentMethod: patch.paymentMethod ?? session.paymentMethod,
-        discount: patch.discount ?? session.discount,
-        amountPaid: patch.amountPaid ?? session.amountPaid,
-        notes: patch.notes === undefined ? session.notes : patch.notes,
-        updatedAt: new Date().toISOString(),
+            ? availableRetailers.find(
+                (retailer) =>
+                  retailer.id ===
+                  (patch.retailerId === undefined
+                    ? currentSession.retailer?.id
+                    : patch.retailerId),
+              ) ?? currentSession.retailer
+            : null;
+        const nextSession = calculateSessionTotals({
+          ...currentSession,
+          customerType: nextCustomerType,
+          retailer: nextRetailer,
+          retailerApprovalId:
+            nextCustomerType === "RETAILER"
+              ? patch.retailerApprovalId === undefined
+                ? currentSession.retailerApprovalId
+                : patch.retailerApprovalId
+              : null,
+          customerName:
+            nextCustomerType === "RETAILER"
+              ? nextRetailer?.name ?? null
+              : patch.customerName === undefined
+                ? currentSession.customerName
+                : patch.customerName,
+          paymentMethod: nextPaymentMethod,
+          discount: patch.discount ?? currentSession.discount,
+          amountPaid: nextAmountPaid,
+          notes:
+            patch.notes === undefined ? currentSession.notes : patch.notes,
+          updatedAt: new Date().toISOString(),
+        });
+
+        applySession(nextSession);
+        await saveActiveOfflineSession(currentTerminal.id, nextSession);
       });
 
-      await saveActiveOfflineSession(currentTerminal.id, nextSession);
-      applySession(nextSession);
+      sessionPatchQueueRef.current = operation.catch(() => undefined);
+
+      try {
+        await operation;
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Unable to save the offline sale details.",
+        );
+      } finally {
+        sessionPatchCountRef.current -= 1;
+
+        if (sessionPatchCountRef.current === 0) {
+          setSessionPatchBusy(false);
+        }
+      }
+      return;
+    }
+
+    const currentSession = sessionRef.current;
+
+    if (!currentSession || currentSession.status !== "ACTIVE") {
       return;
     }
 
@@ -850,10 +907,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     setError(null);
 
     try {
-      const updated = await apiJson<PosSession>(`/sessions/${session.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(patch),
-      });
+      const updated = await apiJson<PosSession>(
+        `/sessions/${currentSession.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(patch),
+        },
+      );
 
       applySession(updated);
     } catch (caught) {
@@ -880,7 +940,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       return;
     }
 
-    const nextRetailer = selectedRetailer ?? retailers[0] ?? null;
+    const nextRetailer = selectedRetailer ?? availableRetailers[0] ?? null;
     const nextApprovalId = nextRetailer?.requiresOrderApproval
       ? nextRetailer.orderApprovals[0]?.id ?? ""
       : "";
@@ -898,7 +958,9 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
   async function changeRetailer(nextRetailerId: string) {
     const nextRetailer =
-      retailers.find((retailer) => retailer.id === nextRetailerId) ??
+      availableRetailers.find(
+        (retailer) => retailer.id === nextRetailerId,
+      ) ??
       null;
     const nextApprovalId = nextRetailer?.requiresOrderApproval
       ? nextRetailer.orderApprovals[0]?.id ?? ""
@@ -1124,9 +1186,18 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     const pendingSales = await unresolvedOfflineSales(currentTerminal.id);
 
     if (pendingSales.length === 0) {
-      await prepareOfflineSnapshot(currentTerminal, true).catch(() => null);
+      const snapshot = await prepareOfflineSnapshot(currentTerminal, true).catch(
+        () => null,
+      );
+      const remaining = await unresolvedOfflineSales(currentTerminal.id);
       await refreshQueuedSales(currentTerminal.id);
-      setSyncMessage("POS is synced.");
+      await confirmDayCloseReadiness(snapshot, remaining.length);
+      setSyncMessage(
+        snapshot?.dayCloseBarrier?.status === "CLOSING" &&
+          remaining.length === 0
+          ? "POS is synced and ready for day close."
+          : "POS is synced.",
+      );
       return;
     }
 
@@ -1163,8 +1234,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         });
       }
 
-      await prepareOfflineSnapshot(currentTerminal, true).catch(() => null);
+      const snapshot = await prepareOfflineSnapshot(
+        currentTerminal,
+        true,
+      ).catch(() => null);
+      const remaining = await unresolvedOfflineSales(currentTerminal.id);
       await refreshQueuedSales(currentTerminal.id);
+      await confirmDayCloseReadiness(snapshot, remaining.length);
       setSyncMessage(
         conflictCount > 0
           ? `${conflictCount} offline sale(s) need review before they can sync.`
@@ -1185,7 +1261,12 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     } finally {
       setSyncBusy(false);
     }
-  }, [prepareOfflineSnapshot, refreshQueuedSales, syncBusy]);
+  }, [
+    confirmDayCloseReadiness,
+    prepareOfflineSnapshot,
+    refreshQueuedSales,
+    syncBusy,
+  ]);
 
   useEffect(() => {
     function markOnline() {
@@ -1211,7 +1292,16 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   }, [syncPendingOfflineSales]);
 
   async function checkout() {
-    if (!session || !active || cartIsSyncing) {
+    await sessionPatchQueueRef.current;
+    const currentSession = sessionRef.current;
+
+    if (
+      !currentSession ||
+      currentSession.status !== "ACTIVE" ||
+      cartIsSyncing ||
+      syncBusy ||
+      sessionPatchCountRef.current > 0
+    ) {
       return;
     }
 
@@ -1222,15 +1312,34 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       const currentTerminal = terminalRef.current;
 
       if (currentTerminal?.offlineEnabled) {
-        if (session.items.length === 0) {
+        if (offlineSnapshot?.dayCloseBarrier?.checkoutBlocked) {
+          throw new Error(
+            "Checkout is paused while this business day is being closed. Sync this terminal and wait for Sales or Management to complete the close.",
+          );
+        }
+        if (currentSession.items.length === 0) {
           throw new Error("Add at least one product before checkout.");
         }
 
-        if (retailerSelectionMissing) {
+        const currentRetailer =
+          currentSession.customerType === "RETAILER"
+            ? availableRetailers.find(
+                (retailer) => retailer.id === currentSession.retailer?.id,
+              ) ?? null
+            : null;
+        const currentRetailerSelectionMissing =
+          currentSession.customerType === "RETAILER" && !currentRetailer;
+        const currentRetailerApprovalMissing =
+          currentSession.customerType === "RETAILER" &&
+          currentSession.paymentMethod === "CREDIT" &&
+          Boolean(currentRetailer?.requiresOrderApproval) &&
+          !currentSession.retailerApprovalId;
+
+        if (currentRetailerSelectionMissing) {
           throw new Error("Select a retailer before checkout.");
         }
 
-        if (retailerApprovalMissing) {
+        if (currentRetailerApprovalMissing) {
           throw new Error(
             "Admin approval is required before this retailer credit sale can be queued.",
           );
@@ -1238,7 +1347,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
         const soldAt = new Date().toISOString();
         const payload = buildOfflineSalePayload({
-          session,
+          session: currentSession,
           terminalId: currentTerminal.id,
           clientRequestId: `offline:${currentTerminal.id}:${crypto.randomUUID()}`,
           soldAt,
@@ -1271,7 +1380,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
         const receipt = buildReceiptDocument({
           session: {
-            ...session,
+            ...currentSession,
             completedAt: soldAt,
           },
           terminalName: currentTerminal.name,
@@ -1284,7 +1393,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         return;
       }
 
-      await apiJson<PosSession>(`/sessions/${session.id}`, {
+      await apiJson<PosSession>(`/sessions/${currentSession.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           customerType,
@@ -1297,7 +1406,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         }),
       });
       const completed = await apiJson<PosSession>(
-        `/sessions/${session.id}/checkout`,
+        `/sessions/${currentSession.id}/checkout`,
         { method: "POST", body: JSON.stringify({}) },
       );
       const receipt = buildReceiptDocument({
@@ -1578,6 +1687,12 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                 {syncMessage}
               </p>
             ) : null}
+            {offlineSnapshot?.dayCloseBarrier?.checkoutBlocked ? (
+              <p className="mt-2 rounded-[5px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
+                Checkout paused for day close. Sync this terminal until its
+                queue is confirmed empty.
+              </p>
+            ) : null}
             {failedOfflineCount > 0 ? (
               <div className="mt-2 grid gap-1 text-xs text-red-800">
                 {unresolvedQueuedSales
@@ -1826,7 +1941,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                       value={retailerId}
                     >
                       <option value="">Select retailer</option>
-                      {retailers.map((retailer) => (
+                      {availableRetailers.map((retailer) => (
                         <option key={retailer.id} value={retailer.id}>
                           {retailer.name}
                         </option>
@@ -1987,15 +2102,18 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
               className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
               disabled={
                 busy ||
+                syncBusy ||
                 cartIsSyncing ||
+                sessionPatchBusy ||
                 session.items.length === 0 ||
                 retailerSelectionMissing ||
-                retailerApprovalMissing
+                retailerApprovalMissing ||
+                Boolean(offlineSnapshot?.dayCloseBarrier?.checkoutBlocked)
               }
               onClick={checkout}
               type="button"
             >
-              {busy || cartIsSyncing ? (
+              {busy || cartIsSyncing || sessionPatchBusy ? (
                 <Spinner />
               ) : (
                 <Check className="h-4 w-4" />
@@ -2004,9 +2122,11 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                 ? "Processing..."
                 : cartIsSyncing
                   ? "Saving cart..."
-                  : offlineEnabled && !isOnline
-                    ? "Queue sale"
-                    : "Checkout"}
+                  : sessionPatchBusy
+                    ? "Saving sale..."
+                    : offlineEnabled && !isOnline
+                      ? "Queue sale"
+                      : "Checkout"}
             </button>
           </div>
         )}

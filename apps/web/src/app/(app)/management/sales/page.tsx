@@ -31,7 +31,7 @@ import {
 } from "../_components";
 
 import { ApproveDayCloseButton } from "./approve-day-close-modal";
-import { reopenDayClose } from "./actions";
+import { overrideDayCloseReadiness, reopenDayClose } from "./actions";
 
 const returnLabels = {
   RETURN_TO_STOCK: "Returned to stock",
@@ -270,6 +270,95 @@ export default async function ManagementSalesPage({
           detail={`${formatQuantity(report.summary.returnedToStockQuantity)} returned to stock`}
         />
       </div>
+
+      {dayCloses.preparations.map((preparation) => {
+        const pendingTerminals = preparation.terminalReadiness.terminals.filter(
+          (terminal) => !terminal.ready,
+        );
+
+        return (
+          <Card
+            key={preparation.businessDate}
+            title={`Day close waiting · ${formatBusinessDate(preparation.businessDate)}`}
+            description={`Cutoff ${preparation.cutoffAt ? formatDateTime(preparation.cutoffAt) : "not recorded"}. ${preparation.terminalReadiness.ready} of ${preparation.terminalReadiness.required} required terminals are ready.`}
+          >
+            <div className="grid gap-3">
+              {preparation.terminalReadiness.terminals.map((entry) => (
+                <div
+                  className="flex flex-col gap-1 border-b border-stone-100 pb-3 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+                  key={entry.id}
+                >
+                  <div>
+                    <p className="font-medium text-stone-900">
+                      {entry.terminal.name || entry.terminal.id}
+                    </p>
+                    <p className="text-xs text-stone-500">
+                      Last synced {entry.terminal.lastSyncedAt ? formatDateTime(entry.terminal.lastSyncedAt) : "never"}
+                    </p>
+                  </div>
+                  <span
+                    className={
+                      entry.ready
+                        ? "inline-flex w-fit rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800"
+                        : "inline-flex w-fit rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800"
+                    }
+                  >
+                    {entry.overriddenAt
+                      ? "Management override"
+                      : entry.ready
+                        ? "Queue confirmed empty"
+                        : "Waiting for sync"}
+                  </span>
+                </div>
+              ))}
+
+              {pendingTerminals.length > 0 ? (
+                <div className="flex justify-end pt-1">
+                  <AdminFormModal
+                    action={overrideDayCloseReadiness}
+                    description="Use an override only after independently confirming the listed terminals cannot submit more sales. The reason and terminal list are audited."
+                    submitLabel="Record override"
+                    title="Override terminal readiness"
+                    triggerLabel="Management override"
+                  >
+                    <input
+                      name="date"
+                      type="hidden"
+                      value={preparation.businessDate.slice(0, 10)}
+                    />
+                    <fieldset className="grid gap-2">
+                      <legend className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--text-muted)]">
+                        Terminals
+                      </legend>
+                      {pendingTerminals.map((entry) => (
+                        <label
+                          className="flex items-center gap-3 rounded-md border border-stone-200 px-3 py-2 text-sm text-stone-800"
+                          key={entry.id}
+                        >
+                          <input
+                            className="size-4 accent-red-800"
+                            defaultChecked
+                            name="terminalIds"
+                            type="checkbox"
+                            value={entry.terminal.id}
+                          />
+                          {entry.terminal.name || entry.terminal.id}
+                        </label>
+                      ))}
+                    </fieldset>
+                    <TextareaField
+                      label="Override reason"
+                      name="reason"
+                      placeholder="Explain how pending sales were checked and why this terminal cannot confirm normally"
+                      required
+                    />
+                  </AdminFormModal>
+                </div>
+              ) : null}
+            </div>
+          </Card>
+        );
+      })}
 
       <Card
         title={`Daily close-outs (${dayCloses.closes.length})`}

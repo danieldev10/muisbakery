@@ -1,7 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { getString } from "@/lib/admin/form-data";
 import type { FormState } from "@/lib/admin/types";
 import { apiSend } from "@/lib/server-api";
@@ -19,8 +17,6 @@ export async function approveDayClose(
     return { ok: false, error: result.message };
   }
 
-  revalidatePath("/management/sales");
-  revalidatePath("/sales/daily-summary");
   return { ok: true, error: null, token: Date.now() };
 }
 
@@ -37,7 +33,29 @@ export async function reopenDayClose(
     return { ok: false, error: result.message };
   }
 
-  revalidatePath("/management/sales");
-  revalidatePath("/sales/daily-summary");
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function overrideDayCloseReadiness(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const terminalIds = formData
+    .getAll("terminalIds")
+    .filter((value): value is string => typeof value === "string" && Boolean(value));
+  const result = await apiSend(
+    "/management/day-close-readiness/override",
+    "POST",
+    {
+      date: getString(formData, "date"),
+      terminalIds,
+      reason: getString(formData, "reason"),
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
   return { ok: true, error: null, token: Date.now() };
 }

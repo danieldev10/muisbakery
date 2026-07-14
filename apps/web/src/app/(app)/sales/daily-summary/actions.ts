@@ -1,10 +1,23 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { getString } from "@/lib/admin/form-data";
 import type { FormState } from "@/lib/admin/types";
 import { apiSend } from "@/lib/server-api";
+
+export async function prepareDayClose(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = await apiSend("/sales/day-close/prepare", "POST", {
+    date: getString(formData, "date"),
+  });
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  return { ok: true, error: null, token: Date.now() };
+}
 
 export async function submitDayClose(
   _state: FormState,
@@ -20,6 +33,5 @@ export async function submitDayClose(
     return { ok: false, error: result.message };
   }
 
-  revalidatePath("/sales/daily-summary");
   return { ok: true, error: null, token: Date.now() };
 }

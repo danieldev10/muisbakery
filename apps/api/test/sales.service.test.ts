@@ -17,6 +17,7 @@ import {
   SalesReturnDisposition,
 } from "@prisma/client";
 
+import { BusinessDayPostingLockedException } from "../src/sales/business-day";
 import { SalesService } from "../src/sales/sales.service";
 import { actor, createAuditMock } from "./helpers";
 
@@ -160,6 +161,7 @@ test("SalesService.recordReturn deducts damaged stock FIFO from sales batches", 
   const { audit, records } = createAuditMock();
   const tx = {
     businessDayState: createBusinessDayStateMock(),
+    $executeRaw: async () => 0,
     product: {
       findUnique: async () => product,
     },
@@ -343,6 +345,7 @@ test("SalesService.createSale records credit balances and deducts Sales stock FI
   const { audit, records } = createAuditMock();
   const tx = {
     businessDayState: createBusinessDayStateMock(),
+    $executeRaw: async () => 0,
     product: {
       findMany: async () => [product],
     },
@@ -425,6 +428,7 @@ test("SalesService.createSale records credit balances and deducts Sales stock FI
   };
   const service = createSalesService(
     {
+      sale: { findUniqueOrThrow: tx.sale.findUniqueOrThrow },
       $transaction: async (callback: (transaction: typeof tx) => unknown) =>
         callback(tx),
     },
@@ -488,6 +492,7 @@ test("SalesService.createSale consumes terminal custody without deducting centra
   };
   const tx = {
     businessDayState: createBusinessDayStateMock(),
+    $executeRaw: async () => 0,
     product: {
       findMany: async () => [product],
     },
@@ -606,6 +611,7 @@ test("SalesService.createSale consumes terminal custody without deducting centra
   const { audit } = createAuditMock();
   const service = createSalesService(
     {
+      sale: { findUniqueOrThrow: tx.sale.findUniqueOrThrow },
       $transaction: async (callback: (transaction: typeof tx) => unknown) =>
         callback(tx),
     },
@@ -721,9 +727,11 @@ test("SalesService.createSale consumes an Admin approval for repeat retailer cre
   ];
   let saleCreateData: Record<string, unknown> | null = null;
   let approvalUpdateData: Record<string, unknown> | null = null;
+  let approvalUpdateWhere: Record<string, unknown> | null = null;
   const { audit, records } = createAuditMock();
   const tx = {
     businessDayState: createBusinessDayStateMock(),
+    $executeRaw: async () => 0,
     product: {
       findMany: async () => [product],
     },
@@ -809,8 +817,16 @@ test("SalesService.createSale consumes an Admin approval for repeat retailer cre
         expiresAt: null,
         usedAt: null,
       }),
-      update: async ({ data }: { data: Record<string, unknown> }) => {
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      }) => {
+        approvalUpdateWhere = where;
         approvalUpdateData = data;
+        return { count: 1 };
       },
     },
     salesProductBatch: {
@@ -829,6 +845,7 @@ test("SalesService.createSale consumes an Admin approval for repeat retailer cre
   };
   const service = createSalesService(
     {
+      sale: { findUniqueOrThrow: tx.sale.findUniqueOrThrow },
       $transaction: async (callback: (transaction: typeof tx) => unknown) =>
         callback(tx),
     },
@@ -860,6 +877,11 @@ test("SalesService.createSale consumes an Admin approval for repeat retailer cre
   assert.equal(result.balanceDue, "6000");
   assert.equal(approvalUpdateData?.status, "USED");
   assert.ok(approvalUpdateData?.usedAt instanceof Date);
+  assert.deepEqual(approvalUpdateWhere, {
+    id: "approval-1",
+    status: "APPROVED",
+    usedAt: null,
+  });
   assert.equal(records.length, 1);
 });
 
@@ -908,6 +930,67 @@ test("SalesService.createSale blocks repeat retailer credit without Admin approv
   assert.equal(saleCreated, false);
 });
 
+test("SalesService.createSale rejects non-terminal approval for offline credit", async () => {
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: unknown) => unknown) =>
+        callback({
+          product: {
+            findMany: async () => [product],
+          },
+          $queryRaw: async () => [],
+          posTerminal: {
+            findUnique: async () => ({
+              id: "terminal-1",
+              name: "Front counter",
+              isActive: true,
+              offlineEnabled: true,
+            }),
+          },
+          retailer: {
+            findUnique: async () => ({
+              id: "retailer-1",
+              name: "Amina Stores",
+              isActive: true,
+            }),
+          },
+          sale: {
+            aggregate: async () => ({
+              _sum: { balanceDue: "5000.00" },
+            }),
+          },
+          retailerOrderApproval: {
+            findUnique: async () => ({
+              id: "approval-1",
+              retailerId: "retailer-1",
+              terminalId: null,
+              approvedAmount: "10000.00",
+              status: "APPROVED",
+              expiresAt: null,
+              usedAt: null,
+            }),
+          },
+        }),
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.createSale(
+      {
+        terminalId: "terminal-1",
+        customerType: CustomerType.RETAILER,
+        retailerId: "retailer-1",
+        retailerApprovalId: "approval-1",
+        paymentMethod: PaymentMethod.CREDIT,
+        items: [{ productId: product.id, quantity: "1", unitPrice: "3000" }],
+      },
+      actor,
+    ),
+    /must be assigned to this POS terminal/i,
+  );
+});
+
 test("SalesService.recordRetailerPayment settles oldest retailer balances first", async () => {
   const paidAt = new Date("2026-07-10T13:20:00.000Z");
   const createdAt = new Date("2026-07-10T13:20:01.000Z");
@@ -940,6 +1023,7 @@ test("SalesService.recordRetailerPayment settles oldest retailer balances first"
   const { audit, records } = createAuditMock();
   const tx = {
     businessDayState: createBusinessDayStateMock(),
+    $executeRaw: async () => 0,
     $queryRaw: async () => sales.map((sale) => ({ id: sale.id })),
     retailer: {
       findUnique: async () => retailer,
@@ -1228,6 +1312,7 @@ test("SalesService.recordReturn returns customer items to their original sale ba
   const { audit, records } = createAuditMock();
   const tx = {
     businessDayState: createBusinessDayStateMock(),
+    $executeRaw: async () => 0,
     saleItem: {
       findUnique: async () => ({
         id: "sale-item-1",
@@ -1393,6 +1478,7 @@ test("SalesService.recordReturn restores the exact terminal custody batch", asyn
   let centralBatchUpdated = false;
   const tx = {
     businessDayState: createBusinessDayStateMock(),
+    $executeRaw: async () => 0,
     saleItem: {
       findUnique: async () => ({
         id: "sale-item-1",
@@ -1519,6 +1605,106 @@ test("SalesService.getPosDisplay hides expired display tokens", async () => {
       error instanceof NotFoundException &&
       /display session not found/i.test(error.message),
   );
+});
+
+test("SalesService.getPosOfflineSnapshot includes live retailer credit and terminal approvals", async () => {
+  const deviceSecret = "paired-device-secret";
+  const createdAt = new Date("2026-07-14T08:00:00.000Z");
+  const retailer = {
+    id: "retailer-1",
+    name: "Amina Stores",
+    contactPerson: "Amina",
+    phone: "08030000000",
+    email: null,
+    address: null,
+    creditLimit: "0.00",
+    notes: null,
+    isActive: true,
+    createdAt,
+    updatedAt: createdAt,
+    createdBy: null,
+    orderApprovals: [
+      {
+        id: "approval-1",
+        approvedAmount: "15000.00",
+        status: "APPROVED",
+        terminal: { id: "terminal-1", name: "Front counter" },
+        reason: "Approved repeat credit",
+        expiresAt: null,
+        usedAt: null,
+        createdAt,
+        reviewedAt: createdAt,
+        requestedBy: null,
+        approvedBy: null,
+      },
+    ],
+  };
+  const creditAllocation = {
+    id: "credit-allocation-1",
+    terminalId: "terminal-1",
+    retailerId: retailer.id,
+    allocatedAmount: "50000.00",
+    usedAmount: "10000.00",
+    isActive: true,
+    retailer: {
+      id: retailer.id,
+      name: retailer.name,
+      contactPerson: retailer.contactPerson,
+    },
+    createdAt,
+    updatedAt: createdAt,
+  };
+  const terminal = terminalRecord({
+    offlineEnabled: true,
+    pairedAt: createdAt,
+    deviceSecretHash: hashSecret(deviceSecret),
+    deviceSecretIssuedAt: createdAt,
+    retailerCreditAllocations: [creditAllocation],
+  });
+  let retailerQuery: Record<string, unknown> | null = null;
+  const service = createSalesService(
+    {
+      posTerminal: {
+        findUnique: async () => terminal,
+        update: async () => terminal,
+      },
+      retailer: {
+        findMany: async (query: Record<string, unknown>) => {
+          retailerQuery = query;
+          return [retailer];
+        },
+      },
+      sale: {
+        groupBy: async () => [
+          {
+            retailerId: retailer.id,
+            _sum: { balanceDue: "12000.00" },
+          },
+        ],
+      },
+      businessDayState: { findUnique: async () => null },
+    },
+    createAuditMock().audit,
+  );
+
+  const result = await service.getPosOfflineSnapshot(
+    "terminal-1",
+    deviceSecret,
+  );
+  const offlineRetailer = result.retailers[0];
+  const orderApprovalWhere = (
+    retailerQuery as {
+      select?: { orderApprovals?: { where?: Record<string, unknown> } };
+    }
+  )?.select?.orderApprovals?.where;
+
+  assert.equal(offlineRetailer?.outstandingBalance, "12000.00");
+  assert.equal(offlineRetailer?.requiresOrderApproval, true);
+  assert.equal(offlineRetailer?.availableCredit, "40000.00");
+  assert.equal(offlineRetailer?.orderApprovals[0]?.id, "approval-1");
+  assert.equal(orderApprovalWhere?.terminalId, "terminal-1");
+  assert.equal(result.retailerCreditAllocations.length, 1);
+  assert.equal(typeof result.snapshotVersion, "string");
 });
 
 test("SalesService.createPosTerminal issues a pairing code for one hour", async () => {
@@ -2370,6 +2556,7 @@ test("SalesService.syncOfflinePosSales treats repeated client request IDs as dup
           attempts.push(create);
         },
       },
+      businessDayState: { findUnique: async () => null },
     },
     createAuditMock().audit,
   );
@@ -2398,6 +2585,60 @@ test("SalesService.syncOfflinePosSales treats repeated client request IDs as dup
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0]?.status, PosOfflineSyncStatus.DUPLICATE);
   assert.equal(attempts[0]?.saleId, "sale-1");
+});
+
+test("late offline sales are sent to reconciliation after the day-close cutoff", async () => {
+  const attempts: Record<string, unknown>[] = [];
+  const service = createSalesService(
+    {
+      $transaction: async () => {
+        throw new BusinessDayPostingLockedException(
+          "This business day is being closed.",
+        );
+      },
+      posTerminal: {
+        findUnique: async ({ select }: { select?: Record<string, unknown> }) =>
+          select && "offlineEnabled" in select
+            ? { id: "terminal-1", offlineEnabled: true }
+            : {
+                id: "terminal-1",
+                isActive: true,
+                deviceSecretHash: hashSecret("secret"),
+              },
+        update: async () => terminalRecord({ lastSyncedAt: new Date() }),
+      },
+      sale: { findUnique: async () => null },
+      posOfflineSyncAttempt: {
+        upsert: async ({ create }: { create: Record<string, unknown> }) => {
+          attempts.push(create);
+        },
+      },
+      businessDayState: { findUnique: async () => null },
+    },
+    createAuditMock().audit,
+  );
+
+  const result = await service.syncOfflinePosSales(
+    {
+      terminalId: "terminal-1",
+      sales: [
+        {
+          terminalId: "terminal-1",
+          clientRequestId: "offline:terminal-1:late-sale",
+          customerType: CustomerType.INDIVIDUAL,
+          paymentMethod: PaymentMethod.CASH,
+          soldAt: "2026-07-13T21:00:00.000Z",
+          items: [{ productId: product.id, quantity: "1", unitPrice: "3000" }],
+        },
+      ],
+    },
+    actor,
+    "secret",
+  );
+
+  assert.equal(result.results[0]?.status, PosOfflineSyncStatus.CONFLICT);
+  assert.equal(attempts[0]?.conflictCode, "DAY_CLOSE_LOCKED");
+  assert.equal(attempts[0]?.saleId, null);
 });
 
 test("SalesService.listPosOfflineSyncAttempts filters reconciliation records", async () => {

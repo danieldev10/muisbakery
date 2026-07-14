@@ -19,6 +19,17 @@
     "test": "npm run test:api && npm run test:web",
     "test:api": "npm run test -w @muisbakery/api",
     "test:web": "npm run test -w @muisbakery/web",
+    "test:db:check": "npm run test:db:check -w @muisbakery/api",
+    "test:db:start": "npm run test:db:start -w @muisbakery/api",
+    "test:db:migrate": "npm run test:db:migrate -w @muisbakery/api",
+    "test:db:reset": "npm run test:db:reset -w @muisbakery/api",
+    "test:integration": "npm run test:integration -w @muisbakery/api",
+    "test:e2e:seed": "npm run test:e2e:seed -w @muisbakery/api",
+    "test:e2e:prepare": "npm run test:db:reset && npm run test:e2e:seed && npm run build",
+    "test:e2e": "npm run test:e2e:prepare && playwright test",
+    "test:e2e:headed": "npm run test:e2e:prepare && playwright test --headed",
+    "test:e2e:report": "playwright show-report",
+    "test:phase8": "npm run test && npm run test:integration && npm run test:e2e",
     "typecheck": "npm run typecheck -w @muisbakery/web && npm run typecheck -w @muisbakery/api",
     "prisma:generate": "npm run prisma:generate -w @muisbakery/api",
     "prisma:migrate": "npm run prisma:migrate -w @muisbakery/api",
@@ -28,6 +39,7 @@
     "db:seed": "npm run db:seed -w @muisbakery/api"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "concurrently": "^10.0.3"
   }
 }
