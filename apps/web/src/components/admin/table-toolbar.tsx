@@ -1,5 +1,6 @@
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import type { PageSearchParams } from "@/lib/paginate";
 import { firstParam } from "@/lib/table-filters";
@@ -59,6 +60,7 @@ export function TableToolbar({
   selectFilters = [],
   dateFilters = [],
   pageParams = ["page"],
+  actions,
 }: {
   basePath: string;
   searchParams: PageSearchParams;
@@ -67,6 +69,7 @@ export function TableToolbar({
   selectFilters?: SelectFilter[];
   dateFilters?: DateFilter[];
   pageParams?: string[];
+  actions?: ReactNode;
 }) {
   const searchValue = firstParam(searchParams, searchParam);
   const controlledNames = new Set([
@@ -170,6 +173,9 @@ export function TableToolbar({
             </Link>
           ) : null}
         </div>
+        {actions ? (
+          <div className="flex items-center sm:ml-auto">{actions}</div>
+        ) : null}
       </div>
     </form>
   );

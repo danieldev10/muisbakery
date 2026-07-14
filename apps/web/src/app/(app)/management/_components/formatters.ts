@@ -7,15 +7,63 @@ export const paymentLabels: Record<PaymentMethod, string> = {
   CREDIT: "Credit",
 };
 
-export function currentMonthValue() {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+type ReportRangeSearchParams = {
+  from?: string | string[];
+  to?: string | string[];
+  month?: string | string[];
+};
+
+function stringParam(value: string | string[] | undefined) {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-export function getMonthParam(query: { month?: string | string[] }) {
-  return typeof query.month === "string" && query.month.trim() !== ""
-    ? query.month
-    : currentMonthValue();
+function dateValue(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+export function defaultReportRange() {
+  const now = new Date();
+  const to = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  const targetMonth = to.getUTCMonth() - 1;
+  const targetYear = to.getUTCFullYear() + Math.floor(targetMonth / 12);
+  const normalizedMonth = ((targetMonth % 12) + 12) % 12;
+  const lastDay = new Date(
+    Date.UTC(targetYear, normalizedMonth + 1, 0),
+  ).getUTCDate();
+  const from = new Date(
+    Date.UTC(
+      targetYear,
+      normalizedMonth,
+      Math.min(to.getUTCDate(), lastDay),
+    ),
+  );
+
+  return { from: dateValue(from), to: dateValue(to) };
+}
+
+export function reportRangeApiPath(
+  basePath: string,
+  query: ReportRangeSearchParams,
+) {
+  const params = new URLSearchParams();
+  const from = stringParam(query.from);
+  const to = stringParam(query.to);
+  const legacyMonth = stringParam(query.month);
+
+  if (from) {
+    params.set("from", from);
+  }
+  if (to) {
+    params.set("to", to);
+  }
+  if (!from && !to && legacyMonth) {
+    params.set("month", legacyMonth);
+  }
+
+  const search = params.toString();
+  return search ? `${basePath}?${search}` : basePath;
 }
 
 export function formatMoney(value: string | number) {

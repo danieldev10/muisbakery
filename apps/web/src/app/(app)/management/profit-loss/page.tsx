@@ -9,10 +9,10 @@ import {
   formatMoney,
   formatPercent,
   formatQuantity,
-  getMonthParam,
   ManagementPageShell,
   MetricCard,
-  MonthFilter,
+  reportRangeApiPath,
+  ReportRangeFilter,
 } from "../_components";
 
 function gainLossTone(value: string) {
@@ -55,12 +55,15 @@ function StatementRow({
 export default async function ManagementProfitLossPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string | string[] }>;
+  searchParams: Promise<{
+    from?: string | string[];
+    to?: string | string[];
+    month?: string | string[];
+  }>;
 }) {
   const query = await searchParams;
-  const month = getMonthParam(query);
   const report = await apiGet<ManagementProfitLossReport>(
-    `/management/profit-loss?month=${encodeURIComponent(month)}`,
+    reportRangeApiPath("/management/profit-loss", query),
   );
   const reportSections = [
     {
@@ -73,7 +76,7 @@ export default async function ManagementProfitLossPage({
         },
         {
           Line: "Cost of goods sold",
-          Detail: "Finished-good batches sold this month",
+          Detail: "Finished-good batches sold in the selected period",
           Amount: `- ${formatMoney(report.costs.costOfGoodsSold)}`,
         },
         {
@@ -154,15 +157,17 @@ export default async function ManagementProfitLossPage({
 
   return (
     <ManagementPageShell>
-      <MonthFilter month={report.month.value} />
-      <div className="flex justify-end">
-        <ReportExportActions
-          filename={`management-profit-loss-${report.month.value}`}
-          sections={reportSections}
-          subtitle={`Month: ${report.month.label}`}
-          title="Management operational profit and loss"
-        />
-      </div>
+      <ReportRangeFilter
+        range={report.range}
+        actions={
+          <ReportExportActions
+            filename={`management-profit-loss-${report.range.from}-to-${report.range.to}`}
+            sections={reportSections}
+            subtitle={`Period: ${report.range.label}`}
+            title="Management operational profit and loss"
+          />
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -215,7 +220,7 @@ export default async function ManagementProfitLossPage({
           />
           <StatementRow
             label="Cost of goods sold"
-            detail="Finished-good batches sold this month, at captured production cost"
+            detail="Finished-good batches sold in the selected period, at captured production cost"
             amount={`- ${formatMoney(report.costs.costOfGoodsSold)}`}
             amountClass={lossClass}
           />
@@ -310,7 +315,7 @@ export default async function ManagementProfitLossPage({
         <Card title="Operating expenses by category">
           {report.expenses.byCategory.length === 0 ? (
             <EmptyState>
-              No expenses recorded for this month.{" "}
+              No expenses recorded for this period.{" "}
               <Link
                 className="font-medium text-[var(--brand-burgundy)] underline-offset-2 hover:underline"
                 href="/management/expenses"

@@ -20,10 +20,10 @@ import {
   formatDateTime,
   formatMoney,
   formatQuantity,
-  getMonthParam,
   ManagementPageShell,
   MetricCard,
-  MonthFilter,
+  reportRangeApiPath,
+  ReportRangeFilter,
 } from "../_components";
 
 export default async function ManagementProductionPage({
@@ -32,9 +32,8 @@ export default async function ManagementProductionPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const query = await searchParams;
-  const month = getMonthParam(query);
   const report = await apiGet<ManagementProductionReport>(
-    `/management/production?month=${encodeURIComponent(month)}`,
+    reportRangeApiPath("/management/production", query),
   );
   const outputQuery = firstParam(query, "outputQ");
   const filteredOutputByProduct = report.outputByProduct.filter((entry) =>
@@ -108,7 +107,7 @@ export default async function ManagementProductionPage({
       title: "Summary",
       rows: [
         {
-          Month: report.month.label,
+          Period: report.range.label,
           Runs: report.summary.runsCount,
           Produced: formatQuantity(report.summary.quantityProduced),
           "Sent to Sales": formatQuantity(report.summary.quantityTransferred),
@@ -198,15 +197,17 @@ export default async function ManagementProductionPage({
 
   return (
     <ManagementPageShell>
-      <MonthFilter month={report.month.value} />
-      <div className="flex justify-end">
-        <ReportExportActions
-          filename={`management-production-${report.month.value}`}
-          sections={reportSections}
-          subtitle={`Month: ${report.month.label}`}
-          title="Management production report"
-        />
-      </div>
+      <ReportRangeFilter
+        range={report.range}
+        actions={
+          <ReportExportActions
+            filename={`management-production-${report.range.from}-to-${report.range.to}`}
+            sections={reportSections}
+            subtitle={`Period: ${report.range.label}`}
+            title="Management production report"
+          />
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-5">
         <MetricCard label="Runs" value={report.summary.runsCount} />
@@ -243,7 +244,7 @@ export default async function ManagementProductionPage({
             />
           ) : null}
           {report.outputByProduct.length === 0 ? (
-            <EmptyState>No production output for this month.</EmptyState>
+            <EmptyState>No production output for this period.</EmptyState>
           ) : filteredOutputByProduct.length === 0 ? (
             <EmptyState>No product output matches the current filters.</EmptyState>
           ) : (
@@ -301,7 +302,7 @@ export default async function ManagementProductionPage({
             />
           ) : null}
           {report.wasteByProduct.length === 0 ? (
-            <EmptyState>No waste recorded for this month.</EmptyState>
+            <EmptyState>No waste recorded for this period.</EmptyState>
           ) : filteredWasteByProduct.length === 0 ? (
             <EmptyState>No product waste matches the current filters.</EmptyState>
           ) : (
@@ -348,7 +349,7 @@ export default async function ManagementProductionPage({
           />
         ) : null}
         {report.materialUsage.length === 0 ? (
-          <EmptyState>No raw materials were consumed this month.</EmptyState>
+          <EmptyState>No raw materials were consumed in this period.</EmptyState>
         ) : filteredMaterialUsage.length === 0 ? (
           <EmptyState>No material usage matches the current filters.</EmptyState>
         ) : (
@@ -410,7 +411,7 @@ export default async function ManagementProductionPage({
           />
         ) : null}
         {report.runs.length === 0 ? (
-          <EmptyState>No production runs for this month.</EmptyState>
+          <EmptyState>No production runs for this period.</EmptyState>
         ) : filteredRuns.length === 0 ? (
           <EmptyState>No production runs match the current filters.</EmptyState>
         ) : (

@@ -11,7 +11,7 @@ import { z } from "zod";
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { PrismaService } from "../database/prisma.service";
-import { getMonthRange, serializeMonth } from "./month-range";
+import { getReportRange, serializeReportRange } from "./report-range";
 
 const createExpenseSchema = z.object({
   categoryId: z.string().trim().min(1, "Category is required."),
@@ -70,8 +70,8 @@ export class ExpensesService {
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
-  async list(month?: string) {
-    const range = getMonthRange(month);
+  async list(from?: string, to?: string) {
+    const range = getReportRange(from, to);
 
     const [expenses, categories] = await Promise.all([
       this.prisma.expense.findMany({
@@ -111,7 +111,7 @@ export class ExpensesService {
     }
 
     return {
-      month: serializeMonth(range),
+      range: serializeReportRange(range),
       summary: {
         count: active.length,
         voidedCount: expenses.length - active.length,

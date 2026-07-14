@@ -25,7 +25,11 @@ import {
   type QueryParams,
 } from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
-import { getMonthRange, type MonthRange } from "./month-range";
+import {
+  getReportRange,
+  serializeReportRange,
+  type ReportRange,
+} from "./report-range";
 
 const LOW_STOCK_THRESHOLD = 10;
 const WORKFLOW_AUDIT_ACTIONS = [
@@ -425,7 +429,7 @@ function serializeRun(run: ProductionRunWithIncludes) {
   };
 }
 
-function getSaleWhere(range: MonthRange) {
+function getSaleWhere(range: ReportRange) {
   return {
     soldAt: {
       gte: range.start,
@@ -434,7 +438,7 @@ function getSaleWhere(range: MonthRange) {
   } satisfies Prisma.SaleWhereInput;
 }
 
-function getRecordedAtWhere(range: MonthRange) {
+function getRecordedAtWhere(range: ReportRange) {
   return {
     recordedAt: {
       gte: range.start,
@@ -452,12 +456,12 @@ export class ManagementService {
     private readonly audit: AuditService,
   ) {}
 
-  async dashboard(month?: string) {
+  async dashboard(from?: string, to?: string) {
     const [profitLoss, inventory, production, sales] = await Promise.all([
-      this.profitLoss(month),
+      this.profitLoss(from, to),
       this.inventory(),
-      this.production(month),
-      this.sales(month),
+      this.production(from, to),
+      this.sales(from, to),
     ]);
 
     const productionOutput = [...production.outputByProduct]
@@ -482,7 +486,7 @@ export class ManagementService {
       }));
 
     return {
-      month: profitLoss.month,
+      range: profitLoss.range,
       summary: {
         totalRevenue: profitLoss.revenue.totalRevenue,
         estimatedMaterialCost: profitLoss.costs.costOfGoodsSold,
@@ -543,8 +547,8 @@ export class ManagementService {
     };
   }
 
-  async profitLoss(month?: string) {
-    const range = getMonthRange(month);
+  async profitLoss(from?: string, to?: string) {
+    const range = getReportRange(from, to);
     const salesWhere = getSaleWhere(range);
 
     const [
@@ -734,12 +738,7 @@ export class ManagementService {
       totalRevenue > 0 ? (estimatedNetProfit / totalRevenue) * 100 : 0;
 
     return {
-      month: {
-        value: range.month,
-        label: range.label,
-        start: range.start.toISOString(),
-        end: range.end.toISOString(),
-      },
+      range: serializeReportRange(range),
       revenue: {
         salesCount: sales.length,
         subtotal: moneyString(subtotal),
@@ -783,7 +782,7 @@ export class ManagementService {
         netMarginPercent: percentString(netMarginPercent),
       },
       notes: [
-        "Cost of goods sold is calculated from finished-good batches sold this month, using the production cost captured on each batch.",
+        "Cost of goods sold is calculated from finished-good batches sold in the selected period, using the production cost captured on each batch.",
         "Materials issued to production are shown separately because unsold finished goods remain inventory until sold.",
         "Operating expenses are the expenses recorded under Management > Expenses (voided expenses are excluded).",
         "Waste and damaged-return losses use product selling price as estimated retail value.",
@@ -894,8 +893,8 @@ export class ManagementService {
     return serializeRawMaterial(updated);
   }
 
-  async production(month?: string) {
-    const range = getMonthRange(month);
+  async production(from?: string, to?: string) {
+    const range = getReportRange(from, to);
     const runs = await this.prisma.productionRun.findMany({
       where: {
         producedAt: {
@@ -1005,12 +1004,7 @@ export class ManagementService {
     ).length;
 
     return {
-      month: {
-        value: range.month,
-        label: range.label,
-        start: range.start.toISOString(),
-        end: range.end.toISOString(),
-      },
+      range: serializeReportRange(range),
       summary: {
         runsCount: runs.length,
         quantityProduced: countString(totalProduced),
@@ -1040,8 +1034,8 @@ export class ManagementService {
     };
   }
 
-  async sales(month?: string) {
-    const range = getMonthRange(month);
+  async sales(from?: string, to?: string) {
+    const range = getReportRange(from, to);
     const sales = await this.prisma.sale.findMany({
       where: getSaleWhere(range),
       include: saleInclude,
@@ -1116,12 +1110,7 @@ export class ManagementService {
       .reduce((sum, returnEntry) => sum + decimalToNumber(returnEntry.quantity), 0);
 
     return {
-      month: {
-        value: range.month,
-        label: range.label,
-        start: range.start.toISOString(),
-        end: range.end.toISOString(),
-      },
+      range: serializeReportRange(range),
       summary: {
         salesCount: sales.length,
         totalRevenue: moneyString(totalRevenue),

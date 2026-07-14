@@ -643,6 +643,12 @@ export type DayClosePreview = {
 };
 
 export type DayCloseListReport = {
-  month: { value: string; label: string; start: string; end: string };
+  range: {
+    from: string;
+    to: string;
+    label: string;
+    start: string;
+    end: string;
+  };
   closes: SalesDayClose[];
 };

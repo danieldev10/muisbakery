@@ -26,7 +26,7 @@ const rawMaterial = {
   baseUnit: { id: "unit-2", name: "Kilogram", abbreviation: "kg" },
 };
 
-test("ManagementService.profitLoss calculates revenue, material costs, and recorded losses for a month", async () => {
+test("ManagementService.profitLoss calculates revenue, material costs, and recorded losses for a period", async () => {
   const service = new ManagementService(
     {
       sale: {
@@ -122,7 +122,8 @@ test("ManagementService.profitLoss calculates revenue, material costs, and recor
 
   const result = await service.profitLoss("2026-07");
 
-  assert.equal(result.month.value, "2026-07");
+  assert.equal(result.range.from, "2026-07-01");
+  assert.equal(result.range.to, "2026-07-31");
   assert.equal(result.revenue.salesCount, 2);
   assert.equal(result.revenue.subtotal, "16000.00");
   assert.equal(result.revenue.discount, "1000.00");
@@ -146,7 +147,7 @@ test("ManagementService.profitLoss calculates revenue, material costs, and recor
   assert.equal(result.profit.netMarginPercent, "46.67");
 });
 
-test("ManagementService.profitLoss rejects invalid month filters", async () => {
+test("ManagementService.profitLoss rejects invalid legacy month filters", async () => {
   const service = new ManagementService(
     {} as never,
     createAuditMock().audit as never,

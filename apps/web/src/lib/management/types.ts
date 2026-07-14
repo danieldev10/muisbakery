@@ -30,8 +30,9 @@ export type ManagementProductRef = {
   unit: ManagementUnitRef;
 };
 
-export type ManagementMonth = {
-  value: string;
+export type ManagementReportRange = {
+  from: string;
+  to: string;
   label: string;
   start: string;
   end: string;
@@ -135,7 +136,7 @@ export type ManagementExpense = {
 };
 
 export type ManagementExpensesReport = {
-  month: ManagementMonth;
+  range: ManagementReportRange;
   summary: {
     count: number;
     voidedCount: number;
@@ -147,7 +148,7 @@ export type ManagementExpensesReport = {
 };
 
 export type ManagementProfitLossReport = {
-  month: ManagementMonth;
+  range: ManagementReportRange;
   revenue: {
     salesCount: number;
     subtotal: string;
@@ -184,7 +185,7 @@ export type ManagementProfitLossReport = {
 };
 
 export type ManagementProductionReport = {
-  month: ManagementMonth;
+  range: ManagementReportRange;
   summary: {
     runsCount: number;
     quantityProduced: string;
@@ -231,7 +232,7 @@ export type ManagementProductionReport = {
 };
 
 export type ManagementSalesReport = {
-  month: ManagementMonth;
+  range: ManagementReportRange;
   summary: {
     salesCount: number;
     totalRevenue: string;
@@ -294,7 +295,7 @@ export type ManagementChartDatum = {
 };
 
 export type ManagementDashboardReport = {
-  month: ManagementMonth;
+  range: ManagementReportRange;
   summary: {
     totalRevenue: string;
     estimatedMaterialCost: string;

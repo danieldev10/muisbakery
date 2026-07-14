@@ -199,7 +199,7 @@ async function cachedResponse(request) {
 
 // The web server redirects here when it is up but cannot reach the API. For
 // the POS page that must behave like being offline, not like being signed
-// out — the paired device has everything it needs locally.
+// out the paired device has everything it needs locally.
 function isApiUnreachableRedirect(response) {
   if (!response.redirected) {
     return false;

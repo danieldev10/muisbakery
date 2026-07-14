@@ -32,8 +32,12 @@ export class ManagementController {
   ) {}
 
   @Get("day-closes")
-  listDayCloses(@Query("month") month?: string) {
-    return this.dayClose.listForMonth(month);
+  listDayCloses(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("month") month?: string,
+  ) {
+    return this.dayClose.listForRange(from ?? month, to);
   }
 
   @Post("day-closes/:id/approve")
@@ -46,13 +50,21 @@ export class ManagementController {
   }
 
   @Get("dashboard")
-  dashboard(@Query("month") month?: string) {
-    return this.management.dashboard(month);
+  dashboard(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("month") month?: string,
+  ) {
+    return this.management.dashboard(from ?? month, to);
   }
 
   @Get("profit-loss")
-  profitLoss(@Query("month") month?: string) {
-    return this.management.profitLoss(month);
+  profitLoss(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("month") month?: string,
+  ) {
+    return this.management.profitLoss(from ?? month, to);
   }
 
   @Get("inventory")
@@ -74,8 +86,12 @@ export class ManagementController {
   }
 
   @Get("expenses")
-  listExpenses(@Query("month") month?: string) {
-    return this.expenses.list(month);
+  listExpenses(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("month") month?: string,
+  ) {
+    return this.expenses.list(from ?? month, to);
   }
 
   @Post("expenses")
@@ -93,13 +109,21 @@ export class ManagementController {
   }
 
   @Get("production")
-  production(@Query("month") month?: string) {
-    return this.management.production(month);
+  production(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("month") month?: string,
+  ) {
+    return this.management.production(from ?? month, to);
   }
 
   @Get("sales")
-  sales(@Query("month") month?: string) {
-    return this.management.sales(month);
+  sales(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("month") month?: string,
+  ) {
+    return this.management.sales(from ?? month, to);
   }
 
   @Get("audit-log")

@@ -4,30 +4,33 @@ import { apiGet } from "@/lib/server-api";
 
 import {
   DashboardChartCard,
-  getMonthParam,
   formatMoney,
   formatQuantity,
   ManagementPageShell,
   MetricCard,
-  MonthFilter,
+  reportRangeApiPath,
+  ReportRangeFilter,
 } from "../_components";
 
 export default async function ManagementDashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string | string[] }>;
+  searchParams: Promise<{
+    from?: string | string[];
+    to?: string | string[];
+    month?: string | string[];
+  }>;
 }) {
   const query = await searchParams;
-  const month = getMonthParam(query);
   const report = await apiGet<ManagementDashboardReport>(
-    `/management/dashboard?month=${encodeURIComponent(month)}`,
+    reportRangeApiPath("/management/dashboard", query),
   );
   const reportSections = [
     {
       title: "Summary",
       rows: [
         {
-          Month: report.month.label,
+          Period: report.range.label,
           Revenue: formatMoney(report.summary.totalRevenue),
           "Gross profit": formatMoney(report.summary.estimatedGrossProfit),
           "Net profit": formatMoney(report.summary.estimatedNetProfit),
@@ -76,15 +79,17 @@ export default async function ManagementDashboardPage({
 
   return (
     <ManagementPageShell>
-      <MonthFilter month={report.month.value} />
-      <div className="flex justify-end">
-        <ReportExportActions
-          filename={`management-dashboard-${report.month.value}`}
-          sections={reportSections}
-          subtitle={`Month: ${report.month.label}`}
-          title="Management dashboard"
-        />
-      </div>
+      <ReportRangeFilter
+        range={report.range}
+        actions={
+          <ReportExportActions
+            filename={`management-dashboard-${report.range.from}-to-${report.range.to}`}
+            sections={reportSections}
+            subtitle={`Period: ${report.range.label}`}
+            title="Management dashboard"
+          />
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -121,10 +126,10 @@ export default async function ManagementDashboardPage({
       <div className="grid gap-4 lg:grid-cols-2">
         <DashboardChartCard
           title="Profitability"
-          description="Revenue through net profit for the selected month."
+          description="Revenue through net profit for the selected period."
           data={report.charts.profitability}
           mode="money"
-          emptyText="No profit/loss data for this month."
+          emptyText="No profit/loss data for this period."
         />
         <DashboardChartCard
           title="Stock value mix"
@@ -135,17 +140,17 @@ export default async function ManagementDashboardPage({
         />
         <DashboardChartCard
           title="Production output"
-          description="Top products produced in the selected month."
+          description="Top products produced in the selected period."
           data={report.charts.productionOutput}
           mode="quantity"
-          emptyText="No production output for this month."
+          emptyText="No production output for this period."
         />
         <DashboardChartCard
           title="Sales by product"
-          description="Top product revenue in the selected month."
+          description="Top product revenue in the selected period."
           data={report.charts.salesRevenue}
           mode="money"
-          emptyText="No product sales for this month."
+          emptyText="No product sales for this period."
         />
       </div>
     </ManagementPageShell>

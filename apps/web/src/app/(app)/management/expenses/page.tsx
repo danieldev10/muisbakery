@@ -24,11 +24,11 @@ import {
 import {
   formatDate,
   formatMoney,
-  getMonthParam,
   ManagementPageShell,
   MetricCard,
-  MonthFilter,
   paymentLabels,
+  reportRangeApiPath,
+  ReportRangeFilter,
 } from "../_components";
 import { createExpense } from "./actions";
 import { VoidExpenseButton } from "./void-expense-modal";
@@ -43,9 +43,8 @@ export default async function ManagementExpensesPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const query = await searchParams;
-  const month = getMonthParam(query);
   const report = await apiGet<ManagementExpensesReport>(
-    `/management/expenses?month=${encodeURIComponent(month)}`,
+    reportRangeApiPath("/management/expenses", query),
   );
 
   const search = firstParam(query, "q");
@@ -81,7 +80,7 @@ export default async function ManagementExpensesPage({
       title: "Summary",
       rows: [
         {
-          Month: report.month.label,
+          Period: report.range.label,
           "Total operating expenses": formatMoney(report.summary.totalAmount),
           Expenses: report.summary.count,
           "Voided expenses": report.summary.voidedCount,
@@ -116,22 +115,24 @@ export default async function ManagementExpensesPage({
 
   return (
     <ManagementPageShell>
-      <MonthFilter month={report.month.value} />
-      <div className="flex justify-end">
-        <ReportExportActions
-          filename={`management-expenses-${report.month.value}`}
-          sections={reportSections}
-          subtitle={`Month: ${report.month.label}`}
-          title="Management expenses"
-        />
-      </div>
+      <ReportRangeFilter
+        range={report.range}
+        actions={
+          <ReportExportActions
+            filename={`management-expenses-${report.range.from}-to-${report.range.to}`}
+            sections={reportSections}
+            subtitle={`Period: ${report.range.label}`}
+            title="Management expenses"
+          />
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard
           label="Total operating expenses"
           tone={Number(report.summary.totalAmount) > 0 ? "warning" : "default"}
           value={formatMoney(report.summary.totalAmount)}
-          detail={`${report.summary.count} expenses this month`}
+          detail={`${report.summary.count} expenses in this period`}
         />
         <MetricCard
           label="Largest category"
@@ -143,7 +144,7 @@ export default async function ManagementExpensesPage({
           }
         />
         <MetricCard
-          label="Voided this month"
+          label="Voided in period"
           value={report.summary.voidedCount}
           detail="Kept on record, excluded from totals"
         />
@@ -270,7 +271,7 @@ export default async function ManagementExpensesPage({
 
         {report.expenses.length === 0 ? (
           <EmptyState>
-            No expenses recorded for this month yet. Record rent, salaries,
+            No expenses recorded for this period yet. Record rent, salaries,
             utilities, and other overheads so profit/loss reflects the real
             books.
           </EmptyState>

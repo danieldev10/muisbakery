@@ -8,8 +8,10 @@ import {
   type PageSearchParams,
 } from "@/lib/paginate";
 import { apiGet } from "@/lib/server-api";
+import { firstParam } from "@/lib/table-filters";
 
 import {
+  defaultReportRange,
   formatAction,
   formatDateTime,
   ManagementPageShell,
@@ -21,8 +23,14 @@ export default async function ManagementAuditLogPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
+  const defaultRange = defaultReportRange();
+  const filteredParams = {
+    ...params,
+    from: firstParam(params, "from") || defaultRange.from,
+    to: firstParam(params, "to") || defaultRange.to,
+  };
   const report = await apiGet<ManagementAuditReport>(
-    paginatedApiPath("/management/audit-log", params, [
+    paginatedApiPath("/management/audit-log", filteredParams, [
       "q",
       "role",
       "entity",
@@ -78,21 +86,21 @@ export default async function ManagementAuditLogPage({
   return (
     <ManagementPageShell>
       <Card title={`Latest events (${pagination.total})`}>
-        <div className="mb-4 flex justify-end">
-          <ReportExportActions
-            filename="management-audit-log"
-            sections={reportSections}
-            subtitle="Current filtered page"
-            title="Management audit log"
-          />
-        </div>
         <TableToolbar
+          actions={
+            <ReportExportActions
+              filename={`management-audit-log-${filteredParams.from}-to-${filteredParams.to}`}
+              sections={reportSections}
+              subtitle={`${filteredParams.from} to ${filteredParams.to} · current filtered page`}
+              title="Management audit log"
+            />
+          }
           basePath="/management/audit-log"
           dateFilters={[
             { label: "From", name: "from" },
             { label: "To", name: "to" },
           ]}
-          searchParams={params}
+          searchParams={filteredParams}
           searchPlaceholder="Search action, record, actor, or reference"
           selectFilters={[
             {
@@ -140,7 +148,7 @@ export default async function ManagementAuditLogPage({
         )}
         <TablePagination
           basePath="/management/audit-log"
-          searchParams={params}
+          searchParams={filteredParams}
           {...pagination}
         />
       </Card>

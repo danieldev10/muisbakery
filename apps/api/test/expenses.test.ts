@@ -211,7 +211,7 @@ test("voiding is rejected without a reason and for already-voided expenses", asy
   );
 });
 
-test("the monthly list excludes voided expenses from totals but keeps them visible", async () => {
+test("the period list excludes voided expenses from totals but keeps them visible", async () => {
   const { service } = makeService({
     expenses: [
       expenseRow({ id: "expense-1", amount: "5000.00" }),
@@ -231,7 +231,8 @@ test("the monthly list excludes voided expenses from totals but keeps them visib
 
   const report = await service.list("2026-07");
 
-  assert.equal(report.month.value, "2026-07");
+  assert.equal(report.range.from, "2026-07-01");
+  assert.equal(report.range.to, "2026-07-31");
   assert.equal(report.summary.count, 2);
   assert.equal(report.summary.voidedCount, 1);
   assert.equal(report.summary.totalAmount, "7500.00");

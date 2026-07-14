@@ -1,34 +1,52 @@
 import type { ReactNode } from "react";
 
 import { Card } from "@/components/admin/layout";
+import type { ManagementReportRange } from "@/lib/management/types";
 
 export function ManagementPageShell({ children }: { children: ReactNode }) {
   return <div className="grid gap-5 lg:gap-6">{children}</div>;
 }
 
-export function MonthFilter({ month }: { month: string }) {
+export function ReportRangeFilter({
+  range,
+  actions,
+}: {
+  range: ManagementReportRange;
+  actions?: ReactNode;
+}) {
   return (
     <Card>
-      <form className="flex flex-col gap-3 sm:flex-row sm:items-end" method="GET">
-        <div className="grid gap-1.5">
-          <label className="text-sm font-medium text-stone-700" htmlFor="month">
-            Month
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <form className="flex flex-col gap-3 sm:flex-row sm:items-end" method="GET">
+          <label className="grid gap-1.5 text-sm font-medium text-stone-700">
+            From
+            <input
+              className="h-10 rounded-md border border-stone-300 bg-white px-3 text-sm font-normal text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+              defaultValue={range.from}
+              name="from"
+              required
+              type="date"
+            />
           </label>
-          <input
-            className="h-10 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
-            defaultValue={month}
-            id="month"
-            name="month"
-            type="month"
-          />
-        </div>
-        <button
-          className="h-10 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900"
-          type="submit"
-        >
-          View report
-        </button>
-      </form>
+          <label className="grid gap-1.5 text-sm font-medium text-stone-700">
+            To
+            <input
+              className="h-10 rounded-md border border-stone-300 bg-white px-3 text-sm font-normal text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
+              defaultValue={range.to}
+              name="to"
+              required
+              type="date"
+            />
+          </label>
+          <button
+            className="h-10 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900"
+            type="submit"
+          >
+            View report
+          </button>
+        </form>
+        {actions ? <div className="flex items-center lg:pb-0.5">{actions}</div> : null}
+      </div>
     </Card>
   );
 }

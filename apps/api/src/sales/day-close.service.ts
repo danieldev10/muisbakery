@@ -17,7 +17,10 @@ import { z } from "zod";
 import { AuditService } from "../audit/audit.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { PrismaService } from "../database/prisma.service";
-import { getMonthRange, serializeMonth } from "../management/month-range";
+import {
+  getReportRange,
+  serializeReportRange,
+} from "../management/report-range";
 import { decimalToNumber, toDayRange } from "./sales.utils";
 
 const dateSchema = z
@@ -354,8 +357,8 @@ export class DayCloseService {
     return serializeDayClose(close);
   }
 
-  async listForMonth(month?: string) {
-    const range = getMonthRange(month);
+  async listForRange(from?: string, to?: string) {
+    const range = getReportRange(from, to);
 
     const closes = await this.prisma.salesDayClose.findMany({
       where: {
@@ -366,7 +369,7 @@ export class DayCloseService {
     });
 
     return {
-      month: serializeMonth(range),
+      range: serializeReportRange(range),
       closes: closes.map(serializeDayClose),
     };
   }

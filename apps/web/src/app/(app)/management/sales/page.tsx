@@ -21,11 +21,11 @@ import {
   formatDateTime,
   formatMoney,
   formatQuantity,
-  getMonthParam,
   ManagementPageShell,
   MetricCard,
-  MonthFilter,
   paymentLabels,
+  reportRangeApiPath,
+  ReportRangeFilter,
 } from "../_components";
 
 import { ApproveDayCloseButton } from "./approve-day-close-modal";
@@ -48,13 +48,12 @@ export default async function ManagementSalesPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const query = await searchParams;
-  const month = getMonthParam(query);
   const [report, dayCloses] = await Promise.all([
     apiGet<ManagementSalesReport>(
-      `/management/sales?month=${encodeURIComponent(month)}`,
+      reportRangeApiPath("/management/sales", query),
     ),
     apiGet<DayCloseListReport>(
-      `/management/day-closes?month=${encodeURIComponent(month)}`,
+      reportRangeApiPath("/management/day-closes", query),
     ),
   ]);
   const paymentQuery = firstParam(query, "paymentQ");
@@ -146,7 +145,7 @@ export default async function ManagementSalesPage({
       title: "Summary",
       rows: [
         {
-          Month: report.month.label,
+          Period: report.range.label,
           Sales: report.summary.salesCount,
           Revenue: formatMoney(report.summary.totalRevenue),
           Paid: formatMoney(report.summary.amountPaid),
@@ -233,15 +232,17 @@ export default async function ManagementSalesPage({
 
   return (
     <ManagementPageShell>
-      <MonthFilter month={report.month.value} />
-      <div className="flex justify-end">
-        <ReportExportActions
-          filename={`management-sales-${report.month.value}`}
-          sections={reportSections}
-          subtitle={`Month: ${report.month.label}`}
-          title="Management sales report"
-        />
-      </div>
+      <ReportRangeFilter
+        range={report.range}
+        actions={
+          <ReportExportActions
+            filename={`management-sales-${report.range.from}-to-${report.range.to}`}
+            sections={reportSections}
+            subtitle={`Period: ${report.range.label}`}
+            title="Management sales report"
+          />
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-4">
         <MetricCard
@@ -272,7 +273,7 @@ export default async function ManagementSalesPage({
       >
         {dayCloses.closes.length === 0 ? (
           <EmptyState>
-            No days have been closed for this month yet. Sales closes a day
+            No days have been closed for this period yet. Sales closes a day
             from the Daily summary page.
           </EmptyState>
         ) : (
@@ -405,7 +406,7 @@ export default async function ManagementSalesPage({
             />
           ) : null}
           {report.productSummary.length === 0 ? (
-            <EmptyState>No product sales for this month.</EmptyState>
+            <EmptyState>No product sales for this period.</EmptyState>
           ) : filteredProductSummary.length === 0 ? (
             <EmptyState>No product sales match the current filters.</EmptyState>
           ) : (
@@ -464,7 +465,7 @@ export default async function ManagementSalesPage({
           />
         ) : null}
         {report.sales.length === 0 ? (
-          <EmptyState>No sales for this month.</EmptyState>
+          <EmptyState>No sales for this period.</EmptyState>
         ) : filteredSales.length === 0 ? (
           <EmptyState>No sales match the current filters.</EmptyState>
         ) : (
@@ -548,7 +549,7 @@ export default async function ManagementSalesPage({
           />
         ) : null}
         {report.returns.length === 0 ? (
-          <EmptyState>No returns for this month.</EmptyState>
+          <EmptyState>No returns for this period.</EmptyState>
         ) : filteredReturns.length === 0 ? (
           <EmptyState>No returns match the current filters.</EmptyState>
         ) : (
