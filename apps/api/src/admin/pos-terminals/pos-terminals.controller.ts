@@ -54,6 +54,15 @@ export class PosTerminalsController {
     return this.sales.updatePosTerminal(id, body, getRequestUser(request));
   }
 
+  @Post(":id/re-pair")
+  rePair(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.rePairPosTerminal(id, body, getRequestUser(request));
+  }
+
   @Post(":id/stock-allocations")
   setStockAllocation(
     @Param("id") id: string,
@@ -61,6 +70,19 @@ export class PosTerminalsController {
     @Req() request: Request,
   ) {
     return this.sales.setPosTerminalStockAllocation(
+      id,
+      body,
+      getRequestUser(request),
+    );
+  }
+
+  @Post(":id/stock-adjustments")
+  adjustStock(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.sales.adjustPosTerminalStock(
       id,
       body,
       getRequestUser(request),

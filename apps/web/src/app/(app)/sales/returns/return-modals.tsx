@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Spinner } from "@/components/spinner";
 import { Field, FormFeedback, SelectField, TextareaField } from "@/components/admin/form-controls";
 import { EmptyState } from "@/components/admin/layout";
 import { type FormState, initialFormState } from "@/lib/admin/types";
@@ -129,7 +130,14 @@ function SubmitButton({
       disabled={disabled || pending}
       type="submit"
     >
-      {pending ? pendingLabel : children}
+      {pending ? (
+        <span className="inline-flex items-center gap-2">
+          <Spinner />
+          {pendingLabel}
+        </span>
+      ) : (
+        children
+      )}
     </button>
   );
 }

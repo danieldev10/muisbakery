@@ -30,10 +30,20 @@ enum RawMaterialStockMovementType {
 
 enum FinishedProductStockMovementType {
   RECEIVE_FROM_PRODUCTION
+  ALLOCATE_TO_TERMINAL
+  RELEASE_FROM_TERMINAL
   SALE
   RETURN
   DAMAGED
   ADJUSTMENT
+}
+
+enum PosTerminalStockMovementType {
+  ALLOCATE
+  SALE
+  RELEASE
+  RETURN
+  ADJUST
 }
 
 enum PaymentMethod {
@@ -120,6 +130,9 @@ model User {
   voidedExpenses              Expense[]                         @relation("ExpenseVoidedBy")
   dayClosesSubmitted          SalesDayClose[]                   @relation("DayCloseSubmittedBy")
   dayClosesReviewed           SalesDayClose[]                   @relation("DayCloseReviewedBy")
+  businessDaysReopened        BusinessDayState[]                @relation("BusinessDayReopenedBy")
+  terminalStockBatchesCreated PosTerminalStockBatch[]           @relation("PosTerminalStockBatchCreatedBy")
+  terminalStockMovements      PosTerminalStockMovement[]        @relation("PosTerminalStockMovementActor")
 
   @@index([role])
   @@index([isActive])
@@ -206,6 +219,8 @@ model Product {
   salesReturns        SalesProductReturn[]
   posSessionItems     PosSessionItem[]
   posTerminalStockAllocations PosTerminalStockAllocation[]
+  posTerminalStockBatches PosTerminalStockBatch[]
+  posTerminalStockMovements PosTerminalStockMovement[]
 
   @@unique([name, size])
   @@index([isActive])
@@ -587,6 +602,7 @@ model SalesProductBatch {
   movements       SalesProductStockMovement[]
   saleItemBatches SaleItemBatch[]
   returns         SalesProductReturn[]
+  terminalStockBatches PosTerminalStockBatch[]
 
   @@unique([productId, batchNumber])
   @@index([productId, batchDate])
@@ -694,6 +710,13 @@ enum DayCloseStatus {
   APPROVED
 }
 
+enum BusinessDayStatus {
+  OPEN
+  SUBMITTED
+  STALE
+  APPROVED
+}
+
 enum PosOfflineSyncStatus {
   SYNCED
   DUPLICATE
@@ -722,12 +745,37 @@ model SalesDayClose {
   reviewedAt       DateTime?
   reviewedById     String?
   reviewNotes      String?
+  submittedActivityVersion Int @default(0)
 
   submittedBy User? @relation("DayCloseSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
   reviewedBy  User? @relation("DayCloseReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  businessDayState BusinessDayState @relation(fields: [businessDate], references: [businessDate], onDelete: Restrict)
 
   @@index([status])
   @@index([submittedById])
+}
+
+// The lock and version record for financial activity on one business date.
+// Sales, returns, and retailer payments increment activityVersion in the same
+// transaction as the posting so submitted close totals cannot become stale
+// without the state reflecting it.
+model BusinessDayState {
+  businessDate    DateTime          @id @db.Date
+  activityVersion Int               @default(0)
+  status          BusinessDayStatus @default(OPEN)
+  lastActivityAt  DateTime?
+  closeCutoffAt   DateTime?
+  reopenedAt      DateTime?
+  reopenedById    String?
+  reopenReason    String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  close      SalesDayClose?
+  reopenedBy User?          @relation("BusinessDayReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([reopenedById])
 }
 
 model RetailerPaymentAllocation {
@@ -772,6 +820,7 @@ model Sale {
   posSession PosSession?
   retailerPaymentAllocations RetailerPaymentAllocation[]
   offlineSyncAttempts PosOfflineSyncAttempt[]
+  terminalStockMovements PosTerminalStockMovement[]
 
   @@index([soldAt])
   @@index([terminalId])
@@ -842,6 +891,8 @@ model PosTerminal {
   sessions       PosSession[] @relation("PosTerminalSessions")
   sales          Sale[]       @relation("SaleTerminal")
   stockAllocations PosTerminalStockAllocation[]
+  stockBatches     PosTerminalStockBatch[]
+  stockMovements   PosTerminalStockMovement[]
   retailerCreditAllocations PosTerminalRetailerCreditAllocation[]
   retailerOrderApprovals RetailerOrderApproval[]
   offlineSyncAttempts PosOfflineSyncAttempt[]
@@ -887,9 +938,69 @@ model PosTerminalStockAllocation {
 
   terminal PosTerminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
   product  Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batches  PosTerminalStockBatch[]
 
   @@unique([terminalId, productId])
   @@index([productId])
+}
+
+model PosTerminalStockBatch {
+  id                String   @id @default(cuid())
+  allocationId      String
+  terminalId        String
+  productId         String
+  sourceBatchId     String
+  quantityAllocated Int
+  quantityRemaining Int
+  unitCost          Decimal  @db.Decimal(14, 4)
+  allocatedAt       DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  createdById       String?
+
+  allocation    PosTerminalStockAllocation @relation(fields: [allocationId], references: [id], onDelete: Restrict)
+  terminal      PosTerminal                @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+  product       Product                    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  sourceBatch   SalesProductBatch          @relation(fields: [sourceBatchId], references: [id], onDelete: Restrict)
+  createdBy     User?                      @relation("PosTerminalStockBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movements     PosTerminalStockMovement[]
+  saleItemBatches SaleItemBatch[]
+  returns       SalesProductReturn[]
+
+  @@index([allocationId, allocatedAt])
+  @@index([terminalId, productId, quantityRemaining])
+  @@index([sourceBatchId])
+  @@index([createdById])
+}
+
+model PosTerminalStockMovement {
+  id              String                       @id @default(cuid())
+  terminalId      String
+  productId       String
+  terminalBatchId String
+  type            PosTerminalStockMovementType
+  quantity        Int
+  balanceAfter    Int
+  saleId          String?
+  saleItemId      String?
+  occurredAt      DateTime                     @default(now())
+  note            String?
+  actorId         String?
+
+  terminal      PosTerminal           @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+  product       Product               @relation(fields: [productId], references: [id], onDelete: Restrict)
+  terminalBatch PosTerminalStockBatch @relation(fields: [terminalBatchId], references: [id], onDelete: Restrict)
+  sale          Sale?                 @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  saleItem      SaleItem?             @relation(fields: [saleItemId], references: [id], onDelete: SetNull)
+  actor         User?                 @relation("PosTerminalStockMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([terminalId, occurredAt])
+  @@index([productId, occurredAt])
+  @@index([terminalBatchId])
+  @@index([type])
+  @@index([saleId])
+  @@index([saleItemId])
+  @@index([actorId])
 }
 
 model PosTerminalRetailerCreditAllocation {
@@ -939,6 +1050,7 @@ model SaleItem {
   product     Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
   batchIssues SaleItemBatch[]
   returns     SalesProductReturn[]
+  terminalStockMovements PosTerminalStockMovement[]
 
   @@index([saleId])
   @@index([productId])
@@ -948,14 +1060,17 @@ model SaleItemBatch {
   id         String   @id @default(cuid())
   saleItemId String
   batchId    String
+  terminalBatchId String?
   quantity   Int
   createdAt  DateTime @default(now())
 
   saleItem SaleItem          @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
   batch    SalesProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  terminalBatch PosTerminalStockBatch? @relation(fields: [terminalBatchId], references: [id], onDelete: Restrict)
 
   @@index([saleItemId])
   @@index([batchId])
+  @@index([terminalBatchId])
 }
 
 model SalesProductReturn {
@@ -963,6 +1078,7 @@ model SalesProductReturn {
   saleItemId  String?
   productId   String
   batchId     String?
+  terminalBatchId String?
   disposition SalesReturnDisposition
   quantity    Int
   reason      String?
@@ -973,11 +1089,13 @@ model SalesProductReturn {
   saleItem  SaleItem?          @relation(fields: [saleItemId], references: [id], onDelete: SetNull)
   product   Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
   batch     SalesProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  terminalBatch PosTerminalStockBatch? @relation(fields: [terminalBatchId], references: [id], onDelete: SetNull)
   createdBy User?              @relation("SalesReturnCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([saleItemId])
   @@index([productId, recordedAt])
   @@index([batchId])
+  @@index([terminalBatchId])
   @@index([disposition])
   @@index([createdById])
 }

@@ -23,3 +23,21 @@ export async function approveDayClose(
   revalidatePath("/sales/daily-summary");
   return { ok: true, error: null, token: Date.now() };
 }
+
+export async function reopenDayClose(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const id = getString(formData, "id");
+  const result = await apiSend(`/management/day-closes/${id}/reopen`, "POST", {
+    reason: getString(formData, "reason"),
+  });
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidatePath("/management/sales");
+  revalidatePath("/sales/daily-summary");
+  return { ok: true, error: null, token: Date.now() };
+}

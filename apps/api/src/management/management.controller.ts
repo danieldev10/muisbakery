@@ -49,6 +49,15 @@ export class ManagementController {
     return this.dayClose.approve(id, body, getRequestUser(request));
   }
 
+  @Post("day-closes/:id/reopen")
+  reopenDayClose(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+  ) {
+    return this.dayClose.reopen(id, body, getRequestUser(request));
+  }
+
   @Get("dashboard")
   dashboard(
     @Query("from") from?: string,

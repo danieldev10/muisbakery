@@ -313,7 +313,9 @@ export function serializePosTerminal(terminal: PosTerminalWithIncludes) {
     name: terminal.name,
     displayToken: terminal.displayToken,
     pairable: Boolean(
-      terminal.pairingCodeHash &&
+      !terminal.pairedAt &&
+        !terminal.deviceSecretHash &&
+        terminal.pairingCodeHash &&
         (!terminal.pairingCodeExpiresAt ||
           terminal.pairingCodeExpiresAt.getTime() > Date.now()),
     ),
@@ -340,6 +342,19 @@ export function serializePosTerminal(terminal: PosTerminalWithIncludes) {
         allocation.allocatedQuantity - allocation.soldQuantity,
       ).toString(),
       product: allocation.product,
+      batches: allocation.batches.map((batch) => ({
+        id: batch.id,
+        quantityAllocated: batch.quantityAllocated.toString(),
+        quantityRemaining: batch.quantityRemaining.toString(),
+        allocatedAt: batch.allocatedAt.toISOString(),
+        updatedAt: batch.updatedAt.toISOString(),
+        sourceBatch: {
+          id: batch.sourceBatch.id,
+          batchNumber: batch.sourceBatch.batchNumber,
+          batchDate: batch.sourceBatch.batchDate.toISOString(),
+          receivedAt: batch.sourceBatch.receivedAt.toISOString(),
+        },
+      })),
       createdAt: allocation.createdAt.toISOString(),
       updatedAt: allocation.updatedAt.toISOString(),
     })),

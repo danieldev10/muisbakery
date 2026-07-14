@@ -293,11 +293,6 @@ export const createPosTerminalSchema = z.object({
 export const updatePosTerminalSchema = z
   .object({
     name: nullableText(100),
-    pairingCode: z.preprocess(
-      (value) =>
-        typeof value === "string" && value.trim() === "" ? undefined : value,
-      pairingCodeSchema.optional(),
-    ),
     isActive: z.coerce.boolean().optional(),
     offlineEnabled: z.coerce.boolean().optional(),
     rotateDisplayToken: z.coerce.boolean().optional(),
@@ -305,6 +300,10 @@ export const updatePosTerminalSchema = z
   .refine((value) => Object.keys(value).length > 0, {
     message: "No changes provided.",
   });
+
+export const rePairPosTerminalSchema = z.object({
+  pairingCode: pairingCodeSchema,
+});
 
 export const pairPosTerminalSchema = z.object({
   terminalId: z.string().trim().min(1),
@@ -314,6 +313,12 @@ export const pairPosTerminalSchema = z.object({
 export const setTerminalStockAllocationSchema = z.object({
   productId: z.string().trim().min(1),
   allocatedQuantity: nonnegativeQuantitySchema,
+});
+
+export const adjustTerminalStockSchema = z.object({
+  terminalBatchId: z.string().trim().min(1),
+  countedQuantity: nonnegativeQuantitySchema,
+  reason: z.string().trim().min(3, "Enter an adjustment reason.").max(500),
 });
 
 export const setTerminalRetailerCreditAllocationSchema = z.object({

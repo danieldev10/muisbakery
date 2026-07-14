@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Spinner } from "@/components/spinner";
 import { initialFormState } from "@/lib/admin/types";
 import type { SalesDayClose } from "@/lib/operations/types";
 
@@ -21,7 +22,14 @@ function SubmitButton() {
       disabled={pending}
       type="submit"
     >
-      {pending ? "Approving" : "Approve close"}
+      {pending ? (
+        <span className="inline-flex items-center gap-2">
+          <Spinner />
+          Approving
+        </span>
+      ) : (
+        "Approve close"
+      )}
     </button>
   );
 }

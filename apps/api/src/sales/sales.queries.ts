@@ -130,6 +130,12 @@ export const saleInclude = {
               batchDate: true,
             },
           },
+          terminalBatch: {
+            select: {
+              id: true,
+              terminalId: true,
+            },
+          },
         },
         orderBy: { createdAt: "asc" },
       },
@@ -154,6 +160,12 @@ export const saleItemOptionInclude = {
           id: true,
           batchNumber: true,
           batchDate: true,
+        },
+      },
+      terminalBatch: {
+        select: {
+          id: true,
+          terminalId: true,
         },
       },
     },
@@ -185,6 +197,12 @@ export const returnInclude = {
       id: true,
       batchNumber: true,
       batchDate: true,
+    },
+  },
+  terminalBatch: {
+    select: {
+      id: true,
+      terminalId: true,
     },
   },
   createdBy: { select: userSelect },
@@ -224,6 +242,19 @@ export const posTerminalInclude = {
   stockAllocations: {
     include: {
       product: { select: productSelect },
+      batches: {
+        include: {
+          sourceBatch: {
+            select: {
+              id: true,
+              batchNumber: true,
+              batchDate: true,
+              receivedAt: true,
+            },
+          },
+        },
+        orderBy: [{ allocatedAt: "asc" }, { id: "asc" }],
+      },
     },
     orderBy: { product: { name: "asc" } },
   },

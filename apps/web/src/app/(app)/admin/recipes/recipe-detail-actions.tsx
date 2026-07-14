@@ -4,6 +4,7 @@ import { Plus, Trash2, X } from "lucide-react";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Spinner } from "@/components/spinner";
 import {
   initialFormState,
   type RawMaterialRecipeOption,
@@ -97,7 +98,14 @@ function SubmitButton({
 
   return (
     <button className={className} disabled={pending} type="submit">
-      {pending ? pendingLabel : children}
+      {pending ? (
+        <span className="inline-flex items-center gap-2">
+          <Spinner />
+          {pendingLabel}
+        </span>
+      ) : (
+        children
+      )}
     </button>
   );
 }

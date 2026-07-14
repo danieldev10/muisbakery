@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Spinner } from "@/components/spinner";
 import { initialFormState, type FormState } from "@/lib/admin/types";
 
 type InlineAction = (
@@ -31,7 +32,14 @@ function InlineSubmitButton({
       disabled={pending}
       type="submit"
     >
-      {pending ? pendingLabel : children}
+      {pending ? (
+        <span className="inline-flex items-center gap-1.5">
+          <Spinner className="size-3" />
+          {pendingLabel}
+        </span>
+      ) : (
+        children
+      )}
     </button>
   );
 }

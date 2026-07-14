@@ -229,7 +229,8 @@ export default async function SalesDailySummaryPage({
   ];
   const canSubmitClose =
     !dayClose.close ||
-    (dayClose.needsReclose && dayClose.close.status === "SUBMITTED");
+    (dayClose.needsReclose &&
+      dayClose.businessDay.status !== "APPROVED");
   const closeActionLabel = dayClose.close ? "Re-close this day" : "Close this day";
 
   return (
@@ -341,12 +342,12 @@ export default async function SalesDailySummaryPage({
           ) : dayClose.close ? (
             <span
               className={
-                dayClose.close.status === "APPROVED"
+                dayClose.businessDay.status === "APPROVED"
                   ? "inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800"
                   : "inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800"
               }
             >
-              {dayClose.close.status === "APPROVED"
+              {dayClose.businessDay.status === "APPROVED"
                 ? "Approved by Management"
                 : "Awaiting Management review"}
             </span>
@@ -363,7 +364,26 @@ export default async function SalesDailySummaryPage({
           </p>
         ) : null}
 
-        {dayClose.close && dayClose.needsReclose ? (
+        {dayClose.close && dayClose.businessDay.status === "STALE" ? (
+          <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Financial activity changed after this close was submitted. Recount
+            the drawer and submit a fresh close for Management review.
+          </p>
+        ) : null}
+
+        {dayClose.close && dayClose.businessDay.status === "OPEN" ? (
+          <p className="mb-4 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+            Management reopened this business day
+            {dayClose.close.businessDay.reopenReason
+              ? `: ${dayClose.close.businessDay.reopenReason}`
+              : "."} Recount and submit it again when corrections are complete.
+          </p>
+        ) : null}
+
+        {dayClose.close &&
+        dayClose.needsReclose &&
+        dayClose.businessDay.status !== "OPEN" &&
+        dayClose.businessDay.status !== "STALE" ? (
           <p
             className={`mb-4 rounded-md border px-3 py-2 text-sm ${
               dayClose.close.status === "APPROVED"

@@ -4,6 +4,7 @@ import { LogIn } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
+import { Spinner } from "@/components/spinner";
 import { getRoleHome } from "@/lib/roles";
 
 type LoginFormProps = {
@@ -110,7 +111,11 @@ export function LoginForm({ callbackUrl }: LoginFormProps) {
         disabled={isSubmitting}
         type="submit"
       >
-        <LogIn aria-hidden="true" className="size-4" />
+        {isSubmitting ? (
+          <Spinner />
+        ) : (
+          <LogIn aria-hidden="true" className="size-4" />
+        )}
         {isSubmitting ? "Signing in" : "Sign in"}
       </button>
     </form>

@@ -2,13 +2,12 @@
 
 import { useEffect } from "react";
 
-type PosShellStatus = {
-  ready: boolean;
-  message?: string;
-};
-
-const POS_PATH = "/sales/pos";
-const POS_SHELL_STATUS_EVENT = "muisbakery:pos-shell-status";
+import {
+  POS_PATH,
+  POS_SHELL_STATUS_EVENT,
+  requestPosShellStatus,
+  type PosShellStatus,
+} from "@/lib/pos-shell";
 
 function reportPosShellStatus(status: PosShellStatus) {
   window.dispatchEvent(
@@ -16,27 +15,6 @@ function reportPosShellStatus(status: PosShellStatus) {
       detail: status,
     }),
   );
-}
-
-function requestPosShellStatus(
-  worker: ServiceWorker,
-  type: "CACHE_POS_SHELL" | "CHECK_POS_SHELL",
-) {
-  return new Promise<PosShellStatus>((resolve, reject) => {
-    const channel = new MessageChannel();
-    const timeout = window.setTimeout(() => {
-      channel.port1.close();
-      reject(new Error("Timed out while preparing the offline POS shell."));
-    }, 10_000);
-
-    channel.port1.addEventListener("message", (event) => {
-      window.clearTimeout(timeout);
-      channel.port1.close();
-      resolve(event.data as PosShellStatus);
-    });
-    channel.port1.start();
-    worker.postMessage({ type }, [channel.port2]);
-  });
 }
 
 async function waitForController(registration: ServiceWorkerRegistration) {

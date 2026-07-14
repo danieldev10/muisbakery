@@ -24,6 +24,7 @@
     "prisma:migrate": "npm run prisma:migrate -w @muisbakery/api",
     "prisma:deploy": "npm run prisma:deploy -w @muisbakery/api",
     "prisma:studio": "npm run prisma:studio -w @muisbakery/api",
+    "stock:custody:audit": "npm run stock:custody:audit -w @muisbakery/api",
     "db:seed": "npm run db:seed -w @muisbakery/api"
   },
   "devDependencies": {

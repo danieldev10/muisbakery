@@ -40,11 +40,29 @@ export async function updatePosTerminal(
     "PATCH",
     {
       name: getOptionalString(formData, "name") ?? null,
-      pairingCode: getOptionalString(formData, "pairingCode"),
       isActive: getBoolean(formData, "isActive"),
       offlineEnabled: getBoolean(formData, "offlineEnabled"),
       rotateDisplayToken: getBoolean(formData, "rotateDisplayToken"),
     },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateTerminalViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function rePairPosTerminal(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const terminalId = getString(formData, "terminalId");
+  const result = await apiSend(
+    `/admin/pos-terminals/${terminalId}/re-pair`,
+    "POST",
+    { pairingCode: getString(formData, "pairingCode") },
   );
 
   if (!result.ok) {
@@ -66,6 +84,29 @@ export async function setTerminalStockAllocation(
     {
       productId: getString(formData, "productId"),
       allocatedQuantity: getString(formData, "allocatedQuantity"),
+    },
+  );
+
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+
+  revalidateTerminalViews();
+  return { ok: true, error: null, token: Date.now() };
+}
+
+export async function adjustTerminalStock(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const terminalId = getString(formData, "terminalId");
+  const result = await apiSend(
+    `/admin/pos-terminals/${terminalId}/stock-adjustments`,
+    "POST",
+    {
+      terminalBatchId: getString(formData, "terminalBatchId"),
+      countedQuantity: getString(formData, "countedQuantity"),
+      reason: getString(formData, "reason"),
     },
   );
 

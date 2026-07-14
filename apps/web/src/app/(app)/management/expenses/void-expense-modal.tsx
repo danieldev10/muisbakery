@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Spinner } from "@/components/spinner";
 import { initialFormState } from "@/lib/admin/types";
 import type { ManagementExpense } from "@/lib/management/types";
 
@@ -24,7 +25,14 @@ function SubmitButton() {
       disabled={pending}
       type="submit"
     >
-      {pending ? "Voiding" : "Void expense"}
+      {pending ? (
+        <span className="inline-flex items-center gap-2">
+          <Spinner />
+          Voiding
+        </span>
+      ) : (
+        "Void expense"
+      )}
     </button>
   );
 }

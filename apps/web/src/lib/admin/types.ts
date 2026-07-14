@@ -121,6 +121,19 @@ export type PosTerminal = {
       unitPrice: string | null;
       unit: UnitRef;
     };
+    batches: Array<{
+      id: string;
+      quantityAllocated: string;
+      quantityRemaining: string;
+      allocatedAt: string;
+      updatedAt: string;
+      sourceBatch: {
+        id: string;
+        batchNumber: number;
+        batchDate: string;
+        receivedAt: string;
+      };
+    }>;
     createdAt: string;
     updatedAt: string;
   }>;

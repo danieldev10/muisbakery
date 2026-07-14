@@ -19,7 +19,9 @@ import {
 } from "@/lib/table-filters";
 
 import {
+  adjustTerminalStock,
   createPosTerminal,
+  rePairPosTerminal,
   setTerminalRetailerCreditAllocation,
   setTerminalStockAllocation,
   updatePosTerminal,
@@ -140,7 +142,7 @@ function PosTerminalDetailsModal({ terminal }: { terminal: PosTerminal }) {
                 ? "Used — device paired"
                 : terminal.pairable
                   ? `Active · expires ${formatDate(terminal.pairingCodeExpiresAt)}`
-                  : "None set — add one via Edit"
+                  : "None active — use New code"
             }
           />
           <DetailRow
@@ -169,7 +171,7 @@ function PosTerminalDetailsModal({ terminal }: { terminal: PosTerminal }) {
               Stock allocations
             </h3>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Products this terminal is allowed to sell while offline-enabled.
+              Finished goods physically transferred from central Sales stock to this terminal.
             </p>
           </div>
           {terminal.stockAllocations.length > 0 ? (
@@ -181,6 +183,7 @@ function PosTerminalDetailsModal({ terminal }: { terminal: PosTerminal }) {
                     <th className="px-3 py-2">Allocated</th>
                     <th className="px-3 py-2">Sold</th>
                     <th className="px-3 py-2">Remaining</th>
+                    <th className="px-3 py-2">Custody batches</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[color:var(--border-muted)]">
@@ -206,6 +209,24 @@ function PosTerminalDetailsModal({ terminal }: { terminal: PosTerminal }) {
                           allocation.remainingQuantity,
                           allocation.product.unit.abbreviation,
                         )}
+                      </td>
+                      <td className="px-3 py-2 text-[var(--text-secondary)]">
+                        {allocation.batches.filter(
+                          (batch) => Number(batch.quantityRemaining) > 0,
+                        ).length > 0
+                          ? allocation.batches
+                              .filter(
+                                (batch) => Number(batch.quantityRemaining) > 0,
+                              )
+                              .map(
+                                (batch) =>
+                                  `Batch ${batch.sourceBatch.batchNumber}: ${formatQuantity(
+                                    batch.quantityRemaining,
+                                    allocation.product.unit.abbreviation,
+                                  )}`,
+                              )
+                              .join(", ")
+                          : "-"}
                       </td>
                     </tr>
                   ))}
@@ -324,7 +345,7 @@ export default async function PosTerminalsPage({
         >
           <Field label="Name" name="name" placeholder="e.g. Front counter POS" />
           <Field
-            hint="Share this once with the cashier. It expires after 7 days or immediately after pairing."
+            hint="Share this once with the cashier. It expires after one hour and is consumed immediately after pairing."
             label="Pairing code"
             name="pairingCode"
             required
@@ -419,12 +440,6 @@ export default async function PosTerminalsPage({
                       name="name"
                       placeholder="e.g. Front counter POS"
                     />
-                    <Field
-                      hint="Leave blank to keep the current pairing/device secret. Enter a new code to force re-pairing."
-                      label="New pairing code"
-                      name="pairingCode"
-                      type="password"
-                    />
                     <div className="grid gap-4 sm:grid-cols-2">
                       <SelectField
                         defaultValue={terminal.isActive ? "true" : "false"}
@@ -458,6 +473,34 @@ export default async function PosTerminalsPage({
                     />
                   </AdminFormModal>
                   <AdminFormModal
+                    action={rePairPosTerminal}
+                    description={
+                      terminal.pairedAt
+                        ? "This immediately revokes the currently paired browser. Confirm that any offline sales on that device have synced first."
+                        : "Replace the current or expired pairing code with a new one-hour, single-use code."
+                    }
+                    submitLabel={
+                      terminal.pairedAt ? "Revoke and re-pair" : "Create new code"
+                    }
+                    title="Reset terminal pairing"
+                    triggerClassName={secondaryButtonClass}
+                    triggerIcon={null}
+                    triggerLabel={terminal.pairedAt ? "Re-pair" : "New code"}
+                  >
+                    <input
+                      name="terminalId"
+                      type="hidden"
+                      value={terminal.id}
+                    />
+                    <Field
+                      hint="Use at least 6 characters. The code expires after one hour and can only be used once."
+                      label="New pairing code"
+                      name="pairingCode"
+                      required
+                      type="password"
+                    />
+                  </AdminFormModal>
+                  <AdminFormModal
                     action={setTerminalStockAllocation}
                     description={terminal.name || terminal.id}
                     submitLabel="Save allocation"
@@ -479,8 +522,8 @@ export default async function PosTerminalsPage({
                       required
                     />
                     <Field
-                      hint="Set the total stock reserved for this terminal. Sold quantity is tracked separately."
-                      label="Allocated quantity"
+                      hint="Set the cumulative allocated total. Increasing it transfers the difference from central stock FIFO; reducing it releases only unsold custody."
+                      label="Cumulative allocated quantity"
                       min="0"
                       name="allocatedQuantity"
                       required
@@ -488,6 +531,62 @@ export default async function PosTerminalsPage({
                       type="number"
                     />
                   </AdminFormModal>
+                  {terminal.stockAllocations.some((allocation) =>
+                    allocation.batches.some(
+                      (batch) => Number(batch.quantityRemaining) > 0,
+                    ),
+                  ) ? (
+                    <AdminFormModal
+                      action={adjustTerminalStock}
+                      description="Record a supervised physical count correction. This does not release stock to central Sales custody."
+                      submitLabel="Record adjustment"
+                      title="Adjust terminal stock"
+                      triggerClassName={secondaryButtonClass}
+                      triggerIcon={null}
+                      triggerLabel="Adjust"
+                    >
+                      <input
+                        name="terminalId"
+                        type="hidden"
+                        value={terminal.id}
+                      />
+                      <SelectField
+                        label="Custody batch"
+                        name="terminalBatchId"
+                        options={terminal.stockAllocations.flatMap(
+                          (allocation) =>
+                            allocation.batches
+                              .filter(
+                                (batch) =>
+                                  Number(batch.quantityRemaining) > 0,
+                              )
+                              .map((batch) => ({
+                                label: `${allocation.product.name} · source batch ${batch.sourceBatch.batchNumber} · ${formatQuantity(
+                                  batch.quantityRemaining,
+                                  allocation.product.unit.abbreviation,
+                                )} recorded`,
+                                value: batch.id,
+                              })),
+                        )}
+                        required
+                      />
+                      <Field
+                        hint="Enter the physical quantity counted at this terminal."
+                        label="Counted quantity"
+                        min="0"
+                        name="countedQuantity"
+                        required
+                        step="1"
+                        type="number"
+                      />
+                      <Field
+                        label="Reason"
+                        name="reason"
+                        placeholder="e.g. Supervisor recount after breakage"
+                        required
+                      />
+                    </AdminFormModal>
+                  ) : null}
                   <AdminFormModal
                     action={setTerminalRetailerCreditAllocation}
                     description={terminal.name || terminal.id}

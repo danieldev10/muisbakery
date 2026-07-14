@@ -13,6 +13,7 @@ import {
   PaymentMethod,
   PosOfflineSyncStatus,
   PosSessionStatus,
+  PosTerminalStockMovementType,
   Prisma,
   RetailerOrderApprovalStatus,
   SalesReturnDisposition,
@@ -30,11 +31,14 @@ import {
   type QueryParams,
 } from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
+import { recordBusinessDayActivity } from "./business-day";
 import { PosDisplayEvents } from "./pos-display-events";
 import {
   createPosSessionSchema,
   createPosTerminalSchema,
+  adjustTerminalStockSchema,
   pairPosTerminalSchema,
+  rePairPosTerminalSchema,
   createRetailerOrderApprovalSchema,
   createRetailerSchema,
   createSaleSchema,
@@ -120,6 +124,12 @@ function secretsMatch(value: string | undefined, hash: string | null) {
 
 function generateDeviceSecret() {
   return randomBytes(32).toString("base64url");
+}
+
+const POS_PAIRING_CODE_TTL_MS = 60 * 60 * 1000;
+
+function posPairingCodeExpiresAt() {
+  return new Date(Date.now() + POS_PAIRING_CODE_TTL_MS);
 }
 
 function saleWhere(query: QueryParams | undefined) {
@@ -874,12 +884,15 @@ export class SalesService {
           );
         }
 
+        const paidAt = parsed.data.paidAt ?? new Date();
+        await recordBusinessDayActivity(tx, paidAt);
+
         const createdPayment = await tx.retailerPayment.create({
           data: {
             retailerId: retailer.id,
             amount: new Prisma.Decimal(amount.toFixed(2)),
             paymentMethod: parsed.data.paymentMethod,
-            paidAt: parsed.data.paidAt ?? new Date(),
+            paidAt,
             reference: parsed.data.reference,
             notes: parsed.data.notes,
             createdById: actor.id,
@@ -1001,7 +1014,7 @@ export class SalesService {
         name: parsed.data.name,
         displayToken: generateDisplayToken(),
         pairingCodeHash: hashSecret(parsed.data.pairingCode),
-        pairingCodeExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        pairingCodeExpiresAt: posPairingCodeExpiresAt(),
         offlineEnabled: parsed.data.offlineEnabled ?? false,
         createdById: actor.id,
       },
@@ -1058,18 +1071,6 @@ export class SalesService {
         name: parsed.data.name,
         isActive: parsed.data.isActive,
         offlineEnabled: parsed.data.offlineEnabled,
-        ...(parsed.data.pairingCode
-          ? {
-              pairingCodeHash: hashSecret(parsed.data.pairingCode),
-              pairingCodeExpiresAt: new Date(
-                Date.now() + 7 * 24 * 60 * 60 * 1000,
-              ),
-              pairedAt: null,
-              pairedById: null,
-              deviceSecretHash: null,
-              deviceSecretIssuedAt: null,
-            }
-          : {}),
         // Rotation invalidates a leaked customer-display URL without
         // recreating the terminal.
         ...(parsed.data.rotateDisplayToken
@@ -1089,7 +1090,70 @@ export class SalesService {
         isActive: terminal.isActive,
         offlineEnabled: terminal.offlineEnabled,
         displayTokenRotated: Boolean(parsed.data.rotateDisplayToken),
-        pairingCodeRotated: Boolean(parsed.data.pairingCode),
+      },
+    });
+
+    return serializePosTerminal(terminal);
+  }
+
+  async rePairPosTerminal(
+    id: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = rePairPosTerminalSchema.safeParse(input ?? {});
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const existing = await this.prisma.posTerminal.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        pairedAt: true,
+        deviceSecretIssuedAt: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("POS terminal not found.");
+    }
+
+    if (!existing.isActive) {
+      throw new BadRequestException(
+        "Activate this POS terminal before generating a pairing code.",
+      );
+    }
+
+    const pairingCodeExpiresAt = posPairingCodeExpiresAt();
+    const terminal = await this.prisma.posTerminal.update({
+      where: { id },
+      data: {
+        pairingCodeHash: hashSecret(parsed.data.pairingCode),
+        pairingCodeExpiresAt,
+        pairedAt: null,
+        pairedById: null,
+        deviceSecretHash: null,
+        deviceSecretIssuedAt: null,
+        lastSeenAt: null,
+      },
+      include: posTerminalInclude,
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_POS_TERMINAL_REPAIR_STARTED",
+      entityType: "PosTerminal",
+      entityId: terminal.id,
+      metadata: {
+        terminalName: terminal.name,
+        previousPairedAt: existing.pairedAt?.toISOString() ?? null,
+        previousDeviceSecretIssuedAt:
+          existing.deviceSecretIssuedAt?.toISOString() ?? null,
+        pairingCodeExpiresAt: pairingCodeExpiresAt.toISOString(),
       },
     });
 
@@ -1110,6 +1174,8 @@ export class SalesService {
         isActive: true,
         pairingCodeHash: true,
         pairingCodeExpiresAt: true,
+        pairedAt: true,
+        deviceSecretHash: true,
       },
     });
 
@@ -1121,6 +1187,12 @@ export class SalesService {
       throw new BadRequestException("This POS terminal has been deactivated.");
     }
 
+    if (existing.pairedAt || existing.deviceSecretHash) {
+      throw new ConflictException(
+        "This POS terminal is already paired. Ask Admin to start re-pairing.",
+      );
+    }
+
     if (
       !existing.pairingCodeHash ||
       !secretsMatch(parsed.data.pairingCode, existing.pairingCodeHash)
@@ -1129,24 +1201,44 @@ export class SalesService {
     }
 
     if (
-      existing.pairingCodeExpiresAt &&
+      !existing.pairingCodeExpiresAt ||
       existing.pairingCodeExpiresAt.getTime() <= Date.now()
     ) {
       throw new BadRequestException(
-        "This POS terminal pairing code has expired. Ask Admin to rotate it.",
+        "This POS terminal pairing code has expired. Ask Admin for a new code.",
       );
     }
 
+    const pairedAt = new Date();
     const deviceSecret = generateDeviceSecret();
-    const terminal = await this.prisma.posTerminal.update({
-      where: { id: existing.id },
+    const paired = await this.prisma.posTerminal.updateMany({
+      where: {
+        id: existing.id,
+        isActive: true,
+        pairedAt: null,
+        deviceSecretHash: null,
+        pairingCodeHash: existing.pairingCodeHash,
+        pairingCodeExpiresAt: { gt: pairedAt },
+      },
       data: {
-        pairedAt: new Date(),
+        pairingCodeHash: null,
+        pairingCodeExpiresAt: null,
+        pairedAt,
         pairedById: actor.id,
         deviceSecretHash: hashSecret(deviceSecret),
-        deviceSecretIssuedAt: new Date(),
-        lastSeenAt: new Date(),
+        deviceSecretIssuedAt: pairedAt,
+        lastSeenAt: pairedAt,
       },
+    });
+
+    if (paired.count === 0) {
+      throw new ConflictException(
+        "This pairing code was already used or the terminal pairing changed. Ask Admin for a new code.",
+      );
+    }
+
+    const terminal = await this.prisma.posTerminal.findUniqueOrThrow({
+      where: { id: existing.id },
       include: posTerminalInclude,
     });
 
@@ -1225,25 +1317,16 @@ export class SalesService {
       );
     }
 
-    const productIds = terminal.stockAllocations.map(
-      (allocation) => allocation.productId,
-    );
-    const products =
-      productIds.length > 0
-        ? await this.prisma.product.findMany({
-            where: { id: { in: productIds } },
-            include: inventoryInclude,
-            orderBy: { name: "asc" },
-          })
-        : [];
-    const productInventoryById = new Map(
-      products.map((product) => [product.id, serializeInventoryItem(product)]),
-    );
     const serializedTerminal = serializePosTerminal(terminal);
     const allocationVersion = terminal.stockAllocations
       .map(
         (allocation) =>
-          `${allocation.id}:${allocation.allocatedQuantity}:${allocation.soldQuantity}:${allocation.updatedAt.getTime()}`,
+          `${allocation.id}:${allocation.allocatedQuantity}:${allocation.soldQuantity}:${allocation.updatedAt.getTime()}:${allocation.batches
+            .map(
+              (batch) =>
+                `${batch.id}:${batch.quantityRemaining}:${batch.updatedAt.getTime()}`,
+            )
+            .join(",")}`,
       )
       .join("|");
     const creditVersion = terminal.retailerCreditAllocations
@@ -1257,10 +1340,22 @@ export class SalesService {
       terminal: serializedTerminal,
       products: serializedTerminal.stockAllocations.map((allocation) => ({
         allocation,
-        inventory: productInventoryById.get(allocation.product.id) ?? {
+        inventory: {
           product: allocation.product,
-          totalRemaining: "0",
-          batches: [],
+          totalRemaining: allocation.remainingQuantity,
+          batches: allocation.batches
+            .filter((batch) => Number(batch.quantityRemaining) > 0)
+            .map((batch) => ({
+              id: batch.id,
+              batchNumber: batch.sourceBatch.batchNumber,
+              batchDate: batch.sourceBatch.batchDate,
+              quantityReceived: batch.quantityAllocated,
+              quantityRemaining: batch.quantityRemaining,
+              receivedAt: batch.allocatedAt,
+              notes: "POS terminal custody",
+              productionRun: null,
+              createdBy: null,
+            })),
         },
       })),
       retailerCreditAllocations:
@@ -1603,62 +1698,459 @@ export class SalesService {
       throw new BadRequestException(parsed.error.issues[0]?.message);
     }
 
-    const [terminal, product] = await Promise.all([
-      this.prisma.posTerminal.findUnique({
-        where: { id: terminalId },
-        select: { id: true, name: true },
-      }),
-      this.prisma.product.findUnique({
-        where: { id: parsed.data.productId },
-        select: productSelect,
-      }),
-    ]);
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const terminal = await tx.posTerminal.findUnique({
+          where: { id: terminalId },
+          select: { id: true, name: true },
+        });
 
-    if (!terminal) {
-      throw new NotFoundException("POS terminal not found.");
-    }
+        if (!terminal) {
+          throw new NotFoundException("POS terminal not found.");
+        }
 
-    if (!product) {
-      throw new NotFoundException("Product not found.");
-    }
+        // The Product row coordinates every mutation of central or terminal
+        // custody stock for this product.
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "Product" WHERE "id" = ${parsed.data.productId} FOR UPDATE`,
+        );
 
-    const allocation = await this.prisma.posTerminalStockAllocation.upsert({
-      where: {
-        terminalId_productId: {
-          terminalId,
-          productId: product.id,
-        },
+        const product = await tx.product.findUnique({
+          where: { id: parsed.data.productId },
+          select: productSelect,
+        });
+
+        if (!product) {
+          throw new NotFoundException("Product not found.");
+        }
+
+        await tx.$queryRaw(
+          Prisma.sql`
+            SELECT "id"
+            FROM "PosTerminalStockAllocation"
+            WHERE "productId" = ${product.id}
+            ORDER BY "terminalId" ASC
+            FOR UPDATE
+          `,
+        );
+        const allocations = await tx.posTerminalStockAllocation.findMany({
+          where: { productId: product.id },
+          select: {
+            id: true,
+            terminalId: true,
+            allocatedQuantity: true,
+            soldQuantity: true,
+          },
+        });
+        const existing = allocations.find(
+          (allocation) => allocation.terminalId === terminalId,
+        );
+        const soldQuantity = existing?.soldQuantity ?? 0;
+
+        if (parsed.data.allocatedQuantity < soldQuantity) {
+          throw new BadRequestException(
+            `Allocated quantity cannot be below the ${formatQuantity(soldQuantity)} ${product.unit.abbreviation} already sold by this terminal.`,
+          );
+        }
+
+        const lockedCentralBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
+          Prisma.sql`
+            SELECT "id"
+            FROM "SalesProductBatch"
+            WHERE "productId" = ${product.id}
+            ORDER BY "receivedAt" ASC, "batchNumber" ASC, "id" ASC
+            FOR UPDATE
+          `,
+        );
+        const centralBatches =
+          lockedCentralBatchIds.length > 0
+            ? await tx.salesProductBatch.findMany({
+                where: {
+                  id: {
+                    in: lockedCentralBatchIds.map((batch) => batch.id),
+                  },
+                },
+                select: {
+                  id: true,
+                  quantityRemaining: true,
+                  unitCost: true,
+                  receivedAt: true,
+                  batchNumber: true,
+                },
+                orderBy: [
+                  { receivedAt: "asc" },
+                  { batchNumber: "asc" },
+                  { id: "asc" },
+                ],
+              })
+            : [];
+        const centralStockBefore = centralBatches.reduce(
+          (sum, batch) => sum + batch.quantityRemaining,
+          0,
+        );
+
+        const allocation = await tx.posTerminalStockAllocation.upsert({
+          where: {
+            terminalId_productId: {
+              terminalId,
+              productId: product.id,
+            },
+          },
+          create: {
+            terminalId,
+            productId: product.id,
+            allocatedQuantity: parsed.data.allocatedQuantity,
+          },
+          update: {
+            allocatedQuantity: parsed.data.allocatedQuantity,
+          },
+        });
+
+        await tx.$queryRaw(
+          Prisma.sql`
+            SELECT "id"
+            FROM "PosTerminalStockBatch"
+            WHERE "allocationId" = ${allocation.id}
+            ORDER BY "allocatedAt" ASC, "id" ASC
+            FOR UPDATE
+          `,
+        );
+        const custodyBatches = await tx.posTerminalStockBatch.findMany({
+          where: { allocationId: allocation.id },
+          select: {
+            id: true,
+            sourceBatchId: true,
+            quantityAllocated: true,
+            quantityRemaining: true,
+            allocatedAt: true,
+          },
+          orderBy: [{ allocatedAt: "asc" }, { id: "asc" }],
+        });
+        const custodyBefore = custodyBatches.reduce(
+          (sum, batch) => sum + batch.quantityRemaining,
+          0,
+        );
+        const expectedCustodyBefore = Math.max(
+          (existing?.allocatedQuantity ?? 0) - soldQuantity,
+          0,
+        );
+
+        if (custodyBefore !== expectedCustodyBefore) {
+          throw new ConflictException(
+            `Terminal stock custody is out of balance for ${productLabel(product)}. Expected ${formatQuantity(expectedCustodyBefore)} ${product.unit.abbreviation}, but found ${formatQuantity(custodyBefore)}. Reconcile the terminal before changing its allocation.`,
+          );
+        }
+
+        const requestedCustody = parsed.data.allocatedQuantity - soldQuantity;
+        const custodyChange = requestedCustody - custodyBefore;
+
+        if (custodyChange > centralStockBefore) {
+          throw new BadRequestException(
+            `Only ${formatQuantity(centralStockBefore)} ${product.unit.abbreviation} of ${productLabel(product)} is available in central Sales stock.`,
+          );
+        }
+
+        if (custodyChange > 0) {
+          let remainingToAllocate = custodyChange;
+
+          for (const batch of centralBatches) {
+            if (remainingToAllocate <= 0) {
+              break;
+            }
+
+            const quantityFromBatch = Math.min(
+              batch.quantityRemaining,
+              remainingToAllocate,
+            );
+
+            if (quantityFromBatch <= 0) {
+              continue;
+            }
+
+            const centralBalanceAfter =
+              batch.quantityRemaining - quantityFromBatch;
+            const custodyBatch = await tx.posTerminalStockBatch.create({
+              data: {
+                allocationId: allocation.id,
+                terminalId,
+                productId: product.id,
+                sourceBatchId: batch.id,
+                quantityAllocated: quantityFromBatch,
+                quantityRemaining: quantityFromBatch,
+                unitCost: batch.unitCost,
+                createdById: actor.id,
+              },
+            });
+
+            await tx.salesProductBatch.update({
+              where: { id: batch.id },
+              data: { quantityRemaining: centralBalanceAfter },
+            });
+            await tx.salesProductStockMovement.create({
+              data: {
+                productId: product.id,
+                batchId: batch.id,
+                type: FinishedProductStockMovementType.ALLOCATE_TO_TERMINAL,
+                quantity: quantityFromBatch,
+                balanceAfter: centralBalanceAfter,
+                actorId: actor.id,
+                note: `Allocated to ${terminal.name ?? terminal.id}`,
+              },
+            });
+            await tx.posTerminalStockMovement.create({
+              data: {
+                terminalId,
+                productId: product.id,
+                terminalBatchId: custodyBatch.id,
+                type: PosTerminalStockMovementType.ALLOCATE,
+                quantity: quantityFromBatch,
+                balanceAfter: quantityFromBatch,
+                actorId: actor.id,
+                note: `Allocated from Sales batch ${batch.batchNumber}`,
+              },
+            });
+
+            batch.quantityRemaining = centralBalanceAfter;
+            remainingToAllocate -= quantityFromBatch;
+          }
+        } else if (custodyChange < 0) {
+          let remainingToRelease = Math.abs(custodyChange);
+          const centralBatchById = new Map(
+            centralBatches.map((batch) => [batch.id, batch]),
+          );
+
+          for (const custodyBatch of [...custodyBatches].reverse()) {
+            if (remainingToRelease <= 0) {
+              break;
+            }
+
+            const quantityToRelease = Math.min(
+              custodyBatch.quantityRemaining,
+              remainingToRelease,
+            );
+
+            if (quantityToRelease <= 0) {
+              continue;
+            }
+
+            const sourceBatch = centralBatchById.get(custodyBatch.sourceBatchId);
+
+            if (!sourceBatch) {
+              throw new ConflictException(
+                "A terminal custody batch has no valid central source batch.",
+              );
+            }
+
+            const custodyBalanceAfter =
+              custodyBatch.quantityRemaining - quantityToRelease;
+            const centralBalanceAfter =
+              sourceBatch.quantityRemaining + quantityToRelease;
+
+            await tx.posTerminalStockBatch.update({
+              where: { id: custodyBatch.id },
+              data: { quantityRemaining: custodyBalanceAfter },
+            });
+            await tx.posTerminalStockMovement.create({
+              data: {
+                terminalId,
+                productId: product.id,
+                terminalBatchId: custodyBatch.id,
+                type: PosTerminalStockMovementType.RELEASE,
+                quantity: quantityToRelease,
+                balanceAfter: custodyBalanceAfter,
+                actorId: actor.id,
+                note: "Released unsold stock to central Sales custody",
+              },
+            });
+            await tx.salesProductBatch.update({
+              where: { id: sourceBatch.id },
+              data: { quantityRemaining: centralBalanceAfter },
+            });
+            await tx.salesProductStockMovement.create({
+              data: {
+                productId: product.id,
+                batchId: sourceBatch.id,
+                type: FinishedProductStockMovementType.RELEASE_FROM_TERMINAL,
+                quantity: quantityToRelease,
+                balanceAfter: centralBalanceAfter,
+                actorId: actor.id,
+                note: `Released from ${terminal.name ?? terminal.id}`,
+              },
+            });
+
+            sourceBatch.quantityRemaining = centralBalanceAfter;
+            remainingToRelease -= quantityToRelease;
+          }
+
+          if (remainingToRelease > 0) {
+            throw new ConflictException(
+              "The requested release exceeds this terminal's unsold custody balance.",
+            );
+          }
+        }
+
+        const updatedTerminal = await tx.posTerminal.findUniqueOrThrow({
+          where: { id: terminalId },
+          include: posTerminalInclude,
+        });
+
+        return {
+          allocation,
+          centralStockBefore,
+          custodyBefore,
+          custodyChange,
+          previousAllocatedQuantity: existing?.allocatedQuantity ?? 0,
+          product,
+          terminal,
+          updatedTerminal,
+        };
       },
-      create: {
-        terminalId,
-        productId: product.id,
-        allocatedQuantity: parsed.data.allocatedQuantity,
-      },
-      update: {
-        allocatedQuantity: parsed.data.allocatedQuantity,
-      },
-    });
+      { timeout: 30000, maxWait: 15000 },
+    );
 
     await this.audit.record({
       actorId: actor.id,
       action: "ADMIN_POS_TERMINAL_STOCK_ALLOCATED",
       entityType: "PosTerminalStockAllocation",
-      entityId: allocation.id,
+      entityId: result.allocation.id,
       metadata: {
         terminalId,
-        terminalName: terminal.name,
-        productId: product.id,
-        productName: productLabel(product),
-        allocatedQuantity: allocation.allocatedQuantity,
+        terminalName: result.terminal.name,
+        productId: result.product.id,
+        productName: productLabel(result.product),
+        previousAllocatedQuantity: result.previousAllocatedQuantity,
+        allocatedQuantity: result.allocation.allocatedQuantity,
+        soldQuantity: result.allocation.soldQuantity,
+        centralStockBefore: result.centralStockBefore,
+        custodyBefore: result.custodyBefore,
+        custodyChange: result.custodyChange,
       },
     });
 
-    const updated = await this.prisma.posTerminal.findUniqueOrThrow({
-      where: { id: terminalId },
-      include: posTerminalInclude,
+    return serializePosTerminal(result.updatedTerminal);
+  }
+
+  async adjustPosTerminalStock(
+    terminalId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+  ) {
+    const parsed = adjustTerminalStockSchema.safeParse(input ?? {});
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const candidate = await tx.posTerminalStockBatch.findFirst({
+          where: {
+            id: parsed.data.terminalBatchId,
+            terminalId,
+          },
+          select: { id: true, productId: true, allocationId: true },
+        });
+
+        if (!candidate) {
+          throw new NotFoundException("POS terminal custody batch not found.");
+        }
+
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "Product" WHERE "id" = ${candidate.productId} FOR UPDATE`,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "PosTerminalStockAllocation" WHERE "id" = ${candidate.allocationId} FOR UPDATE`,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "PosTerminalStockBatch" WHERE "id" = ${candidate.id} FOR UPDATE`,
+        );
+
+        const custodyBatch = await tx.posTerminalStockBatch.findUniqueOrThrow({
+          where: { id: candidate.id },
+          include: {
+            allocation: true,
+            product: { select: productSelect },
+            terminal: { select: { id: true, name: true } },
+          },
+        });
+        const previousQuantity = custodyBatch.quantityRemaining;
+        const difference = parsed.data.countedQuantity - previousQuantity;
+
+        if (difference === 0) {
+          throw new BadRequestException(
+            "The physical count matches the current custody balance.",
+          );
+        }
+
+        const aggregateAllocatedAfter =
+          custodyBatch.allocation.allocatedQuantity + difference;
+
+        if (aggregateAllocatedAfter < custodyBatch.allocation.soldQuantity) {
+          throw new ConflictException(
+            "This adjustment would reduce allocated stock below quantity already sold.",
+          );
+        }
+
+        await tx.posTerminalStockBatch.update({
+          where: { id: custodyBatch.id },
+          data: {
+            quantityRemaining: parsed.data.countedQuantity,
+            ...(difference > 0
+              ? { quantityAllocated: { increment: difference } }
+              : {}),
+          },
+        });
+        await tx.posTerminalStockAllocation.update({
+          where: { id: custodyBatch.allocationId },
+          data: { allocatedQuantity: aggregateAllocatedAfter },
+        });
+        await tx.posTerminalStockMovement.create({
+          data: {
+            terminalId,
+            productId: custodyBatch.productId,
+            terminalBatchId: custodyBatch.id,
+            type: PosTerminalStockMovementType.ADJUST,
+            quantity: Math.abs(difference),
+            balanceAfter: parsed.data.countedQuantity,
+            actorId: actor.id,
+            note: `Physical count adjustment (${difference > 0 ? "+" : ""}${difference}): ${parsed.data.reason}`,
+          },
+        });
+
+        const updatedTerminal = await tx.posTerminal.findUniqueOrThrow({
+          where: { id: terminalId },
+          include: posTerminalInclude,
+        });
+
+        return {
+          custodyBatch,
+          difference,
+          previousQuantity,
+          terminal: custodyBatch.terminal,
+          updatedTerminal,
+        };
+      },
+      { timeout: 15000, maxWait: 15000 },
+    );
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: "ADMIN_POS_TERMINAL_STOCK_ADJUSTED",
+      entityType: "PosTerminalStockBatch",
+      entityId: result.custodyBatch.id,
+      metadata: {
+        terminalId,
+        terminalName: result.terminal.name,
+        productId: result.custodyBatch.productId,
+        productName: productLabel(result.custodyBatch.product),
+        previousQuantity: result.previousQuantity,
+        countedQuantity: parsed.data.countedQuantity,
+        difference: result.difference,
+        reason: parsed.data.reason,
+      },
     });
 
-    return serializePosTerminal(updated);
+    return serializePosTerminal(result.updatedTerminal);
   }
 
   async setPosTerminalRetailerCreditAllocation(
@@ -2288,6 +2780,17 @@ export class SalesService {
       throw new BadRequestException("One or more selected products do not exist.");
     }
 
+    const lockedProductIds = [...new Set(productIds)].sort();
+    await tx.$queryRaw(
+      Prisma.sql`
+        SELECT "id"
+        FROM "Product"
+        WHERE "id" IN (${Prisma.join(lockedProductIds)})
+        ORDER BY "id" ASC
+        FOR UPDATE
+      `,
+    );
+
     const items = data.items.map((item) => {
       const product = productById.get(item.productId);
 
@@ -2530,10 +3033,19 @@ export class SalesService {
 
     const terminalAllocations = new Map<
       string,
-      { id: string; allocatedQuantity: number; soldQuantity: number }
+      {
+        id: string;
+        allocatedQuantity: number;
+        soldQuantity: number;
+        batches: Array<{
+          id: string;
+          sourceBatchId: string;
+          quantityRemaining: number;
+        }>;
+      }
     >();
 
-    if (terminal?.offlineEnabled) {
+    if (terminal) {
       for (const item of items) {
         const lockedAllocationIds = await tx.$queryRaw<Array<{ id: string }>>(
           Prisma.sql`
@@ -2552,13 +3064,56 @@ export class SalesService {
           : null;
 
         if (!allocation) {
-          throw new BadRequestException(
-            `${productLabel(item.product)} has not been allocated to this POS terminal.`,
-          );
+          if (terminal.offlineEnabled) {
+            throw new BadRequestException(
+              `${productLabel(item.product)} has not been allocated to this POS terminal.`,
+            );
+          }
+
+          continue;
         }
 
-        const remainingAllocation =
+        const lockedCustodyBatchIds = await tx.$queryRaw<
+          Array<{ id: string }>
+        >(
+          Prisma.sql`
+            SELECT "id"
+            FROM "PosTerminalStockBatch"
+            WHERE "allocationId" = ${allocation.id}
+              AND "quantityRemaining" > 0
+            ORDER BY "allocatedAt" ASC, "id" ASC
+            FOR UPDATE
+          `,
+        );
+        const custodyBatches =
+          lockedCustodyBatchIds.length > 0
+            ? await tx.posTerminalStockBatch.findMany({
+                where: {
+                  id: {
+                    in: lockedCustodyBatchIds.map((batch) => batch.id),
+                  },
+                },
+                select: {
+                  id: true,
+                  sourceBatchId: true,
+                  quantityRemaining: true,
+                  allocatedAt: true,
+                },
+                orderBy: [{ allocatedAt: "asc" }, { id: "asc" }],
+              })
+            : [];
+        const remainingAllocation = custodyBatches.reduce(
+          (sum, batch) => sum + batch.quantityRemaining,
+          0,
+        );
+        const expectedRemaining =
           allocation.allocatedQuantity - allocation.soldQuantity;
+
+        if (remainingAllocation !== expectedRemaining) {
+          throw new ConflictException(
+            `${productLabel(item.product)} custody is out of balance for this POS terminal. Sync or reconcile the terminal before selling it.`,
+          );
+        }
 
         if (remainingAllocation < item.quantity) {
           throw new BadRequestException(
@@ -2570,9 +3125,53 @@ export class SalesService {
           id: allocation.id,
           allocatedQuantity: allocation.allocatedQuantity,
           soldQuantity: allocation.soldQuantity,
+          batches: custodyBatches,
         });
       }
     }
+
+    const stockBatches = new Map<
+      string,
+      Array<{ id: string; quantityRemaining: number }>
+    >();
+
+    for (const item of items) {
+      if (terminalAllocations.has(item.productId)) {
+        continue;
+      }
+
+      const lockedBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+          SELECT "id"
+          FROM "SalesProductBatch"
+          WHERE "productId" = ${item.productId}
+            AND "quantityRemaining" > 0
+          ORDER BY "receivedAt" ASC, "batchNumber" ASC
+          FOR UPDATE
+        `,
+      );
+      const batches =
+        lockedBatchIds.length > 0
+          ? await tx.salesProductBatch.findMany({
+              where: { id: { in: lockedBatchIds.map((batch) => batch.id) } },
+              orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
+            })
+          : [];
+      const physicalStock = batches.reduce(
+        (sum, batch) => sum + batch.quantityRemaining,
+        0,
+      );
+
+      if (physicalStock < item.quantity) {
+        throw new BadRequestException(
+          `Only ${formatQuantity(physicalStock)} ${item.product.unit.abbreviation} of ${productLabel(item.product)} is available in central Sales stock.`,
+        );
+      }
+
+      stockBatches.set(item.productId, batches);
+    }
+
+    await recordBusinessDayActivity(tx, soldAt);
 
     const createdSale = await tx.sale.create({
       data: {
@@ -2620,43 +3219,6 @@ export class SalesService {
     for (const item of items) {
       const allocation = terminalAllocations.get(item.productId);
 
-      if (allocation) {
-        await tx.posTerminalStockAllocation.update({
-          where: { id: allocation.id },
-          data: {
-            soldQuantity: { increment: item.quantity },
-          },
-        });
-      }
-
-      const lockedBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
-        Prisma.sql`
-          SELECT "id"
-          FROM "SalesProductBatch"
-          WHERE "productId" = ${item.productId}
-            AND "quantityRemaining" > 0
-          ORDER BY "receivedAt" ASC, "batchNumber" ASC
-          FOR UPDATE
-        `,
-      );
-      const batches =
-        lockedBatchIds.length > 0
-          ? await tx.salesProductBatch.findMany({
-              where: { id: { in: lockedBatchIds.map((batch) => batch.id) } },
-              orderBy: [{ receivedAt: "asc" }, { batchNumber: "asc" }],
-            })
-          : [];
-      const availableQuantity = batches.reduce(
-        (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
-        0,
-      );
-
-      if (availableQuantity < item.quantity) {
-        throw new BadRequestException(
-          `Only ${formatQuantity(availableQuantity)} ${item.product.unit.abbreviation} of ${productLabel(item.product)} is available for sale.`,
-        );
-      }
-
       const saleItem = await tx.saleItem.create({
         data: {
           saleId: createdSale.id,
@@ -2668,6 +3230,65 @@ export class SalesService {
       });
 
       let remainingToSell = item.quantity;
+
+      if (allocation && terminal) {
+        for (const batch of allocation.batches) {
+          if (remainingToSell <= 0) {
+            break;
+          }
+
+          const quantityFromBatch = Math.min(
+            batch.quantityRemaining,
+            remainingToSell,
+          );
+
+          if (quantityFromBatch <= 0) {
+            continue;
+          }
+
+          const balanceAfter = batch.quantityRemaining - quantityFromBatch;
+
+          await tx.posTerminalStockBatch.update({
+            where: { id: batch.id },
+            data: { quantityRemaining: balanceAfter },
+          });
+          await tx.saleItemBatch.create({
+            data: {
+              saleItemId: saleItem.id,
+              batchId: batch.sourceBatchId,
+              terminalBatchId: batch.id,
+              quantity: quantityFromBatch,
+            },
+          });
+          await tx.posTerminalStockMovement.create({
+            data: {
+              terminalId: terminal.id,
+              productId: item.productId,
+              terminalBatchId: batch.id,
+              type: PosTerminalStockMovementType.SALE,
+              quantity: quantityFromBatch,
+              balanceAfter,
+              saleId: createdSale.id,
+              saleItemId: saleItem.id,
+              actorId: actor.id,
+              note: `Sale #${createdSale.saleNumber}`,
+            },
+          });
+
+          remainingToSell -= quantityFromBatch;
+        }
+
+        await tx.posTerminalStockAllocation.update({
+          where: { id: allocation.id },
+          data: {
+            soldQuantity: { increment: item.quantity },
+          },
+        });
+
+        continue;
+      }
+
+      const batches = stockBatches.get(item.productId) ?? [];
 
       for (const batch of batches) {
         if (remainingToSell <= 0) {
@@ -2915,10 +3536,16 @@ export class SalesService {
       include: {
         product: { select: productSelect },
         batchIssues: {
-          include: { batch: true },
+          include: { batch: true, terminalBatch: true },
           orderBy: { createdAt: "asc" },
         },
-        returns: { select: { batchId: true, quantity: true } },
+        returns: {
+          select: {
+            batchId: true,
+            terminalBatchId: true,
+            quantity: true,
+          },
+        },
       },
     });
 
@@ -2940,18 +3567,21 @@ export class SalesService {
       );
     }
 
+    await recordBusinessDayActivity(tx, input.recordedAt);
+
     let remainingToReturn = input.quantity;
     const createdReturns: SalesReturnWithIncludes[] = [];
-    const returnedByBatch = new Map<string, number>();
+    const returnedByIssue = new Map<string, number>();
     let unbatchedReturnedQuantity = 0;
 
     for (const entry of saleItem.returns) {
       const quantity = decimalToNumber(entry.quantity);
 
       if (entry.batchId) {
-        returnedByBatch.set(
-          entry.batchId,
-          roundQuantity((returnedByBatch.get(entry.batchId) ?? 0) + quantity),
+        const issueKey = `${entry.batchId}:${entry.terminalBatchId ?? "central"}`;
+        returnedByIssue.set(
+          issueKey,
+          roundQuantity((returnedByIssue.get(issueKey) ?? 0) + quantity),
         );
       } else {
         unbatchedReturnedQuantity = roundQuantity(
@@ -2966,7 +3596,8 @@ export class SalesService {
       }
 
       const issueQuantity = roundQuantity(decimalToNumber(issue.quantity));
-      const alreadyReturned = returnedByBatch.get(issue.batchId) ?? 0;
+      const issueKey = `${issue.batchId}:${issue.terminalBatchId ?? "central"}`;
+      const alreadyReturned = returnedByIssue.get(issueKey) ?? 0;
       let availableFromIssue = roundQuantity(
         Math.max(issueQuantity - alreadyReturned, 0),
       );
@@ -2997,6 +3628,7 @@ export class SalesService {
             saleItemId: saleItem.id,
             productId: saleItem.productId,
             batchId: issue.batchId,
+            terminalBatchId: issue.terminalBatchId,
             disposition: SalesReturnDisposition.DAMAGED,
             quantity: quantityToBatch,
             reason: input.reason,
@@ -3008,6 +3640,77 @@ export class SalesService {
 
         createdReturns.push(createdReturn);
         remainingToReturn = roundQuantity(remainingToReturn - quantityToBatch);
+        continue;
+      }
+
+      if (issue.terminalBatchId) {
+        if (!issue.terminalBatch) {
+          throw new ConflictException(
+            "The original terminal custody batch is no longer available.",
+          );
+        }
+
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "PosTerminalStockAllocation" WHERE "id" = ${issue.terminalBatch.allocationId} FOR UPDATE`,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "PosTerminalStockBatch" WHERE "id" = ${issue.terminalBatchId} FOR UPDATE`,
+        );
+
+        const custodyBatch = await tx.posTerminalStockBatch.findUniqueOrThrow({
+          where: { id: issue.terminalBatchId },
+          select: {
+            id: true,
+            allocationId: true,
+            terminalId: true,
+            productId: true,
+            quantityRemaining: true,
+          },
+        });
+        const custodyBalanceAfter =
+          custodyBatch.quantityRemaining + quantityToBatch;
+
+        await tx.posTerminalStockBatch.update({
+          where: { id: custodyBatch.id },
+          data: { quantityRemaining: custodyBalanceAfter },
+        });
+        await tx.posTerminalStockAllocation.update({
+          where: { id: custodyBatch.allocationId },
+          data: { soldQuantity: { decrement: quantityToBatch } },
+        });
+        await tx.posTerminalStockMovement.create({
+          data: {
+            terminalId: custodyBatch.terminalId,
+            productId: custodyBatch.productId,
+            terminalBatchId: custodyBatch.id,
+            type: PosTerminalStockMovementType.RETURN,
+            quantity: quantityToBatch,
+            balanceAfter: custodyBalanceAfter,
+            saleItemId: saleItem.id,
+            actorId: input.actorId,
+            note: input.reason ?? "Customer return to terminal stock",
+          },
+        });
+
+        const createdReturn = await tx.salesProductReturn.create({
+          data: {
+            saleItemId: saleItem.id,
+            productId: saleItem.productId,
+            batchId: issue.batchId,
+            terminalBatchId: custodyBatch.id,
+            disposition: SalesReturnDisposition.RETURN_TO_STOCK,
+            quantity: quantityToBatch,
+            reason: input.reason,
+            recordedAt: input.recordedAt,
+            createdById: input.actorId,
+          },
+          include: returnInclude,
+        });
+
+        createdReturns.push(createdReturn);
+        remainingToReturn = roundQuantity(
+          remainingToReturn - quantityToBatch,
+        );
         continue;
       }
 
@@ -3078,6 +3781,10 @@ export class SalesService {
       actorId: string;
     },
   ) {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "Product" WHERE "id" = ${input.productId} FOR UPDATE`,
+    );
+
     const product = await tx.product.findUnique({
       where: { id: input.productId },
       select: productSelect,
@@ -3108,12 +3815,13 @@ export class SalesService {
       (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
       0,
     );
-
     if (availableQuantity < input.quantity) {
       throw new BadRequestException(
-        `Only ${formatQuantity(availableQuantity)} ${product.unit.abbreviation} of ${productLabel(product)} is available in Sales stock.`,
+        `Only ${formatQuantity(availableQuantity)} ${product.unit.abbreviation} of ${productLabel(product)} is available in central Sales stock. Use a terminal adjustment if the damaged stock is held by a POS terminal.`,
       );
     }
+
+    await recordBusinessDayActivity(tx, input.recordedAt);
 
     let remainingToDamage = input.quantity;
     const createdReturns: SalesReturnWithIncludes[] = [];

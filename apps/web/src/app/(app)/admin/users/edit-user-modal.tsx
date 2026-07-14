@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Spinner } from "@/components/spinner";
 import { type AdminUser, initialFormState } from "@/lib/admin/types";
 import { roleLabels, roles } from "@/lib/roles";
 
@@ -24,7 +25,14 @@ function SubmitButton() {
       disabled={pending}
       type="submit"
     >
-      {pending ? "Saving" : "Save changes"}
+      {pending ? (
+        <span className="inline-flex items-center gap-2">
+          <Spinner />
+          Saving
+        </span>
+      ) : (
+        "Save changes"
+      )}
     </button>
   );
 }

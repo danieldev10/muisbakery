@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   CustomerType,
   FinishedProductStockMovementType,
   PaymentMethod,
   PosOfflineSyncStatus,
   PosSessionStatus,
+  PosTerminalStockMovementType,
   SalesReturnDisposition,
 } from "@prisma/client";
 
@@ -32,6 +37,7 @@ function terminalRecord(overrides: Record<string, unknown> = {}) {
     pairingCodeExpiresAt: null,
     pairedAt: null,
     pairedBy: null,
+    deviceSecretHash: null,
     deviceSecretIssuedAt: null,
     isActive: true,
     offlineEnabled: false,
@@ -52,6 +58,41 @@ function hashSecret(value: string) {
 
 function createSalesService(prisma: unknown, audit: unknown) {
   return new SalesService(prisma as never, audit as never, {} as never);
+}
+
+function createBusinessDayStateMock(status = "OPEN") {
+  let state = {
+    businessDate: new Date("2026-07-10T00:00:00.000Z"),
+    activityVersion: 0,
+    status,
+    lastActivityAt: null as Date | null,
+    closeCutoffAt: null,
+    reopenedAt: null,
+    reopenedById: null,
+    reopenReason: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  return {
+    upsert: async () => state,
+    findUniqueOrThrow: async () => state,
+    update: async ({ data }: { data: Record<string, unknown> }) => {
+      const increment = (
+        data.activityVersion as { increment?: number } | undefined
+      )?.increment;
+      state = {
+        ...state,
+        ...data,
+        activityVersion: increment
+          ? state.activityVersion + increment
+          : state.activityVersion,
+        status: String(data.status ?? state.status),
+        lastActivityAt: (data.lastActivityAt as Date | undefined) ?? null,
+      };
+      return state;
+    },
+  };
 }
 
 test("SalesService.recordReturn rejects customer returns above the returnable quantity", async () => {
@@ -118,8 +159,12 @@ test("SalesService.recordReturn deducts damaged stock FIFO from sales batches", 
   const returns: Record<string, unknown>[] = [];
   const { audit, records } = createAuditMock();
   const tx = {
+    businessDayState: createBusinessDayStateMock(),
     product: {
       findUnique: async () => product,
+    },
+    posTerminalStockAllocation: {
+      findMany: async () => [],
     },
     $queryRaw: async () => batches.map((batch) => ({ id: batch.id })),
     salesProductBatch: {
@@ -216,6 +261,60 @@ test("SalesService.recordReturn deducts damaged stock FIFO from sales batches", 
   assert.equal(result[1]?.quantity, "2");
 });
 
+test("SalesService.recordReturn only damages stock still held centrally", async () => {
+  let returnCreated = false;
+  const batch = {
+    id: "batch-1",
+    productId: product.id,
+    batchNumber: 1,
+    batchDate: new Date("2026-07-14T00:00:00.000Z"),
+    quantityRemaining: 10,
+    receivedAt: new Date("2026-07-14T07:00:00.000Z"),
+  };
+  const tx = {
+    product: {
+      findUnique: async () => product,
+    },
+    posTerminalStockAllocation: {
+      findMany: async () => [
+        { allocatedQuantity: 8, soldQuantity: 0 },
+      ],
+    },
+    $queryRaw: async () => [{ id: batch.id }],
+    salesProductBatch: {
+      findMany: async () => [batch],
+    },
+    salesProductReturn: {
+      create: async () => {
+        returnCreated = true;
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.recordReturn(
+      {
+        productId: product.id,
+        disposition: SalesReturnDisposition.DAMAGED,
+        quantity: "11",
+        reason: "Dropped tray",
+      },
+      actor,
+    ),
+    (error) =>
+      error instanceof BadRequestException &&
+      /only 10 loaf.*central Sales stock/i.test(error.message),
+  );
+  assert.equal(returnCreated, false);
+});
+
 test("SalesService.createSale records credit balances and deducts Sales stock FIFO", async () => {
   const soldAt = new Date("2026-07-10T12:00:00.000Z");
   const createdAt = new Date("2026-07-10T12:00:01.000Z");
@@ -243,6 +342,7 @@ test("SalesService.createSale records credit balances and deducts Sales stock FI
   const stockMovements: Record<string, unknown>[] = [];
   const { audit, records } = createAuditMock();
   const tx = {
+    businessDayState: createBusinessDayStateMock(),
     product: {
       findMany: async () => [product],
     },
@@ -291,6 +391,9 @@ test("SalesService.createSale records credit balances and deducts Sales stock FI
       }),
     },
     $queryRaw: async () => batches.map((batch) => ({ id: batch.id })),
+    posTerminalStockAllocation: {
+      findMany: async () => [],
+    },
     salesProductBatch: {
       findMany: async () => batches,
       update: async ({
@@ -363,6 +466,228 @@ test("SalesService.createSale records credit balances and deducts Sales stock FI
   assert.equal(result.balanceDue, "12000");
 });
 
+test("SalesService.createSale consumes terminal custody without deducting central stock", async () => {
+  const soldAt = new Date("2026-07-14T12:00:00.000Z");
+  const createdAt = new Date("2026-07-14T12:00:01.000Z");
+  const custodyBatch = {
+    id: "custody-1",
+    sourceBatchId: "batch-1",
+    quantityRemaining: 6,
+    allocatedAt: new Date("2026-07-14T08:00:00.000Z"),
+  };
+  const custodyUpdates: Array<Record<string, unknown>> = [];
+  const terminalMovements: Array<Record<string, unknown>> = [];
+  const saleItemBatches: Array<Record<string, unknown>> = [];
+  const allocationUpdates: Array<Record<string, unknown>> = [];
+  let centralBatchUpdated = false;
+  let createdSaleData: Record<string, unknown> | null = null;
+  const sourceBatch = {
+    id: "batch-1",
+    batchNumber: 1,
+    batchDate: new Date("2026-07-14T00:00:00.000Z"),
+  };
+  const tx = {
+    businessDayState: createBusinessDayStateMock(),
+    product: {
+      findMany: async () => [product],
+    },
+    posTerminal: {
+      findUnique: async () => ({
+        id: "terminal-1",
+        name: "Front counter",
+        isActive: true,
+        offlineEnabled: true,
+      }),
+    },
+    $queryRaw: async (query: unknown) => {
+      const sql =
+        (query as { strings?: readonly string[] }).strings?.join(" ") ?? "";
+
+      if (sql.includes('FROM "PosTerminalStockAllocation"')) {
+        return [{ id: "allocation-1" }];
+      }
+
+      if (sql.includes('FROM "PosTerminalStockBatch"')) {
+        return [{ id: custodyBatch.id }];
+      }
+
+      return [];
+    },
+    posTerminalStockAllocation: {
+      findUnique: async () => ({
+        id: "allocation-1",
+        terminalId: "terminal-1",
+        productId: product.id,
+        allocatedQuantity: 6,
+        soldQuantity: 0,
+      }),
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        allocationUpdates.push(data);
+      },
+    },
+    posTerminalStockBatch: {
+      findMany: async () => [custodyBatch],
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        custodyUpdates.push(data);
+      },
+    },
+    salesProductBatch: {
+      findMany: async () => [],
+      update: async () => {
+        centralBatchUpdated = true;
+      },
+    },
+    salesProductStockMovement: {
+      create: async () => {
+        centralBatchUpdated = true;
+      },
+    },
+    sale: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        createdSaleData = data;
+        return { id: "sale-1", saleNumber: 50, ...data, createdAt };
+      },
+      findUniqueOrThrow: async () => ({
+        id: "sale-1",
+        saleNumber: 50,
+        customerType: CustomerType.INDIVIDUAL,
+        terminal: { id: "terminal-1", name: "Front counter" },
+        retailer: null,
+        retailerApproval: null,
+        paymentMethod: PaymentMethod.CASH,
+        customerName: null,
+        soldAt,
+        subtotal: createdSaleData?.subtotal,
+        discount: createdSaleData?.discount,
+        totalAmount: createdSaleData?.totalAmount,
+        amountPaid: createdSaleData?.amountPaid,
+        balanceDue: createdSaleData?.balanceDue,
+        notes: null,
+        createdAt,
+        createdBy: {
+          id: actor.id,
+          name: actor.name,
+          email: actor.email,
+        },
+        items: [
+          {
+            id: "sale-item-1",
+            quantity: 4,
+            unitPrice: 3000,
+            lineTotal: 12000,
+            product,
+            batchIssues: saleItemBatches.map((entry, index) => ({
+              id: `issue-${index + 1}`,
+              quantity: entry.quantity,
+              batch: sourceBatch,
+              terminalBatch: {
+                id: custodyBatch.id,
+                terminalId: "terminal-1",
+              },
+            })),
+          },
+        ],
+      }),
+    },
+    saleItem: {
+      create: async () => ({ id: "sale-item-1" }),
+    },
+    saleItemBatch: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        saleItemBatches.push(data);
+      },
+    },
+    posTerminalStockMovement: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        terminalMovements.push(data);
+      },
+    },
+  };
+  const { audit } = createAuditMock();
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    audit,
+  );
+
+  await service.createSale(
+    {
+      terminalId: "terminal-1",
+      paymentMethod: PaymentMethod.CASH,
+      soldAt: soldAt.toISOString(),
+      items: [{ productId: product.id, quantity: "4", unitPrice: "3000" }],
+    },
+    actor,
+  );
+
+  assert.equal(centralBatchUpdated, false);
+  assert.deepEqual(custodyUpdates, [{ quantityRemaining: 2 }]);
+  assert.deepEqual(allocationUpdates, [{ soldQuantity: { increment: 4 } }]);
+  assert.equal(saleItemBatches[0]?.batchId, sourceBatch.id);
+  assert.equal(saleItemBatches[0]?.terminalBatchId, custodyBatch.id);
+  assert.equal(terminalMovements[0]?.type, PosTerminalStockMovementType.SALE);
+  assert.equal(terminalMovements[0]?.quantity, 4);
+  assert.equal(terminalMovements[0]?.balanceAfter, 2);
+});
+
+test("SalesService.createSale cannot consume stock already moved to terminal custody", async () => {
+  let saleCreated = false;
+  const batch = {
+    id: "batch-1",
+    productId: product.id,
+    batchNumber: 1,
+    batchDate: new Date("2026-07-14T00:00:00.000Z"),
+    quantityRemaining: 8,
+    receivedAt: new Date("2026-07-14T07:00:00.000Z"),
+  };
+  const tx = {
+    product: {
+      findMany: async () => [product],
+    },
+    $queryRaw: async () => [{ id: batch.id }],
+    posTerminalStockAllocation: {
+      findMany: async () => [
+        {
+          terminalId: "offline-terminal",
+          allocatedQuantity: 7,
+          soldQuantity: 1,
+        },
+      ],
+    },
+    salesProductBatch: {
+      findMany: async () => [batch],
+    },
+    sale: {
+      create: async () => {
+        saleCreated = true;
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.createSale(
+      {
+        paymentMethod: PaymentMethod.CASH,
+        items: [{ productId: product.id, quantity: "9", unitPrice: "3000" }],
+      },
+      actor,
+    ),
+    (error) =>
+      error instanceof BadRequestException &&
+      /only 8 loaf.*central Sales stock/i.test(error.message),
+  );
+  assert.equal(saleCreated, false);
+});
+
 test("SalesService.createSale consumes an Admin approval for repeat retailer credit", async () => {
   const soldAt = new Date("2026-07-10T12:10:00.000Z");
   const createdAt = new Date("2026-07-10T12:10:01.000Z");
@@ -398,6 +723,7 @@ test("SalesService.createSale consumes an Admin approval for repeat retailer cre
   let approvalUpdateData: Record<string, unknown> | null = null;
   const { audit, records } = createAuditMock();
   const tx = {
+    businessDayState: createBusinessDayStateMock(),
     product: {
       findMany: async () => [product],
     },
@@ -471,6 +797,9 @@ test("SalesService.createSale consumes an Admin approval for repeat retailer cre
       }),
     },
     $queryRaw: async () => batches.map((batch) => ({ id: batch.id })),
+    posTerminalStockAllocation: {
+      findMany: async () => [],
+    },
     retailerOrderApproval: {
       findUnique: async () => ({
         id: "approval-1",
@@ -610,6 +939,7 @@ test("SalesService.recordRetailerPayment settles oldest retailer balances first"
     [];
   const { audit, records } = createAuditMock();
   const tx = {
+    businessDayState: createBusinessDayStateMock(),
     $queryRaw: async () => sales.map((sale) => ({ id: sale.id })),
     retailer: {
       findUnique: async () => retailer,
@@ -897,6 +1227,7 @@ test("SalesService.recordReturn returns customer items to their original sale ba
   const returnWrites: Record<string, unknown>[] = [];
   const { audit, records } = createAuditMock();
   const tx = {
+    businessDayState: createBusinessDayStateMock(),
     saleItem: {
       findUnique: async () => ({
         id: "sale-item-1",
@@ -1040,6 +1371,135 @@ test("SalesService.recordReturn returns customer items to their original sale ba
   assert.equal(result[1]?.batch?.id, "batch-new");
 });
 
+test("SalesService.recordReturn restores the exact terminal custody batch", async () => {
+  const now = new Date("2026-07-14T14:00:00.000Z");
+  const sourceBatch = {
+    id: "batch-1",
+    batchNumber: 1,
+    batchDate: new Date("2026-07-14T00:00:00.000Z"),
+    quantityRemaining: 0,
+  };
+  const custodyBatch = {
+    id: "custody-1",
+    allocationId: "allocation-1",
+    terminalId: "terminal-1",
+    productId: product.id,
+    quantityRemaining: 2,
+  };
+  const custodyUpdates: Array<Record<string, unknown>> = [];
+  const allocationUpdates: Array<Record<string, unknown>> = [];
+  const terminalMovements: Array<Record<string, unknown>> = [];
+  const returnWrites: Array<Record<string, unknown>> = [];
+  let centralBatchUpdated = false;
+  const tx = {
+    businessDayState: createBusinessDayStateMock(),
+    saleItem: {
+      findUnique: async () => ({
+        id: "sale-item-1",
+        productId: product.id,
+        product,
+        quantity: 4,
+        batchIssues: [
+          {
+            id: "issue-1",
+            batchId: sourceBatch.id,
+            terminalBatchId: custodyBatch.id,
+            quantity: 4,
+            createdAt: new Date("2026-07-14T12:00:00.000Z"),
+            batch: sourceBatch,
+            terminalBatch: custodyBatch,
+          },
+        ],
+        returns: [],
+      }),
+    },
+    $queryRaw: async () => [],
+    posTerminalStockBatch: {
+      findUniqueOrThrow: async () => custodyBatch,
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        custodyUpdates.push(data);
+      },
+    },
+    posTerminalStockAllocation: {
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        allocationUpdates.push(data);
+      },
+    },
+    posTerminalStockMovement: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        terminalMovements.push(data);
+      },
+    },
+    salesProductBatch: {
+      update: async () => {
+        centralBatchUpdated = true;
+      },
+    },
+    salesProductStockMovement: {
+      create: async () => {
+        centralBatchUpdated = true;
+      },
+    },
+    salesProductReturn: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        returnWrites.push(data);
+        return {
+          id: "return-1",
+          disposition: data.disposition,
+          quantity: data.quantity,
+          reason: data.reason,
+          recordedAt: data.recordedAt,
+          createdAt: now,
+          product,
+          batch: sourceBatch,
+          terminalBatch: custodyBatch,
+          saleItem: {
+            id: "sale-item-1",
+            quantity: 4,
+            sale: {
+              id: "sale-1",
+              saleNumber: 51,
+              soldAt: new Date("2026-07-14T12:00:00.000Z"),
+            },
+            product,
+          },
+          createdBy: {
+            id: actor.id,
+            name: actor.name,
+            email: actor.email,
+          },
+        };
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    createAuditMock().audit,
+  );
+
+  await service.recordReturn(
+    {
+      saleItemId: "sale-item-1",
+      disposition: SalesReturnDisposition.RETURN_TO_STOCK,
+      quantity: "2",
+      reason: "Customer return",
+      recordedAt: now.toISOString(),
+    },
+    actor,
+  );
+
+  assert.equal(centralBatchUpdated, false);
+  assert.deepEqual(custodyUpdates, [{ quantityRemaining: 4 }]);
+  assert.deepEqual(allocationUpdates, [{ soldQuantity: { decrement: 2 } }]);
+  assert.equal(terminalMovements[0]?.type, PosTerminalStockMovementType.RETURN);
+  assert.equal(terminalMovements[0]?.balanceAfter, 4);
+  assert.equal(returnWrites[0]?.terminalBatchId, custodyBatch.id);
+  assert.equal(returnWrites[0]?.batchId, sourceBatch.id);
+});
+
 test("SalesService.getPosDisplay hides expired display tokens", async () => {
   const service = createSalesService(
     {
@@ -1061,30 +1521,153 @@ test("SalesService.getPosDisplay hides expired display tokens", async () => {
   );
 });
 
-test("SalesService.pairPosTerminal issues a device secret without consuming the pairing code", async () => {
+test("SalesService.createPosTerminal issues a pairing code for one hour", async () => {
+  const { audit } = createAuditMock();
+  let createdData: Record<string, unknown> | null = null;
+  const service = createSalesService(
+    {
+      posTerminal: {
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          createdData = data;
+
+          return terminalRecord({
+            name: data.name,
+            pairingCodeHash: data.pairingCodeHash,
+            pairingCodeExpiresAt: data.pairingCodeExpiresAt,
+          });
+        },
+      },
+    },
+    audit,
+  );
+  const before = Date.now();
+
+  const terminal = await service.createPosTerminal(
+    { name: "Front counter", pairingCode: "pair-code" },
+    actor,
+  );
+  const after = Date.now();
+  const expiresAt = createdData?.pairingCodeExpiresAt;
+
+  assert.ok(expiresAt instanceof Date);
+  assert.ok(expiresAt.getTime() >= before + 60 * 60 * 1000);
+  assert.ok(expiresAt.getTime() <= after + 60 * 60 * 1000);
+  assert.equal(terminal.pairable, true);
+});
+
+test("SalesService.pairPosTerminal consumes one pairing code exactly once", async () => {
   const { audit, records } = createAuditMock();
-  const updates: Array<{ data: Record<string, unknown> }> = [];
+  const state = {
+    id: "terminal-1",
+    isActive: true,
+    pairingCodeHash: hashSecret("pair-code"),
+    pairingCodeExpiresAt: new Date(Date.now() + 60_000),
+    pairedAt: null as Date | null,
+    pairedById: null as string | null,
+    deviceSecretHash: null as string | null,
+    deviceSecretIssuedAt: null as Date | null,
+    lastSeenAt: null as Date | null,
+  };
+  const updates: Record<string, unknown>[] = [];
+  const service = createSalesService(
+    {
+      posTerminal: {
+        findUnique: async () => ({ ...state }),
+        updateMany: async ({
+          where,
+          data,
+        }: {
+          where: Record<string, unknown>;
+          data: Record<string, unknown>;
+        }) => {
+          const expiresFilter = where.pairingCodeExpiresAt as { gt: Date };
+
+          if (
+            state.pairedAt ||
+            state.deviceSecretHash ||
+            state.pairingCodeHash !== where.pairingCodeHash ||
+            state.pairingCodeExpiresAt.getTime() <= expiresFilter.gt.getTime()
+          ) {
+            return { count: 0 };
+          }
+
+          updates.push(data);
+          Object.assign(state, data);
+          return { count: 1 };
+        },
+        findUniqueOrThrow: async () =>
+          terminalRecord({
+            pairingCodeHash: state.pairingCodeHash,
+            pairingCodeExpiresAt: state.pairingCodeExpiresAt,
+            pairedAt: state.pairedAt,
+            pairedBy: state.pairedAt ? actor : null,
+            deviceSecretHash: state.deviceSecretHash,
+            deviceSecretIssuedAt: state.deviceSecretIssuedAt,
+            lastSeenAt: state.lastSeenAt,
+          }),
+      },
+    },
+    audit,
+  );
+
+  const attempts = await Promise.allSettled([
+    service.pairPosTerminal(
+      { terminalId: "terminal-1", pairingCode: "pair-code" },
+      actor,
+    ),
+    service.pairPosTerminal(
+      { terminalId: "terminal-1", pairingCode: "pair-code" },
+      actor,
+    ),
+  ]);
+  const fulfilled = attempts.filter(
+    (attempt): attempt is PromiseFulfilledResult<
+      Awaited<ReturnType<SalesService["pairPosTerminal"]>>
+    > => attempt.status === "fulfilled",
+  );
+  const rejected = attempts.filter(
+    (attempt): attempt is PromiseRejectedResult => attempt.status === "rejected",
+  );
+  const update = updates[0];
+
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.ok(rejected[0]?.reason instanceof ConflictException);
+  assert.equal(typeof fulfilled[0]?.value.deviceSecret, "string");
+  assert.ok((fulfilled[0]?.value.deviceSecret.length ?? 0) > 20);
+  assert.equal(update?.pairingCodeHash, null);
+  assert.equal(update?.pairingCodeExpiresAt, null);
+  assert.equal(fulfilled[0]?.value.pairable, false);
+  assert.equal(update?.pairedById, actor.id);
+  assert.equal(typeof update?.deviceSecretHash, "string");
+  assert.notEqual(update?.deviceSecretHash, fulfilled[0]?.value.deviceSecret);
+  assert.equal(records.length, 1);
+});
+
+test("SalesService.rePairPosTerminal revokes the old device and creates a one-hour code", async () => {
+  const { audit, records } = createAuditMock();
+  const previousPairedAt = new Date("2026-07-14T08:00:00.000Z");
+  const previousSecretIssuedAt = new Date("2026-07-14T08:01:00.000Z");
+  let updateData: Record<string, unknown> | null = null;
   const service = createSalesService(
     {
       posTerminal: {
         findUnique: async () => ({
           id: "terminal-1",
+          name: "Front counter",
           isActive: true,
-          pairingCodeHash: hashSecret("pair-code"),
-          pairingCodeExpiresAt: new Date(Date.now() + 60_000),
+          pairedAt: previousPairedAt,
+          deviceSecretIssuedAt: previousSecretIssuedAt,
         }),
         update: async ({ data }: { data: Record<string, unknown> }) => {
-          updates.push({ data });
+          updateData = data;
 
           return terminalRecord({
-            pairingCodeHash: hashSecret("pair-code"),
-            pairingCodeExpiresAt: new Date(Date.now() + 60_000),
+            pairingCodeHash: data.pairingCodeHash,
+            pairingCodeExpiresAt: data.pairingCodeExpiresAt,
             pairedAt: data.pairedAt,
-            pairedBy: {
-              id: actor.id,
-              name: actor.name,
-              email: actor.email,
-            },
+            pairedBy: null,
+            deviceSecretHash: data.deviceSecretHash,
             deviceSecretIssuedAt: data.deviceSecretIssuedAt,
             lastSeenAt: data.lastSeenAt,
           });
@@ -1093,22 +1676,537 @@ test("SalesService.pairPosTerminal issues a device secret without consuming the 
     },
     audit,
   );
+  const before = Date.now();
 
-  const result = await service.pairPosTerminal(
-    { terminalId: "terminal-1", pairingCode: "pair-code" },
+  const terminal = await service.rePairPosTerminal(
+    "terminal-1",
+    { pairingCode: "new-pair-code" },
     actor,
   );
-  const update = updates[0]?.data;
+  const after = Date.now();
+  const expiresAt = updateData?.pairingCodeExpiresAt;
 
-  assert.equal(typeof result.deviceSecret, "string");
-  assert.ok(result.deviceSecret.length > 20);
-  assert.equal("pairingCodeHash" in (update ?? {}), false);
-  assert.equal("pairingCodeExpiresAt" in (update ?? {}), false);
-  assert.equal(result.pairable, true);
-  assert.equal(update?.pairedById, actor.id);
-  assert.equal(typeof update?.deviceSecretHash, "string");
-  assert.notEqual(update?.deviceSecretHash, result.deviceSecret);
+  assert.ok(expiresAt instanceof Date);
+  assert.ok(expiresAt.getTime() >= before + 60 * 60 * 1000);
+  assert.ok(expiresAt.getTime() <= after + 60 * 60 * 1000);
+  assert.equal(updateData?.pairedAt, null);
+  assert.equal(updateData?.deviceSecretHash, null);
+  assert.equal(updateData?.deviceSecretIssuedAt, null);
+  assert.equal(updateData?.lastSeenAt, null);
+  assert.equal(terminal.pairable, true);
   assert.equal(records.length, 1);
+  assert.equal(records[0]?.action, "ADMIN_POS_TERMINAL_REPAIR_STARTED");
+});
+
+test("SalesService.setPosTerminalStockAllocation prevents concurrent over-allocation", async () => {
+  const now = new Date("2026-07-14T10:00:00.000Z");
+  const allocations: Array<{
+    id: string;
+    terminalId: string;
+    productId: string;
+    allocatedQuantity: number;
+    soldQuantity: number;
+    createdAt: Date;
+    updatedAt: Date;
+  }> = [];
+  const lockQueries: string[] = [];
+  const centralBatch = {
+    id: "batch-1",
+    quantityRemaining: 10,
+    unitCost: 1500,
+    receivedAt: new Date("2026-07-14T08:00:00.000Z"),
+    batchNumber: 1,
+  };
+  const custodyBatches: Array<{
+    id: string;
+    allocationId: string;
+    terminalId: string;
+    productId: string;
+    sourceBatchId: string;
+    quantityAllocated: number;
+    quantityRemaining: number;
+    unitCost: number;
+    allocatedAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
+    createdById: string;
+  }> = [];
+  const { audit, records } = createAuditMock();
+  const tx = {
+    posTerminal: {
+      findUnique: async ({ where }: { where: { id: string } }) => ({
+        id: where.id,
+        name: where.id,
+      }),
+      findUniqueOrThrow: async ({ where }: { where: { id: string } }) =>
+        terminalRecord({
+          id: where.id,
+          name: where.id,
+          stockAllocations: allocations
+            .filter((allocation) => allocation.terminalId === where.id)
+            .map((allocation) => ({
+              ...allocation,
+              product,
+              batches: custodyBatches
+                .filter((batch) => batch.allocationId === allocation.id)
+                .map((batch) => ({
+                  ...batch,
+                  sourceBatch: {
+                    id: centralBatch.id,
+                    batchNumber: centralBatch.batchNumber,
+                    batchDate: new Date("2026-07-14T00:00:00.000Z"),
+                    receivedAt: centralBatch.receivedAt,
+                  },
+                })),
+            })),
+        }),
+    },
+    product: {
+      findUnique: async () => product,
+    },
+    $queryRaw: async (query: unknown) => {
+      const sql =
+        (query as { strings?: readonly string[] }).strings?.join(" ") ?? "";
+      lockQueries.push(sql);
+
+      if (sql.includes('FROM "SalesProductBatch"')) {
+        return [{ id: centralBatch.id }];
+      }
+
+      if (sql.includes('FROM "PosTerminalStockBatch"')) {
+        return custodyBatches.map((batch) => ({ id: batch.id }));
+      }
+
+      return [];
+    },
+    posTerminalStockAllocation: {
+      findMany: async () =>
+        allocations.map((allocation) => ({ ...allocation })),
+      upsert: async ({
+        where,
+        create,
+        update,
+      }: {
+        where: {
+          terminalId_productId: { terminalId: string; productId: string };
+        };
+        create: {
+          terminalId: string;
+          productId: string;
+          allocatedQuantity: number;
+        };
+        update: { allocatedQuantity: number };
+      }) => {
+        const key = where.terminalId_productId;
+        const existing = allocations.find(
+          (allocation) =>
+            allocation.terminalId === key.terminalId &&
+            allocation.productId === key.productId,
+        );
+
+        if (existing) {
+          existing.allocatedQuantity = update.allocatedQuantity;
+          existing.updatedAt = now;
+          return existing;
+        }
+
+        const allocation = {
+          id: `allocation-${allocations.length + 1}`,
+          ...create,
+          soldQuantity: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+        allocations.push(allocation);
+        return allocation;
+      },
+    },
+    salesProductBatch: {
+      findMany: async () => [centralBatch],
+      update: async ({ data }: { data: { quantityRemaining: number } }) => {
+        centralBatch.quantityRemaining = data.quantityRemaining;
+      },
+    },
+    salesProductStockMovement: {
+      create: async () => undefined,
+    },
+    posTerminalStockBatch: {
+      findMany: async ({ where }: { where: { allocationId: string } }) =>
+        custodyBatches.filter(
+          (batch) => batch.allocationId === where.allocationId,
+        ),
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        const custodyBatch = {
+          id: `custody-${custodyBatches.length + 1}`,
+          allocationId: String(data.allocationId),
+          terminalId: String(data.terminalId),
+          productId: String(data.productId),
+          sourceBatchId: String(data.sourceBatchId),
+          quantityAllocated: Number(data.quantityAllocated),
+          quantityRemaining: Number(data.quantityRemaining),
+          unitCost: Number(data.unitCost),
+          allocatedAt: now,
+          createdAt: now,
+          updatedAt: now,
+          createdById: String(data.createdById),
+        };
+        custodyBatches.push(custodyBatch);
+        return custodyBatch;
+      },
+    },
+    posTerminalStockMovement: {
+      create: async () => undefined,
+    },
+  };
+  let transactionQueue = Promise.resolve();
+  const service = createSalesService(
+    {
+      $transaction: <T>(callback: (transaction: typeof tx) => Promise<T>) => {
+        const result = transactionQueue.then(async () => {
+          const allocationsBefore = allocations.map((entry) => ({ ...entry }));
+          const custodyBefore = custodyBatches.map((entry) => ({ ...entry }));
+          const centralBefore = centralBatch.quantityRemaining;
+
+          try {
+            return await callback(tx);
+          } catch (error) {
+            allocations.splice(0, allocations.length, ...allocationsBefore);
+            custodyBatches.splice(0, custodyBatches.length, ...custodyBefore);
+            centralBatch.quantityRemaining = centralBefore;
+            throw error;
+          }
+        });
+        transactionQueue = result.then(
+          () => undefined,
+          () => undefined,
+        );
+        return result;
+      },
+    },
+    audit,
+  );
+
+  const attempts = await Promise.allSettled([
+    service.setPosTerminalStockAllocation(
+      "terminal-1",
+      { productId: product.id, allocatedQuantity: "8" },
+      actor,
+    ),
+    service.setPosTerminalStockAllocation(
+      "terminal-2",
+      { productId: product.id, allocatedQuantity: "8" },
+      actor,
+    ),
+  ]);
+
+  assert.equal(
+    attempts.filter((attempt) => attempt.status === "fulfilled").length,
+    1,
+  );
+  assert.equal(
+    attempts.filter((attempt) => attempt.status === "rejected").length,
+    1,
+  );
+  assert.equal(
+    allocations.reduce(
+      (sum, allocation) =>
+        sum + allocation.allocatedQuantity - allocation.soldQuantity,
+      0,
+    ),
+    8,
+  );
+  assert.ok(
+    attempts.some(
+      (attempt) =>
+        attempt.status === "rejected" &&
+        attempt.reason instanceof BadRequestException &&
+        /only 2 loaf.*central Sales stock/i.test(attempt.reason.message),
+    ),
+  );
+  assert.ok(
+    lockQueries.some(
+      (query) =>
+        query.includes('FROM "Product"') && query.includes("FOR UPDATE"),
+    ),
+  );
+  assert.equal(records.length, 1);
+});
+
+test("SalesService.setPosTerminalStockAllocation releases only unsold custody to its source batch", async () => {
+  const now = new Date("2026-07-14T16:00:00.000Z");
+  const allocation = {
+    id: "allocation-1",
+    terminalId: "terminal-1",
+    productId: product.id,
+    allocatedQuantity: 10,
+    soldQuantity: 4,
+    createdAt: now,
+    updatedAt: now,
+  };
+  let savedAllocatedQuantity = allocation.allocatedQuantity;
+  const sourceBatch = {
+    id: "batch-1",
+    quantityRemaining: 2,
+    unitCost: 1500,
+    receivedAt: new Date("2026-07-14T08:00:00.000Z"),
+    batchNumber: 1,
+    batchDate: new Date("2026-07-14T00:00:00.000Z"),
+  };
+  const custodyBatch = {
+    id: "custody-1",
+    allocationId: allocation.id,
+    terminalId: allocation.terminalId,
+    productId: allocation.productId,
+    sourceBatchId: sourceBatch.id,
+    quantityAllocated: 10,
+    quantityRemaining: 6,
+    unitCost: 1500,
+    allocatedAt: new Date("2026-07-14T09:00:00.000Z"),
+    createdAt: new Date("2026-07-14T09:00:00.000Z"),
+    updatedAt: now,
+    createdById: actor.id,
+  };
+  const centralMovements: Array<Record<string, unknown>> = [];
+  const terminalMovements: Array<Record<string, unknown>> = [];
+  const tx = {
+    posTerminal: {
+      findUnique: async () => ({ id: "terminal-1", name: "Front counter" }),
+      findUniqueOrThrow: async () =>
+        terminalRecord({
+          stockAllocations: [
+            {
+              ...allocation,
+              allocatedQuantity: savedAllocatedQuantity,
+              product,
+              batches: [
+                {
+                  ...custodyBatch,
+                  sourceBatch,
+                },
+              ],
+            },
+          ],
+        }),
+    },
+    product: {
+      findUnique: async () => product,
+    },
+    $queryRaw: async (query: unknown) => {
+      const sql =
+        (query as { strings?: readonly string[] }).strings?.join(" ") ?? "";
+
+      if (sql.includes('FROM "SalesProductBatch"')) {
+        return [{ id: sourceBatch.id }];
+      }
+
+      if (sql.includes('FROM "PosTerminalStockBatch"')) {
+        return [{ id: custodyBatch.id }];
+      }
+
+      return [];
+    },
+    posTerminalStockAllocation: {
+      findMany: async () => [allocation],
+      upsert: async ({ update }: { update: { allocatedQuantity: number } }) => {
+        savedAllocatedQuantity = update.allocatedQuantity;
+        return {
+          ...allocation,
+          allocatedQuantity: savedAllocatedQuantity,
+        };
+      },
+    },
+    salesProductBatch: {
+      findMany: async () => [sourceBatch],
+      update: async ({ data }: { data: { quantityRemaining: number } }) => {
+        sourceBatch.quantityRemaining = data.quantityRemaining;
+      },
+    },
+    posTerminalStockBatch: {
+      findMany: async () => [custodyBatch],
+      update: async ({ data }: { data: { quantityRemaining: number } }) => {
+        custodyBatch.quantityRemaining = data.quantityRemaining;
+      },
+    },
+    salesProductStockMovement: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        centralMovements.push(data);
+      },
+    },
+    posTerminalStockMovement: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        terminalMovements.push(data);
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    createAuditMock().audit,
+  );
+
+  await service.setPosTerminalStockAllocation(
+    "terminal-1",
+    { productId: product.id, allocatedQuantity: "7" },
+    actor,
+  );
+
+  assert.equal(savedAllocatedQuantity, 7);
+  assert.equal(allocation.soldQuantity, 4);
+  assert.equal(custodyBatch.quantityRemaining, 3);
+  assert.equal(sourceBatch.quantityRemaining, 5);
+  assert.equal(terminalMovements[0]?.type, PosTerminalStockMovementType.RELEASE);
+  assert.equal(terminalMovements[0]?.quantity, 3);
+  assert.equal(
+    centralMovements[0]?.type,
+    FinishedProductStockMovementType.RELEASE_FROM_TERMINAL,
+  );
+});
+
+test("SalesService.adjustPosTerminalStock records an audited custody adjustment", async () => {
+  const now = new Date("2026-07-14T17:00:00.000Z");
+  const allocation = {
+    id: "allocation-1",
+    terminalId: "terminal-1",
+    productId: product.id,
+    allocatedQuantity: 10,
+    soldQuantity: 5,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const sourceBatch = {
+    id: "batch-1",
+    batchNumber: 1,
+    batchDate: new Date("2026-07-14T00:00:00.000Z"),
+    receivedAt: new Date("2026-07-14T08:00:00.000Z"),
+  };
+  const custodyBatch = {
+    id: "custody-1",
+    allocationId: allocation.id,
+    terminalId: allocation.terminalId,
+    productId: allocation.productId,
+    quantityAllocated: 10,
+    quantityRemaining: 5,
+    allocatedAt: new Date("2026-07-14T09:00:00.000Z"),
+    createdAt: new Date("2026-07-14T09:00:00.000Z"),
+    updatedAt: now,
+    allocation,
+    product,
+    terminal: { id: "terminal-1", name: "Front counter" },
+  };
+  const movements: Array<Record<string, unknown>> = [];
+  let savedAllocatedQuantity = allocation.allocatedQuantity;
+  const { audit, records } = createAuditMock();
+  const tx = {
+    $queryRaw: async () => [],
+    posTerminalStockBatch: {
+      findFirst: async () => ({
+        id: custodyBatch.id,
+        productId: product.id,
+        allocationId: allocation.id,
+      }),
+      findUniqueOrThrow: async () => custodyBatch,
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        custodyBatch.quantityRemaining = Number(data.quantityRemaining);
+      },
+    },
+    posTerminalStockAllocation: {
+      update: async ({ data }: { data: { allocatedQuantity: number } }) => {
+        savedAllocatedQuantity = data.allocatedQuantity;
+      },
+    },
+    posTerminalStockMovement: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        movements.push(data);
+      },
+    },
+    posTerminal: {
+      findUniqueOrThrow: async () =>
+        terminalRecord({
+          stockAllocations: [
+            {
+              ...allocation,
+              allocatedQuantity: savedAllocatedQuantity,
+              product,
+              batches: [
+                {
+                  ...custodyBatch,
+                  sourceBatch,
+                },
+              ],
+            },
+          ],
+        }),
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    audit,
+  );
+
+  await service.adjustPosTerminalStock(
+    "terminal-1",
+    {
+      terminalBatchId: custodyBatch.id,
+      countedQuantity: "3",
+      reason: "Supervisor recount after breakage",
+    },
+    actor,
+  );
+
+  assert.equal(custodyBatch.quantityRemaining, 3);
+  assert.equal(savedAllocatedQuantity, 8);
+  assert.equal(movements[0]?.type, PosTerminalStockMovementType.ADJUST);
+  assert.equal(movements[0]?.quantity, 2);
+  assert.equal(movements[0]?.balanceAfter, 3);
+  assert.equal(records[0]?.action, "ADMIN_POS_TERMINAL_STOCK_ADJUSTED");
+});
+
+test("SalesService.setPosTerminalStockAllocation cannot drop below sold stock", async () => {
+  let upsertCalled = false;
+  const existingAllocation = {
+    id: "allocation-1",
+    terminalId: "terminal-1",
+    productId: product.id,
+    allocatedQuantity: 10,
+    soldQuantity: 4,
+  };
+  const tx = {
+    posTerminal: {
+      findUnique: async () => ({ id: "terminal-1", name: "Front counter" }),
+    },
+    product: {
+      findUnique: async () => product,
+    },
+    $queryRaw: async () => [],
+    posTerminalStockAllocation: {
+      findMany: async () => [existingAllocation],
+      upsert: async () => {
+        upsertCalled = true;
+      },
+    },
+  };
+  const service = createSalesService(
+    {
+      $transaction: async (callback: (transaction: typeof tx) => unknown) =>
+        callback(tx),
+    },
+    createAuditMock().audit,
+  );
+
+  await assert.rejects(
+    service.setPosTerminalStockAllocation(
+      "terminal-1",
+      { productId: product.id, allocatedQuantity: "3" },
+      actor,
+    ),
+    /cannot be below the 4 loaf already sold/i,
+  );
+  assert.equal(upsertCalled, false);
 });
 
 test("SalesService.getPosTerminal requires the paired device secret", async () => {
@@ -1207,7 +2305,6 @@ test("SalesService.updatePosTerminal can rotate the display token", async () => 
       isActive: true,
       offlineEnabled: false,
       displayTokenRotated: true,
-      pairingCodeRotated: false,
     },
   );
 });

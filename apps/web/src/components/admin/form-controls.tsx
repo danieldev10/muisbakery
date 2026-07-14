@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Spinner } from "@/components/spinner";
 import type { FormState } from "@/lib/admin/types";
 
 const fieldClass =
@@ -149,7 +150,14 @@ export function SubmitButton({
       disabled={pending}
       type="submit"
     >
-      {pending ? pendingLabel : children}
+      {pending ? (
+        <>
+          <Spinner />
+          {pendingLabel}
+        </>
+      ) : (
+        children
+      )}
     </button>
   );
 }

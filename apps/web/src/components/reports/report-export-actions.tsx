@@ -35,8 +35,15 @@ function cellValue(value: ReportExportCell) {
   return String(value);
 }
 
-function csvCell(value: ReportExportCell) {
-  const text = cellValue(value);
+export function csvCell(value: ReportExportCell) {
+  let text = cellValue(value);
+
+  if (
+    typeof value === "string" &&
+    (/^[=+\-@]/.test(text.trimStart()) || /^[\t\r\n]/.test(text))
+  ) {
+    text = `'${text}`;
+  }
 
   if (!/[",\n\r]/.test(text)) {
     return text;
@@ -57,7 +64,7 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function buildCsv({
+export function buildCsv({
   title,
   subtitle,
   sections,

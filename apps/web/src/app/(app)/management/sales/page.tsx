@@ -1,3 +1,5 @@
+import { TextareaField } from "@/components/admin/form-controls";
+import { AdminFormModal } from "@/components/admin/form-modal";
 import { Card, EmptyState, TableShell } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
@@ -29,6 +31,7 @@ import {
 } from "../_components";
 
 import { ApproveDayCloseButton } from "./approve-day-close-modal";
+import { reopenDayClose } from "./actions";
 
 const returnLabels = {
   RETURN_TO_STOCK: "Returned to stock",
@@ -170,6 +173,7 @@ export default async function ManagementSalesPage({
         Damaged: close.damagedQuantity,
         Returned: close.returnedQuantity,
         Status: close.status,
+        "Business day state": close.businessDay.status,
         "Submitted by":
           close.submittedBy?.name ?? close.submittedBy?.email ?? "",
       })),
@@ -328,27 +332,56 @@ export default async function ManagementSalesPage({
                 <td className="py-3 pr-4">
                   <span
                     className={
-                      close.status === "APPROVED"
+                      close.businessDay.status === "APPROVED"
                         ? "inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800"
-                        : "inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800"
+                        : close.businessDay.status === "STALE"
+                          ? "inline-flex rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-800"
+                          : close.businessDay.status === "OPEN"
+                            ? "inline-flex rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-800"
+                            : "inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800"
                     }
-                    title={close.reviewNotes ?? undefined}
+                    title={
+                      close.businessDay.reopenReason ??
+                      close.reviewNotes ??
+                      undefined
+                    }
                   >
-                    {close.status === "APPROVED" ? "Approved" : "Submitted"}
+                    {close.businessDay.status === "APPROVED"
+                      ? "Approved"
+                      : close.businessDay.status === "STALE"
+                        ? "Stale"
+                        : close.businessDay.status === "OPEN"
+                          ? "Reopened"
+                          : "Submitted"}
                   </span>
                 </td>
                 <td className="py-3 pr-4">
-                  {close.status === "APPROVED" ? (
-                    <span className="text-xs text-stone-500">
-                      {close.reviewedBy?.name ??
-                        close.reviewedBy?.email ??
-                        "-"}
-                    </span>
-                  ) : (
+                  {close.businessDay.status === "SUBMITTED" ? (
                     <ApproveDayCloseButton
                       close={close}
                       detail={`${formatBusinessDate(close.businessDate)} · counted ${formatMoney(close.countedCash)} vs expected ${formatMoney(close.expectedCash)}`}
                     />
+                  ) : close.businessDay.status === "APPROVED" ? (
+                    <AdminFormModal
+                      action={reopenDayClose}
+                      description={`Reopen ${formatBusinessDate(close.businessDate)} so Sales can post corrections and submit a fresh close.`}
+                      submitLabel="Reopen day"
+                      title="Reopen business day"
+                      triggerLabel="Reopen"
+                      triggerClassName="inline-flex h-8 items-center justify-center rounded-[5px] border border-[color:var(--border-strong)] bg-white px-3 text-xs font-semibold text-[var(--text-secondary)] shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:text-[var(--brand-burgundy)]"
+                    >
+                      <input name="id" type="hidden" value={close.id} />
+                      <TextareaField
+                        label="Reason"
+                        name="reason"
+                        placeholder="Explain why this approved day must be reopened"
+                        required
+                      />
+                    </AdminFormModal>
+                  ) : (
+                    <span className="text-xs text-stone-500">
+                      Sales must resubmit
+                    </span>
                   )}
                 </td>
               </tr>

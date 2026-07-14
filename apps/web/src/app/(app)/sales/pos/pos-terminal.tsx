@@ -28,7 +28,13 @@ import type {
   SalesInventoryItem,
   SalesOptions,
 } from "@/lib/operations/types";
+import {
+  POS_SHELL_STATUS_EVENT,
+  requestPosShellStatus,
+  type PosShellStatus,
+} from "@/lib/pos-shell";
 import { formatProductName } from "@/lib/product-label";
+import { Spinner } from "@/components/spinner";
 import {
   apiJson,
   calculateSessionTotals,
@@ -62,13 +68,6 @@ type ReceiptDocument = {
   html: string;
   text: string;
 };
-
-type PosShellStatus = {
-  ready: boolean;
-  message?: string;
-};
-
-const POS_SHELL_STATUS_EVENT = "muisbakery:pos-shell-status";
 
 function receiptDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en", {
@@ -526,15 +525,21 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
     window.addEventListener(POS_SHELL_STATUS_EVENT, handlePosShellStatus);
 
-    void caches
-      .open("muisbakery-pos-v3")
-      .then((cache) => cache.match("/sales/pos", { ignoreVary: true }))
-      .then((cached) => {
-        if (cached && navigator.serviceWorker.controller) {
-          setPosShellStatus({ ready: true });
-        }
-      })
-      .catch(() => undefined);
+    const worker = navigator.serviceWorker?.controller;
+
+    if (worker) {
+      void requestPosShellStatus(worker, "CHECK_POS_SHELL")
+        .then(setPosShellStatus)
+        .catch((caught) => {
+          setPosShellStatus({
+            ready: false,
+            message:
+              caught instanceof Error
+                ? caught.message
+                : "Unable to check the offline POS shell.",
+          });
+        });
+    }
 
     return () => {
       window.removeEventListener(POS_SHELL_STATUS_EVENT, handlePosShellStatus);
@@ -1408,7 +1413,14 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                   onClick={claimTerminal}
                   type="button"
                 >
-                  Pair terminal
+                  {busy ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Spinner />
+                      Pairing...
+                    </span>
+                  ) : (
+                    "Pair terminal"
+                  )}
                 </button>
               </div>
             ) : null}
@@ -1545,7 +1557,14 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                 onClick={() => void syncPendingOfflineSales()}
                 type="button"
               >
-                {syncBusy ? "Syncing..." : "Sync now"}
+                {syncBusy ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Spinner className="size-3" />
+                    Syncing...
+                  </span>
+                ) : (
+                  "Sync now"
+                )}
               </button>
             </div>
             {syncMessage ? (
@@ -1608,8 +1627,8 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
               onClick={startSession}
               type="button"
             >
-              <Plus className="h-4 w-4" />
-              Start sale
+              {busy ? <Spinner /> : <Plus className="h-4 w-4" />}
+              {busy ? "Starting..." : "Start sale"}
             </button>
           </div>
         ) : session.status === "COMPLETED" ? (
@@ -1976,12 +1995,18 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
               onClick={checkout}
               type="button"
             >
-              <Check className="h-4 w-4" />
-              {cartIsSyncing
-                ? "Saving cart..."
-                : offlineEnabled && !isOnline
-                  ? "Queue sale"
-                  : "Checkout"}
+              {busy || cartIsSyncing ? (
+                <Spinner />
+              ) : (
+                <Check className="h-4 w-4" />
+              )}
+              {busy
+                ? "Processing..."
+                : cartIsSyncing
+                  ? "Saving cart..."
+                  : offlineEnabled && !isOnline
+                    ? "Queue sale"
+                    : "Checkout"}
             </button>
           </div>
         )}

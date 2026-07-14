@@ -93,6 +93,7 @@ export type FinishedProductStockItem = {
   estimatedRetailValue: string;
   batches: Array<{
     id: string;
+    location: string;
     batchNumber: number;
     batchDate: string;
     quantityReceived: string;

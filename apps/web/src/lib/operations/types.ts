@@ -518,6 +518,19 @@ export type PosTerminal = {
     soldQuantity: string;
     remainingQuantity: string;
     product: SalesProductRef;
+    batches: Array<{
+      id: string;
+      quantityAllocated: string;
+      quantityRemaining: string;
+      allocatedAt: string;
+      updatedAt: string;
+      sourceBatch: {
+        id: string;
+        batchNumber: number;
+        batchDate: string;
+        receivedAt: string;
+      };
+    }>;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -604,6 +617,7 @@ export type PosOfflineSyncResponse = {
 };
 
 export type DayCloseStatus = "SUBMITTED" | "APPROVED";
+export type BusinessDayStatus = "OPEN" | "SUBMITTED" | "STALE" | "APPROVED";
 
 export type SalesDayClose = {
   id: string;
@@ -619,6 +633,16 @@ export type SalesDayClose = {
   returnedQuantity: number;
   notes: string | null;
   status: DayCloseStatus;
+  submittedActivityVersion: number;
+  businessDay: {
+    status: BusinessDayStatus;
+    activityVersion: number;
+    lastActivityAt: string | null;
+    closeCutoffAt: string | null;
+    reopenedAt: string | null;
+    reopenedBy: UserRef | null;
+    reopenReason: string | null;
+  };
   submittedAt: string;
   submittedBy: UserRef | null;
   reviewedAt: string | null;
@@ -638,6 +662,12 @@ export type DayClosePreview = {
     returnedQuantity: number;
   };
   close: SalesDayClose | null;
+  businessDay: {
+    status: BusinessDayStatus;
+    activityVersion: number;
+    lastActivityAt: string | null;
+    closeCutoffAt: string | null;
+  };
   needsReclose: boolean;
   unresolvedOfflineSyncs: number;
 };
