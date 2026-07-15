@@ -11,43 +11,84 @@ apps/*/node_modules
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
-/blob-report/
-/playwright-report/
-/test-results/
+# testing output (test source remains version-controlled)
+**/coverage/
+**/.nyc_output/
+**/blob-report/
+**/playwright-report/
+**/test-results/
+**/playwright/.auth/
+junit*.xml
 
 # next.js
-/.next/
-apps/web/.next/
-/out/
+**/.next/
+**/out/
 
-# production
-/build
-apps/api/dist/
+# compiled output
+**/build/
+**/dist/
 
 # misc
 .DS_Store
+Thumbs.db
+Desktop.ini
 *.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+~$*.docx
+~$*.xlsx
+~$*.pptx
 
-# debug
+# logs and runtime files
+*.log
+logs/
+*.pid
+*.pid.lock
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# local databases and backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.dump
+*.backup
+*.bak
+
+# environment files; sanitized templates may be committed
+.env
+.env.*
+!.env.example
+!.env.*.example
 
 # vercel
-.vercel
+.vercel/
 
-# typescript
+# caches
 *.tsbuildinfo
 next-env.d.ts
+.cache/
+.turbo/
+.eslintcache
+.stylelintcache
+.parcel-cache/
+
+# editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
 AGENTS.md
 CLAUDE.md
-docs/
 /.claude/
 /awesome-design-md
