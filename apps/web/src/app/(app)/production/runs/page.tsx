@@ -5,6 +5,7 @@ import {
 } from "@/components/admin/layout";
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
+import { RunMaterialsButton } from "@/components/production-run-materials";
 import type { ProductionRun } from "@/lib/operations/types";
 import { formatProductName } from "@/lib/product-label";
 import {
@@ -19,8 +20,6 @@ import {
   matchesSearch,
   matchesSelect,
 } from "@/lib/table-filters";
-
-import { RunMaterialsButton } from "./run-materials-modal";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -153,9 +152,9 @@ export default async function ProductionRunsPage({
                 </td>
                 <td className="py-3 pr-4">
                   <RunMaterialsButton
+                    materials={run.materialUsages}
                     producedAt={formatDate(run.producedAt)}
                     productLabel={formatProductName(run.product)}
-                    run={run}
                   />
                 </td>
                 <td className="py-3 pr-4 text-stone-600">

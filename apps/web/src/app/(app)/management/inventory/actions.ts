@@ -23,7 +23,8 @@ export async function updateRawMaterialUnitCost(
     return { ok: false, error: result.message };
   }
 
-  revalidatePath("/management/inventory");
+  revalidatePath("/management/inventory/raw-materials");
+  revalidatePath(`/management/inventory/raw-materials/${rawMaterialId}`);
   revalidatePath("/management/dashboard");
   revalidatePath("/management/profit-loss");
   return { ok: true, error: null, token: Date.now() };

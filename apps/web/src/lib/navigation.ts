@@ -4,6 +4,7 @@ export type NavItem = {
   label: string;
   /** When omitted the item renders as a disabled placeholder (future phase). */
   href?: string;
+  children?: NavItem[];
 };
 
 export const roleNav: Record<AppRole, NavItem[]> = {
@@ -44,8 +45,32 @@ export const roleNav: Record<AppRole, NavItem[]> = {
     { label: "Dashboard", href: "/management/dashboard" },
     { label: "Profit/loss", href: "/management/profit-loss" },
     { label: "Expenses", href: "/management/expenses" },
-    { label: "Inventory", href: "/management/inventory" },
-    { label: "Production", href: "/management/production" },
+    {
+      label: "Inventory",
+      href: "/management/inventory",
+      children: [
+        {
+          label: "Raw materials",
+          href: "/management/inventory/raw-materials",
+        },
+        {
+          label: "Finished goods",
+          href: "/management/inventory/finished-goods",
+        },
+      ],
+    },
+    {
+      label: "Production",
+      href: "/management/production",
+      children: [
+        { label: "Overview", href: "/management/production" },
+        { label: "Runs", href: "/management/production/runs" },
+        {
+          label: "Raw material usage",
+          href: "/management/production/raw-material-usage",
+        },
+      ],
+    },
     { label: "Sales", href: "/management/sales" },
     { label: "Audit log", href: "/management/audit-log" },
   ],

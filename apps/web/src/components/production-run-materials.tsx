@@ -3,7 +3,16 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { ProductionRun } from "@/lib/operations/types";
+type RunMaterialSummary = {
+  id: string;
+  actualQuantity: string;
+  rawMaterial: {
+    name: string;
+    baseUnit: {
+      abbreviation: string;
+    };
+  };
+};
 
 function formatQuantity(value: string, unit: string) {
   return `${Number(value).toLocaleString("en", {
@@ -12,13 +21,13 @@ function formatQuantity(value: string, unit: string) {
 }
 
 export function RunMaterialsButton({
+  materials,
   producedAt,
   productLabel,
-  run,
 }: {
+  materials: RunMaterialSummary[];
   producedAt: string;
   productLabel: string;
-  run: ProductionRun;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -37,7 +46,7 @@ export function RunMaterialsButton({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open]);
 
-  if (run.materialUsages.length === 0) {
+  if (materials.length === 0) {
     return <span className="text-sm text-[var(--text-muted)]">-</span>;
   }
 
@@ -48,7 +57,7 @@ export function RunMaterialsButton({
         onClick={() => setOpen(true)}
         type="button"
       >
-        View ({run.materialUsages.length})
+        View ({materials.length})
       </button>
 
       {open ? (
@@ -58,7 +67,7 @@ export function RunMaterialsButton({
           role="dialog"
         >
           <div className="flex max-h-[calc(100dvh-3rem)] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-white/10 bg-white shadow-[var(--shadow-panel)]">
-            <div className="shrink-0 flex items-start justify-between gap-4 border-b border-[color:var(--border-muted)] px-5 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[color:var(--border-muted)] px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--brand-burgundy)]">
                   Production run
@@ -90,7 +99,7 @@ export function RunMaterialsButton({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[color:var(--border-muted)]">
-                    {run.materialUsages.map((usage) => (
+                    {materials.map((usage) => (
                       <tr key={usage.id}>
                         <td className="py-2.5 pl-4 pr-4 font-medium text-[var(--text-primary)]">
                           {usage.rawMaterial.name}

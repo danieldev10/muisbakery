@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function ManagementInventoryPage() {
+export default function ManagementMaterialBatchesPage() {
   redirect("/management/inventory/raw-materials");
 }
