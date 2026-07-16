@@ -1,0 +1,114 @@
+name: muisbakery
+
+x-database-environment: &database-environment
+  POSTGRES_DB: ${POSTGRES_DB:-muisbakery}
+  POSTGRES_USER: ${POSTGRES_USER:-muisbakery}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-muisbakery_local}
+
+x-api-environment: &api-environment
+  NODE_ENV: development
+  API_PORT: 3001
+  DATABASE_URL: postgresql://${POSTGRES_USER:-muisbakery}:${POSTGRES_PASSWORD:-muisbakery_local}@db:5432/${POSTGRES_DB:-muisbakery}
+  DIRECT_URL: postgresql://${POSTGRES_USER:-muisbakery}:${POSTGRES_PASSWORD:-muisbakery_local}@db:5432/${POSTGRES_DB:-muisbakery}
+  WEB_ORIGIN: http://${PUBLIC_HOST:-localhost}:${WEB_HOST_PORT:-3000}
+  AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-docker-jwt-secret-change-before-sharing}
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-local-docker-internal-api-secret-change-me}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      <<: *database-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  setup:
+    build:
+      context: .
+      target: api-tools
+    environment:
+      <<: *api-environment
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@muisbakery.local}
+      SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Muis Bakery Admin}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-MuisBakeryDemo123!}
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-MuisBakeryDemo123!}
+      SKIP_SEED: ${SKIP_SEED:-0}
+      FORCE_RESEED: ${FORCE_RESEED:-0}
+    command: ["sh", "docker/local-setup.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - setup_state:/state
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      <<: *api-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-3001}:3001"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    init: true
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        NEXT_PUBLIC_API_URL: http://${PUBLIC_HOST:-localhost}:${API_HOST_PORT:-3001}
+    environment:
+      NODE_ENV: production
+      API_URL: http://api:3001
+      NEXT_PUBLIC_API_URL: http://${PUBLIC_HOST:-localhost}:${API_HOST_PORT:-3001}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-local-docker-internal-api-secret-change-me}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/login').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    init: true
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  setup_state:
