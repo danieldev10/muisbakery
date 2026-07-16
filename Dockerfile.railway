@@ -23,9 +23,6 @@ FROM build AS runtime
 
 ENV NODE_ENV=production
 
-# The API resolves its database CA certificate from the process working
-# directory. Keep a root copy for the direct Docker CMD while retaining the
-# workspace copy used by Railway's migration command.
 RUN cp -R apps/api/certs ./certs
 
 USER node

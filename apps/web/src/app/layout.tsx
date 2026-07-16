@@ -8,9 +8,16 @@ export const metadata: Metadata = {
   title: "Muis Bakery",
   description: "Inventory and sales management for Muis Bakery",
   icons: {
-    icon: "/icons/icon-192.png",
+    icon: [
+      {
+        url: "/icons/icon-192.png?v=2",
+        sizes: "192x192",
+        type: "image/png",
+      },
+    ],
+    shortcut: "/icons/icon-192.png?v=2",
     // iOS ignores the web manifest; this is what "Add to Home Screen" uses.
-    apple: "/icons/icon-192.png",
+    apple: "/icons/icon-192.png?v=2",
   },
 };
 
