@@ -7,6 +7,11 @@ FROM node:${NODE_VERSION}-bookworm-slim AS dependencies
 WORKDIR /app
 ENV CI=true
 
+# Added by mnswifi
+RUN apt-get update && \
+    apt-get install -y openssl && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
@@ -17,6 +22,9 @@ FROM dependencies AS api-tools
 
 COPY apps/api apps/api
 COPY docker docker
+
+# Added by mnswifi
+RUN npm run prisma:generate -w @muisbakery/api
 
 FROM api-tools AS api-build
 
