@@ -130,6 +130,9 @@ psql postgresql://muisbakery:muisbakery_local@localhost:5433/muisbakery
 Inside the Compose network, the API uses `db:5432`; only host tools use port
 `5433`.
 
+The API treats the Compose hostname `db` as local PostgreSQL and does not apply
+the production Supabase CA certificate to that connection.
+
 ## Troubleshooting
 
 Inspect service status:

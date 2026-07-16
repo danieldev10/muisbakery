@@ -59,6 +59,10 @@ Operational logging:
 - Failed POS checkout attempts are logged with session and actor identifiers.
 - Failed login spikes are logged when throttling is triggered.
 
+Railway API deployment uses `Dockerfile.railway` through `railway.json`. The
+pre-deploy step applies Prisma migrations, and the image's built-in command
+starts the compiled Nest API.
+
 ## Accepted dependency-audit exceptions
 
 `npm audit --omit=dev` reports moderate advisories for `postcss < 8.5.10`

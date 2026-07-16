@@ -30,6 +30,7 @@ ENV API_PORT=3001
 
 COPY --from=api-build /app/node_modules ./node_modules
 COPY --from=api-build /app/apps/api/dist ./apps/api/dist
+COPY --from=api-build /app/apps/api/certs ./certs
 
 USER node
 EXPOSE 3001

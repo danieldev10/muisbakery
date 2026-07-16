@@ -19,7 +19,6 @@ node_modules
 .env.*
 !.env.docker.example
 
-apps/api/certs
 apps/api/test
 apps/web/test
 apps/web/e2e

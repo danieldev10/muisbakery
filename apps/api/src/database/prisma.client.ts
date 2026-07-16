@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
-const LOCAL_DATABASE_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+const LOCAL_DATABASE_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "db"]);
 
 function createAdapter() {
   const connectionString = process.env.DATABASE_URL;
