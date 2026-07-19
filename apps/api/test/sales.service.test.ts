@@ -59,7 +59,11 @@ function hashSecret(value: string) {
 }
 
 function createSalesService(prisma: unknown, audit: unknown) {
-  return new SalesService(prisma as never, audit as never, {} as never);
+  return new SalesService(
+    prisma as never,
+    audit as never,
+    new PosDisplayEvents(),
+  );
 }
 
 function createBusinessDayStateMock(status = "OPEN") {

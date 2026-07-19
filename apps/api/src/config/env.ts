@@ -52,6 +52,78 @@ export function getWebOrigin() {
   return parseOrigin(process.env.WEB_ORIGIN ?? "http://localhost:3000", "WEB_ORIGIN");
 }
 
+function normalizedHostname(url: URL) {
+  return url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+function isPrivateIpv4(hostname: string) {
+  const octets = hostname.split(".").map(Number);
+
+  if (
+    octets.length !== 4 ||
+    octets.some(
+      (octet) => !Number.isInteger(octet) || octet < 0 || octet > 255,
+    )
+  ) {
+    return false;
+  }
+
+  const [first, second] = octets;
+
+  return (
+    first === 10 ||
+    first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    // Tailscale addresses use the shared 100.64.0.0/10 range.
+    (first === 100 && second >= 64 && second <= 127)
+  );
+}
+
+/**
+ * Production remains pinned to WEB_ORIGIN. The local Docker profile is also
+ * opened from another device by LAN/Tailscale IP, so development accepts the
+ * same web port on loopback and private-network addresses without requiring a
+ * machine-specific .env file.
+ */
+export function isWebOriginAllowed(origin: string | undefined) {
+  if (!origin) {
+    return true;
+  }
+
+  let candidate: URL;
+
+  try {
+    candidate = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  if (candidate.origin === getWebOrigin()) {
+    return true;
+  }
+
+  if (isProduction()) {
+    return false;
+  }
+
+  const configured = new URL(getWebOrigin());
+  const configuredPort =
+    configured.port || (configured.protocol === "https:" ? "443" : "80");
+  const candidatePort =
+    candidate.port || (candidate.protocol === "https:" ? "443" : "80");
+  const hostname = normalizedHostname(candidate);
+
+  return (
+    candidate.protocol === "http:" &&
+    candidatePort === configuredPort &&
+    (hostname === "localhost" ||
+      hostname === "::1" ||
+      isPrivateIpv4(hostname))
+  );
+}
+
 export function getInternalApiSecret() {
   const secret = process.env.INTERNAL_API_SECRET;
 

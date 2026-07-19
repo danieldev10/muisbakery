@@ -6,6 +6,7 @@ import {
   getInternalApiSecret,
   getJwtSecret,
   getWebOrigin,
+  isWebOriginAllowed,
 } from "../src/config/env";
 
 const ENV_KEYS = [
@@ -134,6 +135,34 @@ test("getWebOrigin rejects malformed or path-based origins", () => {
   withEnv({ WEB_ORIGIN: "https://bakery.example.com/app" }, () => {
     assert.throws(getWebOrigin, /not a full URL path/);
   });
+});
+
+test("development permits loopback, LAN, and Tailscale web origins", () => {
+  withEnv({}, () => {
+    assert.equal(isWebOriginAllowed(undefined), true);
+    assert.equal(isWebOriginAllowed("http://localhost:3000"), true);
+    assert.equal(isWebOriginAllowed("http://127.0.0.1:3000"), true);
+    assert.equal(isWebOriginAllowed("http://192.168.1.15:3000"), true);
+    assert.equal(isWebOriginAllowed("http://10.0.0.20:3000"), true);
+    assert.equal(isWebOriginAllowed("http://100.100.10.20:3000"), true);
+    assert.equal(isWebOriginAllowed("http://192.168.1.15:3002"), false);
+    assert.equal(isWebOriginAllowed("https://attacker.example.com"), false);
+    assert.equal(isWebOriginAllowed("not an origin"), false);
+  });
+});
+
+test("production only permits the configured web origin", () => {
+  withEnv(
+    {
+      NODE_ENV: "production",
+      WEB_ORIGIN: "https://bakery.example.com",
+    },
+    () => {
+      assert.equal(isWebOriginAllowed("https://bakery.example.com"), true);
+      assert.equal(isWebOriginAllowed("http://192.168.1.15:3000"), false);
+      assert.equal(isWebOriginAllowed("https://attacker.example.com"), false);
+    },
+  );
 });
 
 test("getInternalApiSecret is optional in development and required in production", () => {

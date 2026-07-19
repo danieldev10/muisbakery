@@ -9,7 +9,7 @@ import {
 } from "@nestjs/websockets";
 import type { Namespace, Socket } from "socket.io";
 
-import { getWebOrigin } from "../config/env";
+import { isWebOriginAllowed } from "../config/env";
 import {
   PosDisplayEvents,
   posDisplaySessionRoom,
@@ -29,9 +29,11 @@ function errorMessage(error: unknown) {
 @WebSocketGateway({
   namespace: "/sales/pos/display",
   cors: {
-    // Same origin the HTTP API trusts — the customer display pages are
-    // served from the web app, so nothing else needs socket access.
-    origin: getWebOrigin(),
+    // Railway remains exact-origin. Local Docker can also be opened through
+    // the host's private LAN or Tailscale IPv4 address.
+    origin(origin, callback) {
+      callback(null, isWebOriginAllowed(origin));
+    },
     credentials: true,
   },
 })

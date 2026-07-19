@@ -8,6 +8,7 @@ import {
   assertRequiredEnv,
   getInternalApiSecret,
   getWebOrigin,
+  isWebOriginAllowed,
   isProduction,
 } from "./config/env";
 import { requestLoggingMiddleware } from "./common/request-logging.middleware";
@@ -53,7 +54,12 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: webOrigin,
+    origin(
+      origin: string | undefined,
+      callback: (error: Error | null, allow?: boolean) => void,
+    ) {
+      callback(null, isWebOriginAllowed(origin));
+    },
     credentials: true,
   });
 

@@ -33,6 +33,15 @@ Open:
 - API health check: <http://localhost:3001/health>
 - PostgreSQL from the host: `localhost:5433`
 
+The Web and API ports listen on the local network by default. Another device
+can use the Docker host's private address, for example:
+
+- Web application: `http://192.168.1.15:3000`
+- API health check: `http://192.168.1.15:3001/health`
+
+The database port remains bound to `127.0.0.1` and is not exposed to the LAN.
+The host firewall must allow inbound TCP ports `3000` and `3001`.
+
 ## Local Login Accounts
 
 The default password for all seeded accounts is:
@@ -99,7 +108,8 @@ Common overrides:
 - `WEB_HOST_PORT`: browser port for the Next application.
 - `API_HOST_PORT`: browser-visible API port.
 - `POSTGRES_HOST_PORT`: PostgreSQL port exposed to the host.
-- `BIND_ADDRESS`: use `0.0.0.0` when another device must connect.
+- `BIND_ADDRESS`: application bind address; defaults to `0.0.0.0` for LAN use.
+- `POSTGRES_BIND_ADDRESS`: database bind address; defaults to `127.0.0.1`.
 - `PUBLIC_HOST`: hostname or LAN IP used by browsers.
 - `SKIP_SEED=1`: apply migrations without loading demo data.
 
@@ -109,6 +119,12 @@ If `PUBLIC_HOST` or `API_HOST_PORT` changes, rebuild the web image because
 ```bash
 docker compose up --build
 ```
+
+`PUBLIC_HOST` is optional. When it is not set, the browser automatically uses
+the LAN/Tailscale IPv4 host from the page URL for the customer-display socket.
+The API accepts loopback and private-network web origins in the local
+development profile. Production deployments continue to accept only the
+configured `WEB_ORIGIN`.
 
 Use a URL-safe PostgreSQL password. The Compose file embeds it directly into
 the PostgreSQL connection URL.

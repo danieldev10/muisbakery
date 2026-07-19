@@ -20,7 +20,7 @@ services:
     environment:
       <<: *database-environment
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5433}:5432"
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -61,7 +61,7 @@ services:
     environment:
       <<: *api-environment
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-3001}:3001"
+      - "${BIND_ADDRESS:-0.0.0.0}:${API_HOST_PORT:-3001}:3001"
     depends_on:
       setup:
         condition: service_completed_successfully
