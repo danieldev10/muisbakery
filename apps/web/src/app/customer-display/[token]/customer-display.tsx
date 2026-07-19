@@ -187,9 +187,13 @@ export function CustomerDisplay({
           <section className="flex flex-1 items-center justify-center text-center">
             <div>
               <CheckCircle2 className="mx-auto h-16 w-16 text-emerald-300" />
-              <p className="mt-6 text-4xl font-semibold">Thank you</p>
+              <p className="mt-6 text-4xl font-semibold">
+                Checkout successful
+              </p>
               <p className="mt-3 text-xl text-stone-300">
-                Sale #{session.completedSale?.saleNumber} completed
+                {session.completedSale?.saleNumber
+                  ? `Sale #${session.completedSale.saleNumber} completed`
+                  : "Thank you for your purchase"}
               </p>
               <p className="mt-8 text-6xl font-semibold text-emerald-200">
                 {formatMoney(session.totalAmount)}

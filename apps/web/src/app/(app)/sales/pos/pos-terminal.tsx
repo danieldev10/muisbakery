@@ -140,10 +140,11 @@ function buildReceiptDocument({
     .map(
       (item) => `
         <tr>
-          <td>${escapeHtml(formatProductName(item.product))}</td>
-          <td>${escapeHtml(formatQuantity(item.quantity, item.product.unit.abbreviation))}</td>
-          <td>${escapeHtml(formatMoney(item.unitPrice))}</td>
-          <td>${escapeHtml(formatMoney(item.lineTotal))}</td>
+          <td class="item-description">
+            <strong>${escapeHtml(formatProductName(item.product))}</strong>
+            <span>${escapeHtml(formatQuantity(item.quantity, item.product.unit.abbreviation))} x ${escapeHtml(formatMoney(item.unitPrice))}</span>
+          </td>
+          <td class="amount">${escapeHtml(formatMoney(item.lineTotal))}</td>
         </tr>`,
     )
     .join("");
@@ -151,38 +152,109 @@ function buildReceiptDocument({
     <html>
       <head>
         <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Muis Bakery Receipt${saleLabel ? ` ${escapeHtml(saleLabel)}` : ""}</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
-          .receipt { max-width: 360px; }
-          h1 { font-size: 20px; margin: 0 0 4px; }
-          h2 { font-size: 14px; margin: 0 0 16px; color: #9f2137; text-transform: uppercase; letter-spacing: 1px; }
-          p { margin: 4px 0; font-size: 12px; }
-          table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 12px; }
-          th, td { border-bottom: 1px solid #ddd; padding: 6px 0; text-align: left; vertical-align: top; }
-          th:last-child, td:last-child { text-align: right; }
-          .totals { border-top: 2px solid #111; padding-top: 8px; }
-          .totals p { display: flex; justify-content: space-between; }
-          .total { font-size: 16px; font-weight: 700; }
-          @media print { body { margin: 0; } .receipt { max-width: none; } }
+          @page { size: 80mm auto; margin: 0; }
+          * { box-sizing: border-box; }
+          html, body {
+            width: 80mm;
+            margin: 0;
+            padding: 0;
+            background: #fff;
+            color: #000;
+          }
+          body {
+            font-family: "Courier New", Courier, monospace;
+            font-size: 10pt;
+            line-height: 1.3;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .receipt {
+            width: 72mm;
+            margin: 0 auto;
+            padding: 3mm 1mm 5mm;
+          }
+          .receipt-header {
+            border-bottom: 1px dashed #000;
+            margin-bottom: 2.5mm;
+            padding-bottom: 2.5mm;
+            text-align: center;
+          }
+          h1 { font-size: 16pt; line-height: 1.1; margin: 0 0 1mm; }
+          h2 { font-size: 10pt; margin: 0; text-transform: uppercase; }
+          .meta { margin: 0 0 2.5mm; }
+          p { margin: 0.8mm 0; }
+          table {
+            border-collapse: collapse;
+            table-layout: fixed;
+            width: 100%;
+            margin: 2.5mm 0;
+          }
+          th, td {
+            border-bottom: 1px dashed #000;
+            padding: 1.8mm 0;
+            text-align: left;
+            vertical-align: top;
+          }
+          th { font-size: 9pt; text-transform: uppercase; }
+          th:last-child, .amount {
+            width: 24mm;
+            padding-left: 2mm;
+            text-align: right;
+            white-space: nowrap;
+          }
+          .item-description {
+            overflow-wrap: anywhere;
+            padding-right: 1mm;
+          }
+          .item-description strong,
+          .item-description span { display: block; }
+          .item-description span { margin-top: 0.5mm; font-size: 9pt; }
+          .totals { border-top: 2px solid #000; padding-top: 1.5mm; }
+          .totals p {
+            display: flex;
+            justify-content: space-between;
+            gap: 3mm;
+          }
+          .totals span:last-child { white-space: nowrap; }
+          .total { font-size: 13pt; font-weight: 700; }
+          .receipt-footer {
+            border-top: 1px dashed #000;
+            margin-top: 3mm;
+            padding-top: 2.5mm;
+            text-align: center;
+          }
+          tr, .totals, .receipt-footer { break-inside: avoid; }
+          @media screen {
+            body { min-height: 100vh; }
+            .receipt { box-shadow: 0 0 0 1px #ddd; }
+          }
+          @media print {
+            html, body { min-height: 0; }
+            .receipt { box-shadow: none; }
+          }
         </style>
       </head>
       <body>
         <div class="receipt">
-          <h1>Muis Bakery</h1>
-          <h2>Sales receipt</h2>
-          ${saleLabel ? `<p><strong>Sale:</strong> ${escapeHtml(saleLabel)}</p>` : ""}
-          <p><strong>Terminal:</strong> ${escapeHtml(terminalName ?? "POS terminal")}</p>
-          <p><strong>Customer:</strong> ${escapeHtml(receiptCustomer(session))}</p>
-          <p><strong>Payment:</strong> ${escapeHtml(paymentLabels[session.paymentMethod])}</p>
-          <p><strong>Date:</strong> ${escapeHtml(receiptDate(soldAt))}</p>
+          <div class="receipt-header">
+            <h1>Muis Bakery</h1>
+            <h2>Sales receipt</h2>
+          </div>
+          <div class="meta">
+            ${saleLabel ? `<p><strong>Sale:</strong> ${escapeHtml(saleLabel)}</p>` : ""}
+            <p><strong>Terminal:</strong> ${escapeHtml(terminalName ?? "POS terminal")}</p>
+            <p><strong>Customer:</strong> ${escapeHtml(receiptCustomer(session))}</p>
+            <p><strong>Payment:</strong> ${escapeHtml(paymentLabels[session.paymentMethod])}</p>
+            <p><strong>Date:</strong> ${escapeHtml(receiptDate(soldAt))}</p>
+          </div>
           <table>
             <thead>
               <tr>
                 <th>Item</th>
-                <th>Qty</th>
-                <th>Price</th>
-                <th>Total</th>
+                <th>Amount</th>
               </tr>
             </thead>
             <tbody>${htmlRows}</tbody>
@@ -193,6 +265,9 @@ function buildReceiptDocument({
             <p class="total"><span>Total</span><span>${escapeHtml(formatMoney(session.totalAmount))}</span></p>
             <p><span>Paid</span><span>${escapeHtml(formatMoney(session.amountPaid))}</span></p>
             <p><span>Balance due</span><span>${escapeHtml(formatMoney(session.balanceDue))}</span></p>
+          </div>
+          <div class="receipt-footer">
+            <strong>Thank you for your purchase</strong>
           </div>
         </div>
       </body>
@@ -207,8 +282,15 @@ function buildReceiptDocument({
   };
 }
 
-function printReceipt(receipt: ReceiptDocument) {
-  const receiptWindow = window.open("", "_blank", "width=420,height=680");
+function openReceiptPrintWindow() {
+  return window.open("", "_blank", "width=420,height=680");
+}
+
+function printReceipt(
+  receipt: ReceiptDocument,
+  reservedWindow?: Window | null,
+) {
+  const receiptWindow = reservedWindow ?? openReceiptPrintWindow();
 
   if (!receiptWindow) {
     return false;
@@ -1337,6 +1419,10 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       return;
     }
 
+    // Reserve the popup while this function is still handling the cashier's
+    // click. Opening it after the async checkout often triggers popup blockers.
+    let receiptWindow = openReceiptPrintWindow();
+
     setBusy(true);
     setError(null);
 
@@ -1389,7 +1475,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         await clearActiveOfflineSession(currentTerminal.id);
         await refreshQueuedSales(currentTerminal.id);
         clearCartSyncs();
-        applySession(null);
 
         // When online, sync before printing so the receipt can carry the
         // real sale number once the server records it.
@@ -1410,17 +1495,32 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           );
         }
 
+        const completedSession: PosSession = {
+          ...currentSession,
+          status: "COMPLETED",
+          updatedAt: soldAt,
+          completedAt: soldAt,
+          completedSale: syncedSaleNumber
+            ? {
+                id: `synced-sale-${syncedSaleNumber}`,
+                saleNumber: syncedSaleNumber,
+                totalAmount: currentSession.totalAmount,
+                amountPaid: currentSession.amountPaid,
+                balanceDue: currentSession.balanceDue,
+                soldAt,
+              }
+            : null,
+        };
         const receipt = buildReceiptDocument({
-          session: {
-            ...currentSession,
-            completedAt: soldAt,
-          },
+          session: completedSession,
           terminalName: currentTerminal.name,
           saleNumber: syncedSaleNumber,
         });
 
+        applySession(completedSession);
         setLastReceipt(receipt);
-        printReceipt(receipt);
+        printReceipt(receipt, receiptWindow);
+        receiptWindow = null;
 
         return;
       }
@@ -1450,8 +1550,10 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       clearCartSyncs();
       applySession(completed);
       setLastReceipt(receipt);
-      printReceipt(receipt);
+      printReceipt(receipt, receiptWindow);
+      receiptWindow = null;
     } catch (caught) {
+      receiptWindow?.close();
       setError(caught instanceof Error ? caught.message : "Unable to checkout.");
     } finally {
       setBusy(false);
@@ -1781,10 +1883,12 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         ) : session.status === "COMPLETED" ? (
           <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
             <p className="font-semibold">
-              Sale #{session.completedSale?.saleNumber} completed.
+              {session.completedSale?.saleNumber
+                ? `Sale #${session.completedSale.saleNumber} completed.`
+                : "Checkout successful. Sale queued for synchronization."}
             </p>
             <p className="mt-1">
-              Total {formatMoney(session.completedSale?.totalAmount ?? 0)}
+              Total {formatMoney(session.totalAmount)}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {lastReceipt ? (
