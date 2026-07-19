@@ -40,6 +40,7 @@ import {
   calculateSessionTotals,
   CART_SYNC_DELAY_MS,
   buildOfflineSalePayload,
+  createUuid,
   fieldClass,
   formatMoney,
   formatQuantity,
@@ -774,7 +775,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           );
           const createdAt = new Date().toISOString();
           const created = createLocalPosSession({
-            id: `offline-session-${crypto.randomUUID()}`,
+            id: `offline-session-${createUuid()}`,
             terminalId: currentTerminal.id,
             terminalDisplayToken: currentTerminal.displayToken,
             createdAt,
@@ -1349,7 +1350,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         const payload = buildOfflineSalePayload({
           session: currentSession,
           terminalId: currentTerminal.id,
-          clientRequestId: `offline:${currentTerminal.id}:${crypto.randomUUID()}`,
+          clientRequestId: `offline:${currentTerminal.id}:${createUuid()}`,
           soldAt,
         });
 

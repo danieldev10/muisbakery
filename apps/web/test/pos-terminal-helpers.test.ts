@@ -6,12 +6,44 @@ import {
   buildOfflineSalePayload,
   calculateSessionTotals,
   createLocalPosSession,
+  createUuid,
   formatMoney,
   formatQuantity,
   productAvailable,
   roundCount,
   updateSessionProductQuantity,
 } from "../src/app/(app)/sales/pos/_lib/pos-terminal-helpers";
+
+test("createUuid uses the browser's native UUID implementation when available", () => {
+  const expected = "60d68e66-5498-4d98-9d1b-e9d060325f9a";
+  const cryptoApi = {
+    randomUUID: () => expected,
+    getRandomValues: <T extends ArrayBufferView | null>(array: T) => array,
+  };
+
+  assert.equal(createUuid(cryptoApi), expected);
+});
+
+test("createUuid generates a version 4 UUID when randomUUID is unavailable", () => {
+  const cryptoApi = {
+    getRandomValues: <T extends ArrayBufferView | null>(array: T) => {
+      const bytes = array as Uint8Array;
+      bytes.forEach((_, index) => {
+        bytes[index] = index;
+      });
+      return array;
+    },
+  };
+
+  assert.equal(createUuid(cryptoApi), "00010203-0405-4607-8809-0a0b0c0d0e0f");
+});
+
+test("createUuid fails clearly when secure random values are unavailable", () => {
+  assert.throws(
+    () => createUuid(null),
+    /cannot generate the secure identifier required for POS sales/,
+  );
+});
 
 const product = {
   id: "product-1",
