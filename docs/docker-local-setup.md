@@ -6,9 +6,9 @@ This setup runs the complete application locally:
 - Nest API
 - Next.js web application
 - Prisma migrations
-- First-run demo data
+- First-run live bootstrap
 
-It is intended for local development, demonstrations, and acceptance testing.
+It supports a clean bakery installation as well as explicit demo/testing mode.
 It is not the Railway/Vercel production deployment configuration.
 
 ## Requirements
@@ -25,7 +25,8 @@ docker compose up --build
 ```
 
 The first startup takes longer because Docker builds both applications,
-creates the database, applies all Prisma migrations, and loads demo data.
+creates the database, applies all Prisma migrations, and bootstraps the first
+Admin account plus essential measurement units.
 
 Open:
 
@@ -42,24 +43,34 @@ can use the Docker host's private address, for example:
 The database port remains bound to `127.0.0.1` and is not exposed to the LAN.
 The host firewall must allow inbound TCP ports `3000` and `3001`.
 
-## Local Login Accounts
+## First Admin Login
 
-The default password for all seeded accounts is:
+The default bootstrap does not use a committed password. Read the generated
+one-time password after the first startup:
 
-```text
-MuisBakeryDemo123!
+```bash
+docker compose logs setup
 ```
 
-| Role | Email |
-| --- | --- |
-| Admin | `admin@muisbakery.local` |
-| Store | `store@muisbakery.local` |
-| Production | `production@muisbakery.local` |
-| Sales | `sales@muisbakery.local` |
-| Management | `management@muisbakery.local` |
+The Admin email defaults to `admin@muisbakery.local`. Change the generated
+password immediately after signing in, then create the real Store, Production,
+Sales, and Management users from the Admin workspace.
 
-These credentials are local demo defaults and must not be reused in a live
-deployment.
+The live bootstrap creates no suppliers, retailers, raw materials, products,
+recipes, stock, production records, sales, expenses, or other sample activity.
+
+## Optional Demo Mode
+
+Demo data remains available for development and demonstrations, but it must be
+requested explicitly in `.env`:
+
+```env
+SEED_MODE=demo
+```
+
+Demo mode uses `MuisBakeryDemo123!` for its local sample accounts unless
+`SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD` are supplied. Never use demo
+mode for the handed-over bakery database.
 
 ## Stop Or Restart
 
@@ -75,8 +86,8 @@ Restart with the existing database:
 docker compose up
 ```
 
-Migrations are checked on every startup. Demo seeding only runs the first time,
-so normal restarts do not top up stock or reset the demo database.
+Migrations are checked on every startup. Bootstrap or demo seeding only runs
+the first time, so normal restarts do not change users or operational data.
 
 Follow application logs:
 
@@ -84,14 +95,36 @@ Follow application logs:
 docker compose logs -f api web
 ```
 
-## Reset The Local Database
+## Back Up And Reset For Handover
 
-This permanently deletes the Docker database and setup marker:
+Obtain sponsor/manager approval before resetting, then pull the version
+containing the live bootstrap:
+
+```bash
+git pull --ff-only
+```
+
+Keep the installation's existing `.env` file and credentials unchanged. A data
+reset does not require rotating `POSTGRES_PASSWORD`, `AUTH_JWT_SECRET`, or
+`INTERNAL_API_SECRET`. If no `.env` file is currently used, no new one is
+required for this reset. The default `SEED_MODE=bootstrap` will be used.
+
+Next create a backup outside the Docker volume:
+
+```bash
+docker compose exec -T db pg_dump -U muisbakery -d muisbakery -Fc > muisbakery-pre-handover.dump
+```
+
+Confirm the backup file exists and is not empty. Then permanently delete the
+Docker database and setup marker, and start a clean live installation:
 
 ```bash
 docker compose down -v
 docker compose up --build
+docker compose logs setup
 ```
+
+The `-v` flag is destructive. Do not use it for normal updates or restarts.
 
 ## Configuration
 
@@ -111,7 +144,11 @@ Common overrides:
 - `BIND_ADDRESS`: application bind address; defaults to `0.0.0.0` for LAN use.
 - `POSTGRES_BIND_ADDRESS`: database bind address; defaults to `127.0.0.1`.
 - `PUBLIC_HOST`: hostname or LAN IP used by browsers.
-- `SKIP_SEED=1`: apply migrations without loading demo data.
+- `SEED_MODE=bootstrap`: default; create only the first Admin and units.
+- `SEED_MODE=demo`: explicitly load the old demonstration dataset.
+- `SEED_MODE=none`: apply migrations without creating an Admin or reference data.
+- `SEED_ADMIN_PASSWORD`: optional live bootstrap password; when blank, a random
+  one-time password is written to the setup container logs.
 
 If `PUBLIC_HOST` or `API_HOST_PORT` changes, rebuild the web image because
 `NEXT_PUBLIC_API_URL` is embedded during the Next.js build:

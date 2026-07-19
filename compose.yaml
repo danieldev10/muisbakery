@@ -42,8 +42,9 @@ services:
       <<: *api-environment
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@muisbakery.local}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Muis Bakery Admin}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-MuisBakeryDemo123!}
-      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-MuisBakeryDemo123!}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-}
+      SEED_MODE: ${SEED_MODE:-bootstrap}
       SKIP_SEED: ${SKIP_SEED:-0}
       FORCE_RESEED: ${FORCE_RESEED:-0}
     command: ["sh", "docker/local-setup.sh"]

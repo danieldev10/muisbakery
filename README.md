@@ -4,19 +4,24 @@ Inventory, production, sales, and management system for Muis Foods.
 
 ## Local Docker setup
 
-The complete system can be started with PostgreSQL, migrations, and first-run
-demo data:
+The complete system can be started with PostgreSQL, migrations, and a clean
+first-run live bootstrap:
 
 ```bash
 docker compose up --build
 ```
 
-Then open <http://localhost:3000>. The default local Admin login is
-`admin@muisbakery.local` with password `MuisBakeryDemo123!`.
+Then open <http://localhost:3000>. The bootstrap creates only the first Admin
+and essential measurement units. It does not create demo users or operational
+records. Read the generated one-time Admin password with:
 
-The seed runs only when the Docker database is first initialized. See
-[docs/docker-local-setup.md](docs/docker-local-setup.md) for role accounts,
-configuration, database access, reset instructions, and troubleshooting.
+```bash
+docker compose logs setup
+```
+
+Bootstrap runs only when the Docker database is first initialized. See
+[docs/docker-local-setup.md](docs/docker-local-setup.md) for configuration,
+demo mode, database backup/reset instructions, and troubleshooting.
 
 ## Production environment
 
