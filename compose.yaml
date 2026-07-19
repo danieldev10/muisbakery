@@ -91,7 +91,7 @@ services:
       NEXT_PUBLIC_API_URL: http://${PUBLIC_HOST:-localhost}:${API_HOST_PORT:-3001}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-local-docker-internal-api-secret-change-me}
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-3000}:3000"
+      - "${BIND_ADDRESS:-0.0.0.0}:${WEB_HOST_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_healthy
