@@ -4,7 +4,7 @@ import { Card, EmptyState, StatusBadge, TableShell } from "@/components/admin/la
 import { TablePagination } from "@/components/admin/pagination";
 import { TableToolbar } from "@/components/admin/table-toolbar";
 import type { PosTerminal, Product } from "@/lib/admin/types";
-import type { Retailer } from "@/lib/operations/types";
+import type { Retailer, SalesInventoryItem } from "@/lib/operations/types";
 import type { ReactNode } from "react";
 import {
   pageNumber,
@@ -26,6 +26,10 @@ import {
   setTerminalStockAllocation,
   updatePosTerminal,
 } from "./actions";
+import {
+  StockAllocationFields,
+  type PosStockAllocationOption,
+} from "./stock-allocation-fields";
 
 const secondaryButtonClass =
   "inline-flex h-8 items-center justify-center rounded-[5px] border border-[color:var(--border-strong)] bg-white px-3 text-xs font-semibold text-[var(--text-secondary)] shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:text-[var(--brand-burgundy)]";
@@ -88,6 +92,49 @@ function sessionLabel(terminal: PosTerminal) {
   return terminal.currentSession
     ? `Session ${terminal.currentSession.status.toLowerCase()}`
     : "No current session";
+}
+
+function stockAllocationOptions(
+  terminal: PosTerminal,
+  products: Product[],
+  inventory: SalesInventoryItem[],
+  terminals: PosTerminal[],
+): PosStockAllocationOption[] {
+  const centralByProduct = new Map(
+    inventory.map((item) => [item.product.id, Number(item.totalRemaining)]),
+  );
+  const terminalRemainingByProduct = new Map<string, number>();
+
+  for (const registeredTerminal of terminals) {
+    for (const allocation of registeredTerminal.stockAllocations) {
+      terminalRemainingByProduct.set(
+        allocation.product.id,
+        (terminalRemainingByProduct.get(allocation.product.id) ?? 0) +
+          Number(allocation.remainingQuantity),
+      );
+    }
+  }
+
+  return products.map((product) => {
+    const existing = terminal.stockAllocations.find(
+      (allocation) => allocation.product.id === product.id,
+    );
+    const centralAvailable = centralByProduct.get(product.id) ?? 0;
+
+    return {
+      id: product.id,
+      label: product.size
+        ? `${product.name} (${product.size})`
+        : product.name,
+      unit: product.unit.abbreviation,
+      centralAvailable,
+      systemAvailable:
+        centralAvailable + (terminalRemainingByProduct.get(product.id) ?? 0),
+      currentAllocated: Number(existing?.allocatedQuantity ?? 0),
+      currentSold: Number(existing?.soldQuantity ?? 0),
+      currentRemaining: Number(existing?.remainingQuantity ?? 0),
+    };
+  });
 }
 
 function DetailRow({
@@ -301,10 +348,11 @@ export default async function PosTerminalsPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const params = await searchParams;
-  const [terminals, products, retailers] = await Promise.all([
+  const [terminals, products, retailers, inventory] = await Promise.all([
     apiGet<PosTerminal[]>("/admin/pos-terminals"),
     apiGet<Product[]>("/admin/products"),
     apiGet<Retailer[]>("/admin/retailers"),
+    apiGet<SalesInventoryItem[]>("/sales/inventory"),
   ]);
   const query = firstParam(params, "q");
   const statusFilter = firstParam(params, "status");
@@ -510,25 +558,13 @@ export default async function PosTerminalsPage({
                     triggerLabel="Stock"
                   >
                     <input name="terminalId" type="hidden" value={terminal.id} />
-                    <SelectField
-                      label="Product"
-                      name="productId"
-                      options={products.map((product) => ({
-                        label: product.size
-                          ? `${product.name} (${product.size})`
-                          : product.name,
-                        value: product.id,
-                      }))}
-                      required
-                    />
-                    <Field
-                      hint="Set the cumulative allocated total. Increasing it transfers the difference from central stock FIFO; reducing it releases only unsold custody."
-                      label="Cumulative allocated quantity"
-                      min="0"
-                      name="allocatedQuantity"
-                      required
-                      step="1"
-                      type="number"
+                    <StockAllocationFields
+                      options={stockAllocationOptions(
+                        terminal,
+                        products,
+                        inventory,
+                        terminals,
+                      )}
                     />
                   </AdminFormModal>
                   {terminal.stockAllocations.some((allocation) =>
