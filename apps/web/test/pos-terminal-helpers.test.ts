@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { PosSession, SalesInventoryItem } from "../src/lib/operations/types";
 import {
   buildOfflineSalePayload,
+  buildPosDisplayPreview,
   calculateSessionTotals,
   createLocalPosSession,
   createUuid,
@@ -110,6 +111,42 @@ test("createLocalPosSession builds an offline-ready active POS session", () => {
   assert.equal(created.terminal?.offlineEnabled, true);
   assert.equal(created.paymentMethod, "CASH");
   assert.equal(created.items.length, 0);
+});
+
+test("buildPosDisplayPreview sends only the local cart fields needed by the display", () => {
+  const localSession = updateSessionProductQuantity(
+    createLocalPosSession({
+      id: "offline-session-1",
+      terminalId: "terminal-1",
+      terminalDisplayToken: "display-token",
+      createdAt: "2026-07-13T09:00:00.000Z",
+    }),
+    inventoryItem(),
+    2,
+  );
+
+  assert.deepEqual(buildPosDisplayPreview(localSession), {
+    session: {
+      id: "offline-session-1",
+      status: "ACTIVE",
+      customerType: "INDIVIDUAL",
+      customerName: null,
+      paymentMethod: "CASH",
+      discount: "0.00",
+      amountPaid: "6000.00",
+      createdAt: "2026-07-13T09:00:00.000Z",
+      updatedAt: localSession.updatedAt,
+      completedAt: null,
+      items: [
+        {
+          productId: "product-1",
+          quantity: "2",
+          unitPrice: "3000",
+        },
+      ],
+    },
+  });
+  assert.deepEqual(buildPosDisplayPreview(null), { session: null });
 });
 
 test("buildOfflineSalePayload converts a local session to a sync-safe sale", () => {

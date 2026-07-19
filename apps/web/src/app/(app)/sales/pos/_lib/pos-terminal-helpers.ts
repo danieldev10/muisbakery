@@ -236,6 +236,32 @@ export function createLocalPosSession(input: {
   };
 }
 
+export function buildPosDisplayPreview(session: PosSession | null) {
+  if (!session) {
+    return { session: null };
+  }
+
+  return {
+    session: {
+      id: session.id,
+      status: session.status,
+      customerType: session.customerType,
+      customerName: session.customerName,
+      paymentMethod: session.paymentMethod,
+      discount: session.discount,
+      amountPaid: session.amountPaid,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      completedAt: session.completedAt,
+      items: session.items.map((item) => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+    },
+  };
+}
+
 export function buildOfflineSalePayload(input: {
   session: PosSession;
   terminalId: string;

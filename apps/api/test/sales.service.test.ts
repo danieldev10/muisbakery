@@ -18,6 +18,7 @@ import {
 } from "@prisma/client";
 
 import { BusinessDayPostingLockedException } from "../src/sales/business-day";
+import { PosDisplayEvents } from "../src/sales/pos-display-events";
 import { SalesService } from "../src/sales/sales.service";
 import { actor, createAuditMock } from "./helpers";
 
@@ -95,6 +96,76 @@ function createBusinessDayStateMock(status = "OPEN") {
     },
   };
 }
+
+test("SalesService publishes and clears a trusted local POS customer display preview", async () => {
+  const deviceSecret = "paired-device-secret";
+  const displayEvents = new PosDisplayEvents();
+  const { audit } = createAuditMock();
+  const terminal = terminalRecord({
+    offlineEnabled: true,
+    deviceSecretHash: hashSecret(deviceSecret),
+  });
+  const prisma = {
+    posTerminal: {
+      findUnique: async ({ where }: { where: Record<string, string> }) => {
+        if (where.id === terminal.id || where.displayToken === terminal.displayToken) {
+          return terminal;
+        }
+        return null;
+      },
+    },
+    product: {
+      findMany: async () => [product],
+    },
+  };
+  const service = new SalesService(
+    prisma as never,
+    audit as never,
+    displayEvents,
+  );
+
+  await service.publishPosTerminalDisplay(
+    terminal.id,
+    {
+      session: {
+        id: "offline-session-1",
+        status: PosSessionStatus.ACTIVE,
+        customerType: CustomerType.INDIVIDUAL,
+        customerName: null,
+        paymentMethod: PaymentMethod.CASH,
+        discount: "500",
+        amountPaid: "5500",
+        createdAt: "2026-07-19T12:00:00.000Z",
+        updatedAt: "2026-07-19T12:01:00.000Z",
+        completedAt: null,
+        items: [
+          {
+            productId: product.id,
+            quantity: "2",
+            unitPrice: "3000",
+          },
+        ],
+      },
+    },
+    deviceSecret,
+  );
+
+  const published = await service.getPosTerminalDisplay(terminal.displayToken);
+  assert.equal(published.currentSession?.id, "offline-session-1");
+  assert.equal(published.currentSession?.subtotal, "6000.00");
+  assert.equal(published.currentSession?.totalAmount, "5500.00");
+  assert.equal(published.currentSession?.balanceDue, "0.00");
+  assert.equal(published.currentSession?.items[0]?.product.name, product.name);
+
+  await service.publishPosTerminalDisplay(
+    terminal.id,
+    { session: null },
+    deviceSecret,
+  );
+
+  const cleared = await service.getPosTerminalDisplay(terminal.displayToken);
+  assert.equal(cleared.currentSession, null);
+});
 
 test("SalesService.recordReturn rejects customer returns above the returnable quantity", async () => {
   const { audit, records } = createAuditMock();

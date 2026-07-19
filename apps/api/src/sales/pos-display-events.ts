@@ -22,6 +22,7 @@ export function posDisplayTerminalRoom(displayToken: string) {
 @Injectable()
 export class PosDisplayEvents {
   private server: Namespace | null = null;
+  private readonly terminalPreviews = new Map<string, unknown>();
 
   attachServer(server: Namespace) {
     this.server = server;
@@ -33,6 +34,18 @@ export class PosDisplayEvents {
 
   hasTerminalSubscribers(displayToken: string) {
     return this.hasSubscribers(posDisplayTerminalRoom(displayToken));
+  }
+
+  getTerminalPreview(displayToken: string) {
+    return this.terminalPreviews.get(displayToken);
+  }
+
+  setTerminalPreview(displayToken: string, session: unknown) {
+    this.terminalPreviews.set(displayToken, session);
+  }
+
+  clearTerminalPreview(displayToken: string) {
+    this.terminalPreviews.delete(displayToken);
   }
 
   emitSessionUpdate(displayToken: string, session: unknown) {

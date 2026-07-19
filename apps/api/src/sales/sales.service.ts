@@ -44,6 +44,7 @@ import {
   createPosTerminalSchema,
   adjustTerminalStockSchema,
   pairPosTerminalSchema,
+  publishPosTerminalDisplaySchema,
   rePairPosTerminalSchema,
   createRetailerOrderApprovalSchema,
   createRetailerSchema,
@@ -1065,7 +1066,7 @@ export class SalesService {
 
     const existing = await this.prisma.posTerminal.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, displayToken: true },
     });
 
     if (!existing) {
@@ -1086,6 +1087,14 @@ export class SalesService {
       },
       include: posTerminalInclude,
     });
+
+    if (
+      parsed.data.rotateDisplayToken ||
+      !terminal.isActive ||
+      !terminal.offlineEnabled
+    ) {
+      this.posDisplayEvents.clearTerminalPreview(existing.displayToken);
+    }
 
     await this.audit.record({
       actorId: actor.id,
@@ -1355,6 +1364,132 @@ export class SalesService {
     });
 
     return serializePosTerminal(terminal);
+  }
+
+  async publishPosTerminalDisplay(
+    id: string,
+    input: unknown,
+    deviceSecret: string | undefined,
+  ) {
+    const authenticatedTerminal = await this.assertTerminalDevice(
+      id,
+      deviceSecret,
+    );
+    const terminal = await this.prisma.posTerminal.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        displayToken: true,
+        offlineEnabled: true,
+      },
+    });
+
+    if (!authenticatedTerminal || !terminal || !terminal.offlineEnabled) {
+      throw new BadRequestException(
+        "Live previews are only used by offline-enabled POS terminals.",
+      );
+    }
+
+    const parsed = publishPosTerminalDisplaySchema.safeParse(input ?? {});
+
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message);
+    }
+
+    if (!parsed.data.session) {
+      this.posDisplayEvents.clearTerminalPreview(terminal.displayToken);
+      this.posDisplayEvents.emitTerminalUpdate(
+        terminal.displayToken,
+        await this.getPosTerminalDisplay(terminal.displayToken),
+      );
+      return { ok: true };
+    }
+
+    const previewInput = parsed.data.session;
+    const productIds = [
+      ...new Set(previewInput.items.map((item) => item.productId)),
+    ];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, isActive: true },
+      select: productSelect,
+    });
+    const productsById = new Map(
+      products.map((product) => [product.id, product]),
+    );
+
+    if (products.length !== productIds.length) {
+      throw new BadRequestException(
+        "One or more products on the customer display are unavailable.",
+      );
+    }
+
+    const items = previewInput.items.map((item) => {
+      const product = productsById.get(item.productId);
+
+      if (!product) {
+        throw new BadRequestException(
+          "One or more products on the customer display are unavailable.",
+        );
+      }
+
+      const lineTotal = roundMoney(item.quantity * (item.unitPrice ?? 0));
+
+      return {
+        id: `preview-${previewInput.id}-${product.id}`,
+        quantity: formatQuantity(item.quantity),
+        unitPrice: (item.unitPrice ?? 0).toFixed(2),
+        lineTotal: lineTotal.toFixed(2),
+        product: {
+          ...product,
+          unitPrice: product.unitPrice?.toString() ?? null,
+        },
+      };
+    });
+    const subtotal = roundMoney(
+      items.reduce((sum, item) => sum + Number(item.lineTotal), 0),
+    );
+    const totalAmount = Math.max(
+      0,
+      roundMoney(subtotal - previewInput.discount),
+    );
+    const balanceDue = Math.max(
+      0,
+      roundMoney(totalAmount - previewInput.amountPaid),
+    );
+    const preview = {
+      id: previewInput.id,
+      displayToken: terminal.displayToken,
+      terminal: {
+        id: terminal.id,
+        displayToken: terminal.displayToken,
+        offlineEnabled: terminal.offlineEnabled,
+      },
+      status: previewInput.status,
+      customerType: previewInput.customerType,
+      retailer: null,
+      retailerApprovalId: null,
+      customerName: previewInput.customerName ?? null,
+      paymentMethod: previewInput.paymentMethod,
+      discount: previewInput.discount.toFixed(2),
+      amountPaid: previewInput.amountPaid.toFixed(2),
+      balanceDue: balanceDue.toFixed(2),
+      subtotal: subtotal.toFixed(2),
+      totalAmount: totalAmount.toFixed(2),
+      notes: null,
+      createdAt: previewInput.createdAt.toISOString(),
+      updatedAt: previewInput.updatedAt.toISOString(),
+      completedAt: previewInput.completedAt?.toISOString() ?? null,
+      completedSale: null,
+      items,
+    };
+
+    this.posDisplayEvents.setTerminalPreview(terminal.displayToken, preview);
+    this.posDisplayEvents.emitTerminalSessionUpdate(
+      terminal.displayToken,
+      preview,
+    );
+
+    return { ok: true };
   }
 
   async getPosOfflineSnapshot(id: string, deviceSecret: string | undefined) {
@@ -2810,7 +2945,17 @@ export class SalesService {
       throw new NotFoundException("POS terminal display not found.");
     }
 
-    return serializePosTerminal(terminal);
+    const serialized = serializePosTerminal(terminal);
+
+    if (!terminal.offlineEnabled) {
+      return serialized;
+    }
+
+    return {
+      ...serialized,
+      currentSession:
+        this.posDisplayEvents.getTerminalPreview(displayToken) ?? null,
+    };
   }
 
   async listSales(query?: QueryParams) {

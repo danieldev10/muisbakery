@@ -37,6 +37,7 @@ import { formatProductName } from "@/lib/product-label";
 import { Spinner } from "@/components/spinner";
 import {
   apiJson,
+  buildPosDisplayPreview,
   calculateSessionTotals,
   CART_SYNC_DELAY_MS,
   buildOfflineSalePayload,
@@ -1291,6 +1292,36 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       window.removeEventListener("offline", markOffline);
     };
   }, [syncPendingOfflineSales]);
+
+  useEffect(() => {
+    if (!terminal?.offlineEnabled || !isOnline) {
+      return;
+    }
+
+    let cancelled = false;
+    const publish = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      await apiJson(`/terminals/${terminal.id}/display-preview`, {
+        method: "POST",
+        body: JSON.stringify(buildPosDisplayPreview(session)),
+      }).catch(() => undefined);
+    };
+    const timeout = window.setTimeout(() => void publish(), CART_SYNC_DELAY_MS);
+    const interval = session
+      ? window.setInterval(() => void publish(), 5000)
+      : null;
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      if (interval !== null) {
+        window.clearInterval(interval);
+      }
+    };
+  }, [isOnline, session, terminal?.id, terminal?.offlineEnabled]);
 
   async function checkout() {
     await sessionPatchQueueRef.current;

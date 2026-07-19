@@ -142,6 +142,15 @@ export class SalesController {
     return this.sales.getPosOfflineSnapshot(id, terminalSecret);
   }
 
+  @Post("pos/terminals/:id/display-preview")
+  publishPosTerminalDisplay(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Headers(posTerminalSecretHeader) terminalSecret?: string,
+  ) {
+    return this.sales.publishPosTerminalDisplay(id, body, terminalSecret);
+  }
+
   @Post("pos/terminals/pair")
   pairPosTerminal(@Body() body: unknown, @Req() request: Request) {
     return this.sales.pairPosTerminal(body, getRequestUser(request));

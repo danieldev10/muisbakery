@@ -1,6 +1,7 @@
 import {
   CustomerType,
   PaymentMethod,
+  PosSessionStatus,
   RetailerOrderApprovalStatus,
   SalesReturnDisposition,
 } from "@prisma/client";
@@ -352,6 +353,24 @@ export const upsertPosSessionItemSchema = z.object({
   productId: z.string().trim().min(1),
   quantity: nonnegativeQuantitySchema,
   unitPrice: optionalMoneySchema,
+});
+
+export const publishPosTerminalDisplaySchema = z.object({
+  session: z
+    .object({
+      id: z.string().trim().min(1).max(160),
+      status: z.enum(PosSessionStatus),
+      customerType: z.enum(CustomerType),
+      customerName: nullableText(160),
+      paymentMethod: z.enum(PaymentMethod),
+      discount: moneySchema,
+      amountPaid: moneySchema,
+      createdAt: z.coerce.date(),
+      updatedAt: z.coerce.date(),
+      completedAt: z.coerce.date().nullable().optional(),
+      items: z.array(saleItemSchema).max(100),
+    })
+    .nullable(),
 });
 
 export const createRetailerSchema = z.object({
