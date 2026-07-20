@@ -95,6 +95,11 @@ Follow application logs:
 docker compose logs -f api web
 ```
 
+For encrypted off-site PostgreSQL backups to a private Supabase Storage bucket,
+follow [Encrypted Supabase Database Backups](database-backups.md). The backup
+service is optional and does not put Supabase in the application's live request
+path.
+
 ## Back Up And Reset For Handover
 
 Obtain sponsor/manager approval before resetting, then pull the version

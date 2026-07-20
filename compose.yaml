@@ -55,6 +55,36 @@ services:
       - setup_state:/state
     restart: "no"
 
+  backup:
+    profiles: ["backup"]
+    build:
+      context: .
+      target: backup
+    environment:
+      TZ: ${BACKUP_TIMEZONE:-Africa/Lagos}
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-muisbakery}
+      PGUSER: ${POSTGRES_USER:-muisbakery}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-muisbakery_local}
+      SUPABASE_S3_ENDPOINT: ${SUPABASE_S3_ENDPOINT:-}
+      SUPABASE_S3_REGION: ${SUPABASE_S3_REGION:-}
+      SUPABASE_S3_ACCESS_KEY_ID: ${SUPABASE_S3_ACCESS_KEY_ID:-}
+      SUPABASE_S3_SECRET_ACCESS_KEY: ${SUPABASE_S3_SECRET_ACCESS_KEY:-}
+      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_PREFIX: ${BACKUP_PREFIX:-database}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETRY_SECONDS: ${BACKUP_RETRY_SECONDS:-900}
+      BACKUP_LOCAL_RETENTION_DAYS: ${BACKUP_LOCAL_RETENTION_DAYS:-7}
+    command: ["daemon"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    volumes:
+      - database_backups:/backups
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -113,3 +143,4 @@ services:
 volumes:
   postgres_data:
   setup_state:
+  database_backups:

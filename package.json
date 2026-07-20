@@ -33,6 +33,8 @@
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f api web",
+    "docker:backup": "docker compose --profile backup run --rm backup backup-now",
+    "docker:backup:logs": "docker compose --profile backup logs -f backup",
     "typecheck": "npm run typecheck -w @muisbakery/web && npm run typecheck -w @muisbakery/api",
     "prisma:generate": "npm run prisma:generate -w @muisbakery/api",
     "prisma:migrate": "npm run prisma:migrate -w @muisbakery/api",
