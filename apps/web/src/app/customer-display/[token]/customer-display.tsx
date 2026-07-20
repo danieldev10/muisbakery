@@ -43,17 +43,25 @@ export function CustomerDisplay({
   mode?: "session" | "terminal";
 }) {
   const [session, setSession] = useState<PosSession | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [httpReachable, setHttpReachable] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let refreshInFlight = false;
     const basePath =
       mode === "terminal"
         ? `/api/sales/pos/display/terminal/${token}`
         : `/api/sales/pos/display/${token}`;
 
     async function loadInitialSession() {
+      if (refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+
       try {
         const response = await fetch(basePath, {
           cache: "no-store",
@@ -75,13 +83,17 @@ export function CustomerDisplay({
               : (data as PosSession),
           );
           setError(null);
+          setHttpReachable(true);
         }
       } catch (caught) {
         if (!cancelled) {
+          setHttpReachable(false);
           setError(
             caught instanceof Error ? caught.message : "Display is not available.",
           );
         }
+      } finally {
+        refreshInFlight = false;
       }
     }
 
@@ -94,7 +106,7 @@ export function CustomerDisplay({
 
     socket.on("connect", () => {
       if (!cancelled) {
-        setConnected(true);
+        setSocketConnected(true);
         socket.emit("pos:display:subscribe", { mode, token });
       }
     });
@@ -107,11 +119,13 @@ export function CustomerDisplay({
       if (data.kind === "session") {
         setSession(data.session);
         setError(null);
+        setSocketConnected(true);
       }
 
       if (data.kind === "terminal") {
         setSession(data.terminal.currentSession);
         setError(null);
+        setSocketConnected(true);
       }
 
       if (data.kind === "error") {
@@ -127,21 +141,34 @@ export function CustomerDisplay({
 
     socket.on("disconnect", () => {
       if (!cancelled) {
-        setConnected(false);
+        setSocketConnected(false);
+        void loadInitialSession();
       }
     });
 
     socket.on("connect_error", () => {
       if (!cancelled) {
-        setConnected(false);
+        setSocketConnected(false);
       }
     });
 
+    // Local installations may be reachable over HTTP even when a browser or
+    // network blocks the WebSocket upgrade. Poll only while the socket is down
+    // so the display remains current without duplicating the live feed.
+    const fallbackInterval = window.setInterval(() => {
+      if (!socket.connected) {
+        void loadInitialSession();
+      }
+    }, 2000);
+
     return () => {
       cancelled = true;
+      window.clearInterval(fallbackInterval);
       socket.disconnect();
     };
   }, [mode, token]);
+
+  const live = socketConnected || httpReachable;
 
   const itemCount = useMemo(
     () =>
@@ -161,12 +188,12 @@ export function CustomerDisplay({
             <h1 className="mt-1 text-3xl font-semibold">Customer display</h1>
           </div>
           <div className="inline-flex items-center gap-2 rounded-md border border-white/15 px-3 py-2 text-sm text-stone-200">
-            {connected ? (
+            {live ? (
               <Wifi className="h-4 w-4 text-emerald-300" />
             ) : (
               <WifiOff className="h-4 w-4 text-amber-300" />
             )}
-            {connected ? "Live" : "Reconnecting"}
+            {live ? "Live" : "Reconnecting"}
           </div>
         </header>
 
@@ -179,7 +206,7 @@ export function CustomerDisplay({
         ) : !session ? (
           <section className="flex flex-1 items-center justify-center">
             <div className="flex items-center gap-3 text-stone-300">
-              {connected ? null : <Loader2 className="h-5 w-5 animate-spin" />}
+              {live ? null : <Loader2 className="h-5 w-5 animate-spin" />}
               Waiting for cashier
             </div>
           </section>

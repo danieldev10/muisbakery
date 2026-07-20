@@ -282,25 +282,55 @@ function buildReceiptDocument({
   };
 }
 
-function openReceiptPrintWindow() {
-  return window.open("", "_blank", "width=420,height=680");
+function reserveReceiptPrintFrame() {
+  const frame = document.createElement("iframe");
+
+  frame.title = "Receipt print frame";
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.left = "-10000px";
+  frame.style.bottom = "0";
+  frame.style.width = "1px";
+  frame.style.height = "1px";
+  frame.style.border = "0";
+  frame.style.opacity = "0";
+  frame.style.pointerEvents = "none";
+  document.body.appendChild(frame);
+
+  return frame;
 }
 
 function printReceipt(
   receipt: ReceiptDocument,
-  reservedWindow?: Window | null,
+  reservedFrame?: HTMLIFrameElement | null,
 ) {
-  const receiptWindow = reservedWindow ?? openReceiptPrintWindow();
+  const receiptFrame = reservedFrame ?? reserveReceiptPrintFrame();
+  const receiptWindow = receiptFrame.contentWindow;
 
   if (!receiptWindow) {
+    receiptFrame.remove();
     return false;
   }
 
   receiptWindow.document.open();
   receiptWindow.document.write(receipt.html);
   receiptWindow.document.close();
-  receiptWindow.focus();
-  window.setTimeout(() => receiptWindow.print(), 250);
+
+  const cleanup = () => {
+    receiptFrame.remove();
+  };
+
+  window.setTimeout(() => {
+    try {
+      receiptWindow.addEventListener("afterprint", cleanup, { once: true });
+      receiptWindow.focus();
+      receiptWindow.print();
+      window.setTimeout(cleanup, 120_000);
+    } catch {
+      cleanup();
+    }
+  }, 250);
+
   return true;
 }
 
@@ -1419,9 +1449,9 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       return;
     }
 
-    // Reserve the popup while this function is still handling the cashier's
-    // click. Opening it after the async checkout often triggers popup blockers.
-    let receiptWindow = openReceiptPrintWindow();
+    // Reserve an invisible print target while handling the cashier's click.
+    // The print dialog is opened only after checkout has completed.
+    let receiptFrame: HTMLIFrameElement | null = reserveReceiptPrintFrame();
 
     setBusy(true);
     setError(null);
@@ -1519,8 +1549,8 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
         applySession(completedSession);
         setLastReceipt(receipt);
-        printReceipt(receipt, receiptWindow);
-        receiptWindow = null;
+        printReceipt(receipt, receiptFrame);
+        receiptFrame = null;
 
         return;
       }
@@ -1550,10 +1580,10 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       clearCartSyncs();
       applySession(completed);
       setLastReceipt(receipt);
-      printReceipt(receipt, receiptWindow);
-      receiptWindow = null;
+      printReceipt(receipt, receiptFrame);
+      receiptFrame = null;
     } catch (caught) {
-      receiptWindow?.close();
+      receiptFrame?.remove();
       setError(caught instanceof Error ? caught.message : "Unable to checkout.");
     } finally {
       setBusy(false);
