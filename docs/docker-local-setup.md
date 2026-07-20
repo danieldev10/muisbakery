@@ -136,7 +136,7 @@ The `-v` flag is destructive. Do not use it for normal updates or restarts.
 The stack has working local defaults. To override them:
 
 ```bash
-cp .env.example .env
+cp .env.docker.example .env
 ```
 
 Then edit `.env`. It is ignored by Git.

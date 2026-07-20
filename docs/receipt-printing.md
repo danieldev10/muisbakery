@@ -17,7 +17,7 @@ terminal, cashier, customer or retailer, payment method, item quantities, unit
 prices, line amounts, totals, amount paid, balance or change, return policy,
 and thank-you message.
 
-Set these values in the root `.env` used by Docker Compose:
+Set these values in the environment used by the web container:
 
 ```dotenv
 RECEIPT_BUSINESS_NAME=Muis Bakery
@@ -26,7 +26,7 @@ RECEIPT_BUSINESS_PHONE=0800 000 0000
 RECEIPT_RETURN_POLICY=Please retain this receipt for returns.
 ```
 
-For Docker Compose, edit that existing root `.env` and recreate the web service.
+For Docker Compose, add them to the root `.env` and recreate the web service.
 
 ## Direct ESC/POS bridge
 
@@ -34,22 +34,19 @@ Run the bridge on each cashier computer that owns a receipt printer. Keeping
 the default loopback binding means another LAN device cannot submit print jobs
 to it.
 
-All local and Docker settings now live in the repository's single private
-`.env` file. On a fresh installation, create it once from the consolidated
-template:
-
 ```bash
-cp .env.example .env
+cp .env.print-bridge.example .env.print-bridge
 ```
 
-Do not overwrite an existing `.env`, because it contains the installation's
-database, backup, and application credentials. Generate a long random token,
-set it as `PRINT_BRIDGE_TOKEN`, and then enable the application bridge URL in
-the same file:
+Generate a long random token and put the same value in:
+
+- `.env.print-bridge` as `PRINT_BRIDGE_TOKEN`
+- the application's root `.env` as `RECEIPT_PRINT_BRIDGE_TOKEN`
+
+Then add this application setting:
 
 ```dotenv
 RECEIPT_PRINT_BRIDGE_URL=http://127.0.0.1:18181
-PRINT_BRIDGE_TOKEN=replace-with-a-long-random-token
 ```
 
 Start and check the bridge:
@@ -71,7 +68,7 @@ Install the printer in the operating system and list its CUPS queue:
 lpstat -p
 ```
 
-Set the exact queue name in `.env`:
+Set the exact queue name in `.env.print-bridge`:
 
 ```dotenv
 PRINT_BRIDGE_TARGET=cups
@@ -107,10 +104,6 @@ rather than receipt layout.
 ## Security
 
 The bridge rejects unlisted browser origins. Update
-`PRINT_BRIDGE_ALLOWED_ORIGINS` in `.env` when the POS URL changes. A
-non-loopback bridge binding is rejected unless `PRINT_BRIDGE_TOKEN` is
-configured. Do not expose the bridge directly to the public internet.
-
-For the Vercel-hosted web application, set `RECEIPT_PRINT_BRIDGE_URL` in
-Vercel and copy the local `PRINT_BRIDGE_TOKEN` value into Vercel as
-`RECEIPT_PRINT_BRIDGE_TOKEN`. Railway does not need these receipt variables.
+`PRINT_BRIDGE_ALLOWED_ORIGINS` when the POS URL changes. A non-loopback bridge
+binding is rejected unless `PRINT_BRIDGE_TOKEN` is configured. Do not expose
+the bridge directly to the public internet.
