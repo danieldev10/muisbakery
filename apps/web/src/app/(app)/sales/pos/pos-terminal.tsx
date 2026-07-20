@@ -65,289 +65,24 @@ import {
   updateQueuedOfflineSale,
 } from "./_lib/offline-pos-store";
 import { deriveOfflineRetailers } from "./_lib/offline-retailer-credit";
+import {
+  buildReceiptDocument,
+  type ReceiptDocument,
+  type ReceiptSettings,
+} from "./_lib/receipt";
+import {
+  downloadReceipt,
+  printReceipt,
+  reserveReceiptPrintFrame,
+} from "./_lib/receipt-printer";
 
-type ReceiptDocument = {
-  filename: string;
-  html: string;
-  text: string;
-};
-
-function receiptDate(value: string | null | undefined) {
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(value ? new Date(value) : new Date());
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function receiptCustomer(session: PosSession) {
-  if (session.customerType === "RETAILER") {
-    return session.retailer?.name ?? session.customerName ?? "Retailer";
-  }
-
-  return session.customerName ?? "Individual";
-}
-
-// The printed receipt is for the customer: totals and purchase details only,
-// never system state like sync/queue status. Cashier-facing state stays on
-// screen.
-function buildReceiptDocument({
-  session,
-  terminalName,
-  saleNumber,
+export function PosTerminal({
+  options,
+  receiptSettings,
 }: {
-  session: PosSession;
-  terminalName: string | null | undefined;
-  saleNumber?: number | null;
-}): ReceiptDocument {
-  const resolvedSaleNumber =
-    session.completedSale?.saleNumber ?? saleNumber ?? null;
-  const saleLabel = resolvedSaleNumber ? `#${resolvedSaleNumber}` : null;
-  const soldAt = session.completedSale?.soldAt ?? session.completedAt;
-  const itemLines = session.items.map(
-    (item) =>
-      `${formatProductName(item.product)} x ${formatQuantity(
-        item.quantity,
-        item.product.unit.abbreviation,
-      )} @ ${formatMoney(item.unitPrice)} = ${formatMoney(item.lineTotal)}`,
-  );
-  const lines = [
-    "Muis Bakery",
-    "Sales receipt",
-    ...(saleLabel ? [`Sale: ${saleLabel}`] : []),
-    `Terminal: ${terminalName ?? "POS terminal"}`,
-    `Customer: ${receiptCustomer(session)}`,
-    `Payment: ${paymentLabels[session.paymentMethod]}`,
-    `Date: ${receiptDate(soldAt)}`,
-    "",
-    ...itemLines,
-    "",
-    `Subtotal: ${formatMoney(session.subtotal)}`,
-    `Discount: ${formatMoney(session.discount)}`,
-    `Total: ${formatMoney(session.totalAmount)}`,
-    `Paid: ${formatMoney(session.amountPaid)}`,
-    `Balance due: ${formatMoney(session.balanceDue)}`,
-  ];
-  const text = lines.join("\n");
-  const htmlRows = session.items
-    .map(
-      (item) => `
-        <tr>
-          <td class="item-description">
-            <strong>${escapeHtml(formatProductName(item.product))}</strong>
-            <span>${escapeHtml(formatQuantity(item.quantity, item.product.unit.abbreviation))} x ${escapeHtml(formatMoney(item.unitPrice))}</span>
-          </td>
-          <td class="amount">${escapeHtml(formatMoney(item.lineTotal))}</td>
-        </tr>`,
-    )
-    .join("");
-  const html = `<!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Muis Bakery Receipt${saleLabel ? ` ${escapeHtml(saleLabel)}` : ""}</title>
-        <style>
-          @page { size: 80mm auto; margin: 0; }
-          * { box-sizing: border-box; }
-          html, body {
-            width: 80mm;
-            margin: 0;
-            padding: 0;
-            background: #fff;
-            color: #000;
-          }
-          body {
-            font-family: "Courier New", Courier, monospace;
-            font-size: 10pt;
-            line-height: 1.3;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-          .receipt {
-            width: 72mm;
-            margin: 0 auto;
-            padding: 3mm 1mm 5mm;
-          }
-          .receipt-header {
-            border-bottom: 1px dashed #000;
-            margin-bottom: 2.5mm;
-            padding-bottom: 2.5mm;
-            text-align: center;
-          }
-          h1 { font-size: 16pt; line-height: 1.1; margin: 0 0 1mm; }
-          h2 { font-size: 10pt; margin: 0; text-transform: uppercase; }
-          .meta { margin: 0 0 2.5mm; }
-          p { margin: 0.8mm 0; }
-          table {
-            border-collapse: collapse;
-            table-layout: fixed;
-            width: 100%;
-            margin: 2.5mm 0;
-          }
-          th, td {
-            border-bottom: 1px dashed #000;
-            padding: 1.8mm 0;
-            text-align: left;
-            vertical-align: top;
-          }
-          th { font-size: 9pt; text-transform: uppercase; }
-          th:last-child, .amount {
-            width: 24mm;
-            padding-left: 2mm;
-            text-align: right;
-            white-space: nowrap;
-          }
-          .item-description {
-            overflow-wrap: anywhere;
-            padding-right: 1mm;
-          }
-          .item-description strong,
-          .item-description span { display: block; }
-          .item-description span { margin-top: 0.5mm; font-size: 9pt; }
-          .totals { border-top: 2px solid #000; padding-top: 1.5mm; }
-          .totals p {
-            display: flex;
-            justify-content: space-between;
-            gap: 3mm;
-          }
-          .totals span:last-child { white-space: nowrap; }
-          .total { font-size: 13pt; font-weight: 700; }
-          .receipt-footer {
-            border-top: 1px dashed #000;
-            margin-top: 3mm;
-            padding-top: 2.5mm;
-            text-align: center;
-          }
-          tr, .totals, .receipt-footer { break-inside: avoid; }
-          @media screen {
-            body { min-height: 100vh; }
-            .receipt { box-shadow: 0 0 0 1px #ddd; }
-          }
-          @media print {
-            html, body { min-height: 0; }
-            .receipt { box-shadow: none; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="receipt">
-          <div class="receipt-header">
-            <h1>Muis Bakery</h1>
-            <h2>Sales receipt</h2>
-          </div>
-          <div class="meta">
-            ${saleLabel ? `<p><strong>Sale:</strong> ${escapeHtml(saleLabel)}</p>` : ""}
-            <p><strong>Terminal:</strong> ${escapeHtml(terminalName ?? "POS terminal")}</p>
-            <p><strong>Customer:</strong> ${escapeHtml(receiptCustomer(session))}</p>
-            <p><strong>Payment:</strong> ${escapeHtml(paymentLabels[session.paymentMethod])}</p>
-            <p><strong>Date:</strong> ${escapeHtml(receiptDate(soldAt))}</p>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>${htmlRows}</tbody>
-          </table>
-          <div class="totals">
-            <p><span>Subtotal</span><span>${escapeHtml(formatMoney(session.subtotal))}</span></p>
-            <p><span>Discount</span><span>${escapeHtml(formatMoney(session.discount))}</span></p>
-            <p class="total"><span>Total</span><span>${escapeHtml(formatMoney(session.totalAmount))}</span></p>
-            <p><span>Paid</span><span>${escapeHtml(formatMoney(session.amountPaid))}</span></p>
-            <p><span>Balance due</span><span>${escapeHtml(formatMoney(session.balanceDue))}</span></p>
-          </div>
-          <div class="receipt-footer">
-            <strong>Thank you for your purchase</strong>
-          </div>
-        </div>
-      </body>
-    </html>`;
-
-  return {
-    filename: `muis-bakery-receipt-${String(saleLabel ?? session.id)
-      .replace(/[^a-z0-9]+/gi, "-")
-      .toLowerCase()}`,
-    html,
-    text,
-  };
-}
-
-function reserveReceiptPrintFrame() {
-  const frame = document.createElement("iframe");
-
-  frame.title = "Receipt print frame";
-  frame.setAttribute("aria-hidden", "true");
-  frame.style.position = "fixed";
-  frame.style.left = "-10000px";
-  frame.style.bottom = "0";
-  frame.style.width = "1px";
-  frame.style.height = "1px";
-  frame.style.border = "0";
-  frame.style.opacity = "0";
-  frame.style.pointerEvents = "none";
-  document.body.appendChild(frame);
-
-  return frame;
-}
-
-function printReceipt(
-  receipt: ReceiptDocument,
-  reservedFrame?: HTMLIFrameElement | null,
-) {
-  const receiptFrame = reservedFrame ?? reserveReceiptPrintFrame();
-  const receiptWindow = receiptFrame.contentWindow;
-
-  if (!receiptWindow) {
-    receiptFrame.remove();
-    return false;
-  }
-
-  receiptWindow.document.open();
-  receiptWindow.document.write(receipt.html);
-  receiptWindow.document.close();
-
-  const cleanup = () => {
-    receiptFrame.remove();
-  };
-
-  window.setTimeout(() => {
-    try {
-      receiptWindow.addEventListener("afterprint", cleanup, { once: true });
-      receiptWindow.focus();
-      receiptWindow.print();
-      window.setTimeout(cleanup, 120_000);
-    } catch {
-      cleanup();
-    }
-  }, 250);
-
-  return true;
-}
-
-function downloadReceipt(receipt: ReceiptDocument) {
-  const blob = new Blob([receipt.html], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = `${receipt.filename}.html`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-export function PosTerminal({ options }: { options: SalesOptions }) {
+  options: SalesOptions;
+  receiptSettings: ReceiptSettings;
+}) {
   const [session, setSession] = useState<PosSession | null>(null);
   const [terminal, setTerminal] = useState<PosTerminalRecord | null>(null);
   const [query, setQuery] = useState("");
@@ -367,6 +102,9 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     PosOfflineQueuedSale[]
   >([]);
   const [lastReceipt, setLastReceipt] = useState<ReceiptDocument | null>(null);
+  const [receiptPrintMessage, setReceiptPrintMessage] = useState<string | null>(
+    null,
+  );
   const [approvalRequestBusy, setApprovalRequestBusy] = useState(false);
   const [approvalRequestSent, setApprovalRequestSent] = useState(false);
   const [cartSyncCount, setCartSyncCount] = useState(0);
@@ -379,6 +117,25 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       ? ""
       : (window.localStorage.getItem("muisbakery.posTerminalId") ?? ""),
   );
+
+  async function sendReceiptToPrinter(
+    receipt: ReceiptDocument,
+    reservedFrame?: HTMLIFrameElement | null,
+  ) {
+    const result = await printReceipt(
+      receipt,
+      receiptSettings.bridge,
+      reservedFrame,
+    );
+
+    setReceiptPrintMessage(
+      result.mode === "bridge"
+        ? "Receipt sent to the thermal printer."
+        : result.fallbackReason
+          ? "Direct thermal printer unavailable. Browser print opened instead."
+          : "Browser print opened.",
+    );
+  }
   const [terminalPairingCode, setTerminalPairingCode] = useState("");
   const [customerType, setCustomerType] =
     useState<CustomerType>("INDIVIDUAL");
@@ -1455,6 +1212,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
     setBusy(true);
     setError(null);
+    setReceiptPrintMessage(null);
 
     try {
       const currentTerminal = terminalRef.current;
@@ -1543,13 +1301,14 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         };
         const receipt = buildReceiptDocument({
           session: completedSession,
+          settings: receiptSettings,
           terminalName: currentTerminal.name,
           saleNumber: syncedSaleNumber,
         });
 
         applySession(completedSession);
         setLastReceipt(receipt);
-        printReceipt(receipt, receiptFrame);
+        await sendReceiptToPrinter(receipt, receiptFrame);
         receiptFrame = null;
 
         return;
@@ -1573,6 +1332,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       );
       const receipt = buildReceiptDocument({
         session: completed,
+        settings: receiptSettings,
         terminalName: currentTerminal?.name,
       });
 
@@ -1580,7 +1340,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       clearCartSyncs();
       applySession(completed);
       setLastReceipt(receipt);
-      printReceipt(receipt, receiptFrame);
+      await sendReceiptToPrinter(receipt, receiptFrame);
       receiptFrame = null;
     } catch (caught) {
       receiptFrame?.remove();
@@ -1880,10 +1640,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
             {lastReceipt ? (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
                 <p className="font-semibold">Last receipt is ready.</p>
+                {receiptPrintMessage ? (
+                  <p className="mt-1 text-xs">{receiptPrintMessage}</p>
+                ) : null}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     className="inline-flex h-8 items-center justify-center gap-2 rounded-[5px] bg-emerald-700 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
-                    onClick={() => printReceipt(lastReceipt)}
+                    onClick={() => void sendReceiptToPrinter(lastReceipt)}
                     type="button"
                   >
                     <Printer className="h-4 w-4" />
@@ -1920,12 +1683,15 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
             <p className="mt-1">
               Total {formatMoney(session.totalAmount)}
             </p>
+            {receiptPrintMessage ? (
+              <p className="mt-1 text-xs">{receiptPrintMessage}</p>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {lastReceipt ? (
                 <>
                   <button
                     className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-800 transition hover:border-emerald-700"
-                    onClick={() => printReceipt(lastReceipt)}
+                    onClick={() => void sendReceiptToPrinter(lastReceipt)}
                     type="button"
                   >
                     <Printer className="h-4 w-4" />
