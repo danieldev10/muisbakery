@@ -35,7 +35,6 @@
     "docker:logs": "docker compose logs -f api web",
     "docker:backup": "docker compose --profile backup run --rm backup backup-now",
     "docker:backup:logs": "docker compose --profile backup logs -f backup",
-    "print-bridge": "node --env-file-if-exists=.env.print-bridge tools/receipt-print-bridge.mjs",
     "typecheck": "npm run typecheck -w @muisbakery/web && npm run typecheck -w @muisbakery/api",
     "prisma:generate": "npm run prisma:generate -w @muisbakery/api",
     "prisma:migrate": "npm run prisma:migrate -w @muisbakery/api",
