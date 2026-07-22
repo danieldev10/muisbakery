@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, SalePriceType } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 
 export function decimalToNumber(value: Prisma.Decimal | number | string) {
@@ -20,6 +20,31 @@ export function formatQuantity(value: number) {
 
 export function productLabel(product: { name: string; size: string }) {
   return product.size ? `${product.name} - ${product.size}` : product.name;
+}
+
+export function productPriceForType(
+  product: {
+    unitPrice: Prisma.Decimal | number | string | null;
+    retailerPrice: Prisma.Decimal | number | string | null;
+    discountPercent: Prisma.Decimal | number | string;
+  },
+  priceType: SalePriceType,
+) {
+  if (priceType === SalePriceType.RETAILER) {
+    return product.retailerPrice === null
+      ? 0
+      : decimalToNumber(product.retailerPrice);
+  }
+
+  const walkInPrice =
+    product.unitPrice === null ? 0 : decimalToNumber(product.unitPrice);
+
+  if (priceType === SalePriceType.DISCOUNTED) {
+    const discountPercent = decimalToNumber(product.discountPercent);
+    return roundMoney(walkInPrice * (1 - discountPercent / 100));
+  }
+
+  return walkInPrice;
 }
 
 export function toDayRange(dateInput?: string) {

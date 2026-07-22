@@ -49,6 +49,8 @@ export default async function ProductsPage({
         product.unit.name,
         product.unit.abbreviation,
         product.unitPrice,
+        product.retailerPrice,
+        product.discountPercent,
       ]) &&
       matchesSelect(unitFilter, product.unit.id) &&
       matchesSelect(statusFilter, product.isActive),
@@ -92,7 +94,7 @@ export default async function ProductsPage({
           ) : (
             <AdminFormModal
               action={createProduct}
-              description="Create a finished good with its production unit and optional selling price."
+              description="Create a finished good and set its controlled selling prices."
               submitLabel="Create product"
               title="Add product"
               triggerLabel="Add product"
@@ -117,10 +119,30 @@ export default async function ProductsPage({
                   required
                 />
                 <Field
-                  hint="Selling price per unit. Optional."
-                  label="Default price"
+                  hint="Standard price for individual customers."
+                  label="Walk-in price"
                   min="0"
                   name="unitPrice"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+                <Field
+                  hint="Price applied to registered retailers."
+                  label="Retailer price"
+                  min="0"
+                  name="retailerPrice"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+                <Field
+                  hint="Percentage deducted from the walk-in price when discounted pricing is selected."
+                  label="Discount (%)"
+                  defaultValue="0"
+                  min="0"
+                  max="100"
+                  name="discountPercent"
                   step="0.01"
                   type="number"
                 />

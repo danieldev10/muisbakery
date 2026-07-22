@@ -18,6 +18,8 @@ export async function createProduct(
     description: getOptionalString(formData, "description"),
     unitId: getString(formData, "unitId"),
     unitPrice: getOptionalString(formData, "unitPrice"),
+    retailerPrice: getOptionalString(formData, "retailerPrice"),
+    discountPercent: getOptionalString(formData, "discountPercent"),
   });
 
   if (!result.ok) {
@@ -38,6 +40,8 @@ export async function updateProduct(
     description: getOptionalString(formData, "description") ?? null,
     unitId: getString(formData, "unitId"),
     unitPrice: getOptionalString(formData, "unitPrice") ?? null,
+    retailerPrice: getOptionalString(formData, "retailerPrice") ?? null,
+    discountPercent: getOptionalString(formData, "discountPercent") ?? "0",
     isActive: getString(formData, "isActive") === "true",
   });
 

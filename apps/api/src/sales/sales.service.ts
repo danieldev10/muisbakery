@@ -12,6 +12,7 @@ import {
   CustomerType,
   FinishedProductStockMovementType,
   PaymentMethod,
+  SalePriceType,
   PosOfflineSyncStatus,
   PosSessionStatus,
   PosTerminalStockMovementType,
@@ -97,6 +98,7 @@ import {
   formatQuantity,
   generateDisplayToken,
   productLabel,
+  productPriceForType,
   roundMoney,
   roundQuantity,
   toDayRange,
@@ -109,6 +111,30 @@ function numericSearch(value: string | undefined) {
 
   const parsed = Number.parseInt(value.replace(/^#/, ""), 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function resolveSalePriceType(
+  customerType: CustomerType,
+  requestedPriceType?: SalePriceType,
+) {
+  if (customerType === CustomerType.RETAILER) {
+    return SalePriceType.RETAILER;
+  }
+
+  return requestedPriceType === SalePriceType.DISCOUNTED
+    ? SalePriceType.DISCOUNTED
+    : SalePriceType.WALK_IN;
+}
+
+function priceConfigurationLabel(priceType: SalePriceType) {
+  switch (priceType) {
+    case SalePriceType.RETAILER:
+      return "retailer price";
+    case SalePriceType.DISCOUNTED:
+      return "walk-in price and discount percentage";
+    default:
+      return "walk-in price";
+  }
 }
 
 function jsonPayload(value: unknown): Prisma.InputJsonValue {
@@ -1442,6 +1468,8 @@ export class SalesService {
         product: {
           ...product,
           unitPrice: product.unitPrice?.toString() ?? null,
+          retailerPrice: product.retailerPrice?.toString() ?? null,
+          discountPercent: product.discountPercent.toString(),
         },
       };
     });
@@ -2560,6 +2588,10 @@ export class SalesService {
         displayToken: generateDisplayToken(),
         terminalId: parsed.data.terminalId,
         customerType: parsed.data.customerType,
+        priceType: resolveSalePriceType(
+          parsed.data.customerType,
+          parsed.data.priceType,
+        ),
         retailerId: retailer?.id ?? null,
         retailerApprovalId:
           parsed.data.customerType === CustomerType.RETAILER
@@ -2639,6 +2671,13 @@ export class SalesService {
           : parsed.data.retailerApprovalId
         : null;
     const nextPaymentMethod = parsed.data.paymentMethod ?? existing.paymentMethod;
+    const nextPriceType = resolveSalePriceType(
+      nextCustomerType,
+      parsed.data.priceType ??
+        (existing.customerType === nextCustomerType
+          ? existing.priceType
+          : undefined),
+    );
     let retailer:
       | { id: string; name: string; isActive: boolean }
       | null = null;
@@ -2662,22 +2701,54 @@ export class SalesService {
       }
     }
 
-    const session = await this.prisma.posSession.update({
-      where: { id: existing.id },
-      data: {
-        customerType: nextCustomerType,
-        retailerId: nextRetailerId,
-        retailerApprovalId: nextRetailerApprovalId,
-        customerName:
-          nextCustomerType === CustomerType.RETAILER
-            ? retailer?.name
-            : parsed.data.customerName,
-        paymentMethod: nextPaymentMethod,
-        discount: parsed.data.discount,
-        amountPaid: parsed.data.amountPaid,
-        notes: parsed.data.notes,
-      },
-      include: posSessionInclude,
+    const repricedItems = existing.items.map((item) => ({
+      id: item.id,
+      unitPrice: productPriceForType(item.product, nextPriceType),
+      label: productLabel(item.product),
+    }));
+
+    const missingPrice = repricedItems.find((item) => item.unitPrice <= 0);
+
+    if (missingPrice) {
+      throw new BadRequestException(
+        `Set the ${priceConfigurationLabel(nextPriceType)} for ${missingPrice.label} before using that price type.`,
+      );
+    }
+
+    const session = await this.prisma.$transaction(async (tx) => {
+      await tx.posSession.update({
+        where: { id: existing.id },
+        data: {
+          customerType: nextCustomerType,
+          priceType: nextPriceType,
+          retailerId: nextRetailerId,
+          retailerApprovalId: nextRetailerApprovalId,
+          customerName:
+            nextCustomerType === CustomerType.RETAILER
+              ? retailer?.name
+              : parsed.data.customerName,
+          paymentMethod: nextPaymentMethod,
+          discount: parsed.data.discount,
+          amountPaid: parsed.data.amountPaid,
+          notes: parsed.data.notes,
+        },
+      });
+
+      if (nextPriceType !== existing.priceType) {
+        await Promise.all(
+          repricedItems.map((item) =>
+            tx.posSessionItem.update({
+              where: { id: item.id },
+              data: { unitPrice: item.unitPrice },
+            }),
+          ),
+        );
+      }
+
+      return tx.posSession.findUniqueOrThrow({
+        where: { id: existing.id },
+        include: posSessionInclude,
+      });
     });
 
     const serializedSession = serializePosSession(session);
@@ -2717,11 +2788,11 @@ export class SalesService {
       throw new NotFoundException("Product not found.");
     }
 
-    const unitPrice = parsed.data.unitPrice ?? decimalToNumber(product.unitPrice ?? 0);
+    const unitPrice = productPriceForType(product, existing.priceType);
 
     if (parsed.data.quantity > 0 && unitPrice <= 0) {
       throw new BadRequestException(
-        `Enter a unit price for ${productLabel(product)} before adding it to the sale.`,
+        `Set the ${priceConfigurationLabel(existing.priceType)} for ${productLabel(product)} before adding it to the sale.`,
       );
     }
 
@@ -2795,6 +2866,7 @@ export class SalesService {
 
     const parsed = createSaleSchema.safeParse({
       customerType: session.customerType,
+      priceType: session.priceType,
       retailerId: session.retailerId ?? undefined,
       retailerApprovalId: session.retailerApprovalId ?? undefined,
       paymentMethod: session.paymentMethod,
@@ -3086,6 +3158,8 @@ export class SalesService {
       `,
     );
 
+    const customerType = data.customerType ?? CustomerType.INDIVIDUAL;
+    const priceType = resolveSalePriceType(customerType, data.priceType);
     const items = data.items.map((item) => {
       const product = productById.get(item.productId);
 
@@ -3093,11 +3167,11 @@ export class SalesService {
         throw new BadRequestException("Selected product does not exist.");
       }
 
-      const unitPrice = item.unitPrice ?? decimalToNumber(product.unitPrice ?? 0);
+      const unitPrice = productPriceForType(product, priceType);
 
       if (unitPrice <= 0) {
         throw new BadRequestException(
-          `Enter a unit price for ${productLabel(product)} before recording the sale.`,
+          `Set the ${priceConfigurationLabel(priceType)} for ${productLabel(product)} before recording the sale.`,
         );
       }
 
@@ -3120,7 +3194,6 @@ export class SalesService {
     }
 
     const totalAmount = roundMoney(subtotal - discount);
-    const customerType = data.customerType ?? CustomerType.INDIVIDUAL;
     let terminal:
       | {
           id: string;
@@ -3482,6 +3555,7 @@ export class SalesService {
         clientRequestId: data.clientRequestId,
         terminalId: terminal?.id ?? null,
         customerType,
+        priceType,
         retailerId: retailer?.id ?? null,
         retailerApprovalId,
         paymentMethod,

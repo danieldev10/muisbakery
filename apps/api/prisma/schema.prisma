@@ -58,6 +58,12 @@ enum CustomerType {
   RETAILER
 }
 
+enum SalePriceType {
+  WALK_IN
+  RETAILER
+  DISCOUNTED
+}
+
 enum SalesReturnDisposition {
   RETURN_TO_STOCK
   DAMAGED
@@ -199,15 +205,17 @@ model RawMaterial {
 }
 
 model Product {
-  id          String   @id @default(cuid())
-  name        String
-  size        String   @default("")
-  description String?
-  unitId      String
-  unitPrice   Decimal? @db.Decimal(14, 2)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(cuid())
+  name            String
+  size            String   @default("")
+  description     String?
+  unitId          String
+  unitPrice       Decimal? @db.Decimal(14, 2)
+  retailerPrice  Decimal? @db.Decimal(14, 2)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   unit                Unit                        @relation(fields: [unitId], references: [id], onDelete: Restrict)
   recipe              Recipe?
@@ -801,6 +809,7 @@ model Sale {
   clientRequestId String?      @unique
   terminalId    String?
   customerType  CustomerType   @default(INDIVIDUAL)
+  priceType     SalePriceType  @default(WALK_IN)
   retailerId    String?
   retailerApprovalId String?      @unique
   paymentMethod PaymentMethod
@@ -867,6 +876,7 @@ model PosSession {
   terminalId      String?
   status          PosSessionStatus @default(ACTIVE)
   customerType    CustomerType     @default(INDIVIDUAL)
+  priceType       SalePriceType    @default(WALK_IN)
   retailerId      String?
   retailerApprovalId String?
   customerName    String?

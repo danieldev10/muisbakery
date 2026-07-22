@@ -70,15 +70,3 @@ USER node
 EXPOSE 3000
 
 CMD ["node", "node_modules/next/dist/bin/next", "start", "apps/web", "--hostname", "0.0.0.0", "--port", "3000"]
-
-FROM postgres:16-alpine AS backup
-
-RUN apk add --no-cache age rclone tzdata
-
-COPY docker/backup-entrypoint.sh /usr/local/bin/backup-entrypoint
-COPY docker/backup-postgres.sh /usr/local/bin/backup-postgres
-
-RUN chmod 0755 /usr/local/bin/backup-entrypoint /usr/local/bin/backup-postgres
-
-ENTRYPOINT ["/usr/local/bin/backup-entrypoint"]
-CMD ["daemon"]

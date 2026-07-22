@@ -30,7 +30,11 @@ export type ProductRef = {
 
 export type SalesProductRef = ProductRef & {
   unitPrice: string | null;
+  retailerPrice: string | null;
+  discountPercent: string;
 };
+
+export type SalePriceType = "WALK_IN" | "RETAILER" | "DISCOUNTED";
 
 export type ProductRecipeOption = {
   id: string;
@@ -361,6 +365,7 @@ export type Sale = {
   id: string;
   saleNumber: number;
   customerType: CustomerType;
+  priceType: SalePriceType;
   terminal: {
     id: string;
     name: string | null;
@@ -472,6 +477,7 @@ export type PosSession = {
   } | null;
   status: PosSessionStatus;
   customerType: CustomerType;
+  priceType: SalePriceType;
   retailer: Retailer | null;
   retailerApprovalId: string | null;
   customerName: string | null;
@@ -571,6 +577,7 @@ export type PosOfflineSalePayload = {
   terminalId: string;
   clientRequestId: string;
   customerType: CustomerType;
+  priceType: SalePriceType;
   retailerId?: string;
   retailerApprovalId?: string;
   paymentMethod: PaymentMethod;

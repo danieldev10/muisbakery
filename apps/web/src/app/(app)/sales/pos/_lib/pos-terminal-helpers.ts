@@ -2,6 +2,7 @@ import type {
   CustomerType,
   PaymentMethod,
   PosOfflineSalePayload,
+  SalePriceType,
   PosSession,
   PosSessionItem,
   SalesInventoryItem,
@@ -24,6 +25,7 @@ export const iconButtonClass =
 
 export type PosSessionPatch = {
   customerType?: CustomerType;
+  priceType?: SalePriceType;
   retailerId?: string | null;
   retailerApprovalId?: string | null;
   customerName?: string | null;
@@ -126,6 +128,44 @@ function moneyString(value: number) {
   return roundMoney(value).toFixed(2);
 }
 
+export function productPriceForType(
+  product: SalesInventoryItem["product"],
+  priceType: SalePriceType = "WALK_IN",
+) {
+  if (priceType === "RETAILER") {
+    return product.retailerPrice;
+  }
+
+  const walkInPrice = Number(product.unitPrice ?? 0);
+
+  if (priceType === "DISCOUNTED") {
+    const discountPercent = Number(product.discountPercent ?? 0);
+    return moneyString(walkInPrice * (1 - discountPercent / 100));
+  }
+
+  return product.unitPrice;
+}
+
+export function repriceSession(
+  session: PosSession,
+  priceType: SalePriceType,
+) {
+  return calculateSessionTotals({
+    ...session,
+    priceType,
+    items: session.items.map((item) => {
+      const unitPrice = productPriceForType(item.product, priceType) ?? "0";
+
+      return {
+        ...item,
+        unitPrice,
+        lineTotal: moneyString(Number(item.quantity) * Number(unitPrice)),
+      };
+    }),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 export function calculateSessionTotals(session: PosSession) {
   const subtotal = roundMoney(
     session.items.reduce(
@@ -173,7 +213,10 @@ export function updateSessionProductQuantity(
   const existingIndex = session.items.findIndex(
     (entry) => entry.product.id === productId,
   );
-  const unitPrice = item.product.unitPrice ?? existing?.unitPrice ?? "0";
+  const unitPrice =
+    productPriceForType(item.product, session.priceType) ??
+    existing?.unitPrice ??
+    "0";
   const nextQuantity = roundCount(quantity);
   const nextItems = session.items.filter(
     (entry) => entry.product.id !== productId,
@@ -218,6 +261,7 @@ export function createLocalPosSession(input: {
     },
     status: "ACTIVE",
     customerType: "INDIVIDUAL",
+    priceType: "WALK_IN",
     retailer: null,
     retailerApprovalId: null,
     customerName: null,
@@ -272,6 +316,7 @@ export function buildOfflineSalePayload(input: {
     terminalId: input.terminalId,
     clientRequestId: input.clientRequestId,
     customerType: input.session.customerType,
+    priceType: input.session.priceType,
     retailerId: input.session.retailer?.id,
     retailerApprovalId: input.session.retailerApprovalId ?? undefined,
     paymentMethod: input.session.paymentMethod,

@@ -11,6 +11,8 @@ export const productSelect = {
   name: true,
   size: true,
   unitPrice: true,
+  retailerPrice: true,
+  discountPercent: true,
   unit: { select: unitSelect },
 } satisfies Prisma.ProductSelect;
 

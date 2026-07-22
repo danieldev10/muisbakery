@@ -27,6 +27,8 @@ const product = {
   name: "Full Loaf Bread",
   size: "",
   unitPrice: 3000,
+  retailerPrice: 3000,
+  discountPercent: 10,
   unit: { id: "unit-1", name: "Loaf", abbreviation: "loaf" },
 };
 

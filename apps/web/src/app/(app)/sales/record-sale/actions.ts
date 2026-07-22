@@ -18,16 +18,10 @@ export async function createSale(
         entry[1].trim() !== "" &&
         Number(entry[1]) > 0,
     )
-    .map(([key, quantity]) => {
-      const productId = key.slice("quantity:".length);
-      const unitPrice = getOptionalString(formData, `unitPrice:${productId}`);
-
-      return {
-        productId,
-        quantity,
-        unitPrice,
-      };
-    });
+    .map(([key, quantity]) => ({
+      productId: key.slice("quantity:".length),
+      quantity,
+    }));
 
   const result = await apiSend("/sales/sales", "POST", {
     customerType: getString(formData, "customerType"),

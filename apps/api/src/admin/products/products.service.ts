@@ -13,13 +13,16 @@ import type { AuthenticatedUser } from "../../auth/auth.types";
 import { PrismaService } from "../../database/prisma.service";
 
 const priceSchema = z.coerce.number().nonnegative().max(99_999_999);
+const discountPercentSchema = z.coerce.number().min(0).max(100);
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
   size: z.string().trim().max(80).optional(),
   description: z.string().trim().max(300).optional(),
   unitId: z.string().trim().min(1),
-  unitPrice: priceSchema.optional(),
+  unitPrice: priceSchema,
+  retailerPrice: priceSchema,
+  discountPercent: discountPercentSchema.optional(),
 });
 
 const updateSchema = z
@@ -29,6 +32,8 @@ const updateSchema = z
     description: z.string().trim().max(300).nullish(),
     unitId: z.string().trim().min(1).optional(),
     unitPrice: priceSchema.nullish(),
+    retailerPrice: priceSchema.nullish(),
+    discountPercent: discountPercentSchema.optional(),
     isActive: z.boolean().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
@@ -45,6 +50,10 @@ function serialize(product: ProductWithUnit) {
   return {
     ...product,
     unitPrice: product.unitPrice ? product.unitPrice.toString() : null,
+    retailerPrice: product.retailerPrice
+      ? product.retailerPrice.toString()
+      : null,
+    discountPercent: product.discountPercent.toString(),
   };
 }
 
@@ -193,6 +202,8 @@ export class ProductsService {
           description: target.description,
           unitId: target.unitId,
           unitPrice: target.unitPrice?.toString() ?? null,
+          retailerPrice: target.retailerPrice?.toString() ?? null,
+          discountPercent: target.discountPercent.toString(),
           isActive: target.isActive,
         },
         after: {
@@ -201,6 +212,8 @@ export class ProductsService {
           description: product.description,
           unitId: product.unitId,
           unitPrice: product.unitPrice?.toString() ?? null,
+          retailerPrice: product.retailerPrice?.toString() ?? null,
+          discountPercent: product.discountPercent.toString(),
           isActive: product.isActive,
         },
       },

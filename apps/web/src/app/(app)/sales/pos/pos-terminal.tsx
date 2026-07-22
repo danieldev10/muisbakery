@@ -25,6 +25,7 @@ import type {
   PosSession,
   PosTerminal as PosTerminalRecord,
   Retailer,
+  SalePriceType,
   SalesInventoryItem,
   SalesOptions,
 } from "@/lib/operations/types";
@@ -49,6 +50,8 @@ import {
   createLocalPosSession,
   paymentLabels,
   productAvailable,
+  productPriceForType,
+  repriceSession,
   roundCount,
   updateSessionProductQuantity,
   type PosSessionPatch,
@@ -382,6 +385,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
   const [terminalPairingCode, setTerminalPairingCode] = useState("");
   const [customerType, setCustomerType] =
     useState<CustomerType>("INDIVIDUAL");
+  const [priceType, setPriceType] = useState<SalePriceType>("WALK_IN");
   const [retailerId, setRetailerId] = useState("");
   const [retailerApprovalId, setRetailerApprovalId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
@@ -418,6 +422,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
       setPaymentMethod(nextSession?.paymentMethod ?? "CASH");
       setCustomerType(nextSession?.customerType ?? "INDIVIDUAL");
+      setPriceType(nextSession?.priceType ?? "WALK_IN");
       setRetailerId(nextSession?.retailer?.id ?? "");
       setRetailerApprovalId(nextSession?.retailerApprovalId ?? "");
     },
@@ -942,6 +947,18 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
 
         const nextCustomerType =
           patch.customerType ?? currentSession.customerType;
+        const currentPriceType =
+          currentSession.priceType ??
+          (currentSession.customerType === "RETAILER"
+            ? "RETAILER"
+            : "WALK_IN");
+        const nextPriceType =
+          nextCustomerType === "RETAILER"
+            ? "RETAILER"
+            : patch.priceType ??
+              (currentPriceType === "RETAILER"
+                ? "WALK_IN"
+                : currentPriceType);
         const nextPaymentMethod =
           patch.paymentMethod ?? currentSession.paymentMethod;
         const nextAmountPaid =
@@ -963,9 +980,10 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                     : patch.retailerId),
               ) ?? currentSession.retailer
             : null;
-        const nextSession = calculateSessionTotals({
+        const patchedSession = {
           ...currentSession,
           customerType: nextCustomerType,
+          priceType: nextPriceType,
           retailer: nextRetailer,
           retailerApprovalId:
             nextCustomerType === "RETAILER"
@@ -985,7 +1003,11 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           notes:
             patch.notes === undefined ? currentSession.notes : patch.notes,
           updatedAt: new Date().toISOString(),
-        });
+        };
+        const nextSession =
+          nextPriceType === currentPriceType
+            ? calculateSessionTotals(patchedSession)
+            : repriceSession(patchedSession, nextPriceType);
 
         applySession(nextSession);
         await saveActiveOfflineSession(currentTerminal.id, nextSession);
@@ -1042,11 +1064,13 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     setApprovalRequestSent(false);
 
     if (nextType === "INDIVIDUAL") {
+      setPriceType("WALK_IN");
       setRetailerId("");
       setRetailerApprovalId("");
       setPaymentMethod("CASH");
       await patchSession({
         customerType: "INDIVIDUAL",
+        priceType: "WALK_IN",
         retailerId: null,
         retailerApprovalId: null,
         paymentMethod: "CASH",
@@ -1060,10 +1084,12 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       : "";
 
     setRetailerId(nextRetailer?.id ?? "");
+    setPriceType("RETAILER");
     setRetailerApprovalId(nextApprovalId);
     setPaymentMethod("CREDIT");
     await patchSession({
       customerType: "RETAILER",
+      priceType: "RETAILER",
       retailerId: nextRetailer?.id ?? null,
       retailerApprovalId: nextApprovalId || null,
       paymentMethod: "CREDIT",
@@ -1081,16 +1107,27 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
       : "";
 
     setCustomerType("RETAILER");
+    setPriceType("RETAILER");
     setRetailerId(nextRetailerId);
     setRetailerApprovalId(nextApprovalId);
     setApprovalRequestSent(false);
     setPaymentMethod("CREDIT");
     await patchSession({
       customerType: "RETAILER",
+      priceType: "RETAILER",
       retailerId: nextRetailerId || null,
       retailerApprovalId: nextApprovalId || null,
       paymentMethod: "CREDIT",
     });
+  }
+
+  async function changePriceType(nextPriceType: SalePriceType) {
+    if (customerType === "RETAILER") {
+      return;
+    }
+
+    setPriceType(nextPriceType);
+    await patchSession({ priceType: nextPriceType });
   }
 
   async function changeRetailerApproval(nextApprovalId: string) {
@@ -1188,7 +1225,6 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           body: JSON.stringify({
             productId,
             quantity: pending.quantity,
-            unitPrice: pending.item.product.unitPrice,
           }),
         },
       );
@@ -1559,6 +1595,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
         method: "PATCH",
         body: JSON.stringify({
           customerType,
+          priceType,
           retailerId: customerType === "RETAILER" ? retailerId || null : null,
           retailerApprovalId:
             customerType === "RETAILER" && paymentMethod === "CREDIT"
@@ -1706,6 +1743,10 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {filteredProducts.map((item) => {
               const quantity = cartQuantity(item.product.id);
+              const activePrice = productPriceForType(
+                item.product,
+                session?.priceType ?? priceType,
+              );
 
               return (
                 <button
@@ -1725,7 +1766,7 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                     )}
                   </span>
                   <span className="mt-3 block text-sm font-semibold text-red-800">
-                    {formatMoney(item.product.unitPrice ?? 0)}
+                    {formatMoney(activePrice ?? 0)}
                   </span>
                 </button>
               );
@@ -2088,6 +2129,33 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
                 >
                   <option value="INDIVIDUAL">Individual</option>
                   <option value="RETAILER">Retailer</option>
+                </select>
+              </div>
+
+              <div className="grid gap-1.5">
+                <label
+                  className="text-sm font-medium text-stone-700"
+                  htmlFor="priceType"
+                >
+                  Price type
+                </label>
+                <select
+                  className={fieldClass}
+                  disabled={customerType === "RETAILER"}
+                  id="priceType"
+                  onChange={(event) =>
+                    void changePriceType(event.target.value as SalePriceType)
+                  }
+                  value={priceType}
+                >
+                  {customerType === "RETAILER" ? (
+                    <option value="RETAILER">Retailer price</option>
+                  ) : (
+                    <>
+                      <option value="WALK_IN">Walk-in price</option>
+                      <option value="DISCOUNTED">Apply product discount</option>
+                    </>
+                  )}
                 </select>
               </div>
 

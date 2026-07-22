@@ -56,6 +56,8 @@ export type Product = {
   unitId: string;
   unit: UnitRef;
   unitPrice: string | null;
+  retailerPrice: string | null;
+  discountPercent: string;
   isActive: boolean;
 };
 

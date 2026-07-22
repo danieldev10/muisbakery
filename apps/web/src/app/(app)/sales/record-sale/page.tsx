@@ -213,7 +213,7 @@ export default async function RecordSalePage({
                     <th className="p-3">Product</th>
                     <th className="p-3">Available</th>
                     <th className="p-3">Quantity</th>
-                    <th className="p-3">Unit price</th>
+                    <th className="p-3">Configured prices</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100">
@@ -244,15 +244,10 @@ export default async function RecordSalePage({
                           type="number"
                         />
                       </td>
-                      <td className="p-3">
-                        <input
-                          className={inputClass}
-                          defaultValue={item.product.unitPrice ?? ""}
-                          min="0"
-                          name={`unitPrice:${item.product.id}`}
-                          step="0.01"
-                          type="number"
-                        />
+                      <td className="p-3 text-sm text-stone-600">
+                        <p>Walk-in: {formatMoney(item.product.unitPrice ?? 0)}</p>
+                        <p>Retailer: {formatMoney(item.product.retailerPrice ?? 0)}</p>
+                        <p>Discount: {Number(item.product.discountPercent)}%</p>
                       </td>
                     </tr>
                   ))}

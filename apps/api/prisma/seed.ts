@@ -578,11 +578,15 @@ async function seedDemoCatalogue() {
         description: `Seeded ${demoProduct.name.toLowerCase()} for testing.`,
         unitId: loafUnit.id,
         unitPrice: demoProduct.unitPrice,
+        retailerPrice: demoProduct.unitPrice,
+        discountPercent: 0,
         isActive: true,
       },
       update: {
         unitId: loafUnit.id,
         unitPrice: demoProduct.unitPrice,
+        retailerPrice: demoProduct.unitPrice,
+        discountPercent: 0,
         isActive: true,
       },
     });

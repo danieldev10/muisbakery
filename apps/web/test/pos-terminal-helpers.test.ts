@@ -10,7 +10,9 @@ import {
   createUuid,
   formatMoney,
   formatQuantity,
+  productPriceForType,
   productAvailable,
+  repriceSession,
   roundCount,
   updateSessionProductQuantity,
 } from "../src/app/(app)/sales/pos/_lib/pos-terminal-helpers";
@@ -52,6 +54,8 @@ const product = {
   size: "",
   unit: { id: "unit-1", name: "Loaf", abbreviation: "loaf" },
   unitPrice: "3000",
+  retailerPrice: "2700",
+  discountPercent: "10",
 };
 
 function session(overrides: Partial<PosSession> = {}): PosSession {
@@ -61,6 +65,7 @@ function session(overrides: Partial<PosSession> = {}): PosSession {
     terminal: null,
     status: "ACTIVE",
     customerType: "INDIVIDUAL",
+    priceType: "WALK_IN",
     retailer: null,
     retailerApprovalId: null,
     customerName: null,
@@ -95,6 +100,25 @@ test("POS display helpers format money, quantities, and available stock", () => 
   assert.equal(productAvailable(inventoryItem({ totalRemaining: "5.9" })), 5);
   assert.equal(roundCount(3.9), 3);
   assert.equal(roundCount(-2), 0);
+});
+
+test("product price types use retailer price and derive discounts from walk-in price", () => {
+  assert.equal(productPriceForType(product, "WALK_IN"), "3000");
+  assert.equal(productPriceForType(product, "RETAILER"), "2700");
+  assert.equal(productPriceForType(product, "DISCOUNTED"), "2700.00");
+});
+
+test("repriceSession updates existing cart lines and totals", () => {
+  const walkInSession = updateSessionProductQuantity(
+    session(),
+    inventoryItem(),
+    2,
+  );
+  const discountedSession = repriceSession(walkInSession, "DISCOUNTED");
+
+  assert.equal(discountedSession.priceType, "DISCOUNTED");
+  assert.equal(discountedSession.items[0]?.unitPrice, "2700.00");
+  assert.equal(discountedSession.totalAmount, "5400.00");
 });
 
 test("createLocalPosSession builds an offline-ready active POS session", () => {

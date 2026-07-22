@@ -108,7 +108,7 @@ function EditProductForm({
 
         <div className="grid gap-1.5">
           <label className={labelClass} htmlFor={`edit-price-${product.id}`}>
-            Default price (₦)
+            Walk-in price (₦)
           </label>
           <input
             className={fieldClass}
@@ -117,6 +117,45 @@ function EditProductForm({
             min="0"
             name="unitPrice"
             placeholder="0.00"
+            step="0.01"
+            type="number"
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <label
+            className={labelClass}
+            htmlFor={`edit-retailer-price-${product.id}`}
+          >
+            Retailer price (₦)
+          </label>
+          <input
+            className={fieldClass}
+            defaultValue={product.retailerPrice ?? ""}
+            id={`edit-retailer-price-${product.id}`}
+            min="0"
+            name="retailerPrice"
+            placeholder="0.00"
+            step="0.01"
+            type="number"
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <label
+            className={labelClass}
+            htmlFor={`edit-discount-percent-${product.id}`}
+          >
+            Discount (%)
+          </label>
+          <input
+            className={fieldClass}
+            defaultValue={product.discountPercent}
+            id={`edit-discount-percent-${product.id}`}
+            max="100"
+            min="0"
+            name="discountPercent"
+            placeholder="0"
             step="0.01"
             type="number"
           />

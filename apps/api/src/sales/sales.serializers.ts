@@ -51,6 +51,8 @@ export function serializeInventoryItem(product: ProductInventory) {
       size: product.size,
       unit: product.unit,
       unitPrice: product.unitPrice?.toString() ?? null,
+      retailerPrice: product.retailerPrice?.toString() ?? null,
+      discountPercent: product.discountPercent.toString(),
     },
     totalRemaining: formatQuantity(totalRemaining),
     batches: product.salesBatches.map(serializeBatch),
@@ -145,6 +147,7 @@ export function serializeSale(sale: SaleWithIncludes) {
     id: sale.id,
     saleNumber: sale.saleNumber,
     customerType: sale.customerType,
+    priceType: sale.priceType,
     retailer: sale.retailer ? serializeRetailer(sale.retailer) : null,
     retailerApproval: sale.retailerApproval
       ? serializeRetailerOrderApproval(sale.retailerApproval)
@@ -280,6 +283,7 @@ export function serializePosSession(session: PosSessionWithIncludes) {
     terminal: session.terminal,
     status: session.status,
     customerType: session.customerType,
+    priceType: session.priceType,
     retailer: session.retailer ? serializeRetailer(session.retailer) : null,
     retailerApprovalId: session.retailerApprovalId,
     customerName: session.customerName,

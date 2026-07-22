@@ -120,6 +120,7 @@ function sale(
     terminalId: "terminal-1",
     clientRequestId: "offline:terminal-1:request-1",
     customerType: "RETAILER",
+    priceType: "RETAILER",
     retailerId: "retailer-1",
     paymentMethod: "CREDIT",
     soldAt: now,

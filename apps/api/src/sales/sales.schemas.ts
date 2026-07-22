@@ -1,6 +1,7 @@
 import {
   CustomerType,
   PaymentMethod,
+  SalePriceType,
   PosSessionStatus,
   RetailerOrderApprovalStatus,
   SalesReturnDisposition,
@@ -90,6 +91,7 @@ const clientRequestIdSchema = z
 export const createSaleSchema = z
   .object({
     customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
+    priceType: z.enum(SalePriceType).optional(),
     retailerId: optionalId,
     retailerApprovalId: optionalId,
     terminalId: optionalId,
@@ -124,6 +126,14 @@ export const createSaleSchema = z
           path: ["retailerId"],
         });
       }
+
+      if (value.priceType && value.priceType !== SalePriceType.RETAILER) {
+        context.addIssue({
+          code: "custom",
+          message: "Retailer sales must use the retailer price.",
+          path: ["priceType"],
+        });
+      }
     }
 
     if (value.customerType === CustomerType.INDIVIDUAL && value.retailerId) {
@@ -131,6 +141,17 @@ export const createSaleSchema = z
         code: "custom",
         message: "Retailer can only be selected for retailer sales.",
         path: ["retailerId"],
+      });
+    }
+
+    if (
+      value.customerType === CustomerType.INDIVIDUAL &&
+      value.priceType === SalePriceType.RETAILER
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer pricing requires a retailer sale.",
+        path: ["priceType"],
       });
     }
 
@@ -163,6 +184,7 @@ export const syncOfflinePosSaleSchema = z
     terminalId: z.string().trim().min(1),
     clientRequestId: clientRequestIdSchema,
     customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
+    priceType: z.enum(SalePriceType).optional(),
     retailerId: optionalId,
     retailerApprovalId: optionalId,
     paymentMethod: z.enum(PaymentMethod),
@@ -195,11 +217,35 @@ export const syncOfflinePosSaleSchema = z
       });
     }
 
+
+    if (
+      value.customerType === CustomerType.RETAILER &&
+      value.priceType &&
+      value.priceType !== SalePriceType.RETAILER
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer sales must use the retailer price.",
+        path: ["priceType"],
+      });
+    }
+
     if (value.customerType === CustomerType.INDIVIDUAL && value.retailerId) {
       context.addIssue({
         code: "custom",
         message: "Retailer can only be selected for retailer sales.",
         path: ["retailerId"],
+      });
+    }
+
+    if (
+      value.customerType === CustomerType.INDIVIDUAL &&
+      value.priceType === SalePriceType.RETAILER
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Retailer pricing requires a retailer sale.",
+        path: ["priceType"],
       });
     }
 
@@ -332,6 +378,7 @@ export const setTerminalRetailerCreditAllocationSchema = z.object({
 
 export const createPosSessionSchema = z.object({
   customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
+  priceType: z.enum(SalePriceType).optional(),
   retailerId: optionalId,
   retailerApprovalId: optionalId,
   customerName: optionalText(160),
@@ -340,6 +387,7 @@ export const createPosSessionSchema = z.object({
 
 export const updatePosSessionSchema = z.object({
   customerType: z.enum(CustomerType).optional(),
+  priceType: z.enum(SalePriceType).optional(),
   retailerId: nullableId,
   retailerApprovalId: nullableId,
   customerName: nullableText(160),
