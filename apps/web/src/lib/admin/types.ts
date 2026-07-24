@@ -5,6 +5,7 @@ export type AdminUser = {
   id: string;
   name: string | null;
   email: string;
+  recoveryEmail: string | null;
   role: AppRole;
   isActive: boolean;
   lastLoginAt: string | null;

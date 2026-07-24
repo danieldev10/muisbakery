@@ -77,7 +77,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
     };
-    const token = await this.signToken(authenticatedUser);
+    const token = await this.signToken(authenticatedUser, user.authVersion);
 
     this.setAuthCookie(response, token);
 
@@ -228,10 +228,14 @@ export class AuthService {
         email: true,
         role: true,
         isActive: true,
+        authVersion: true,
       },
     });
 
-    if (!user?.isActive) {
+    if (
+      !user?.isActive ||
+      (payload.version ?? 0) !== user.authVersion
+    ) {
       return null;
     }
 
@@ -243,11 +247,12 @@ export class AuthService {
     } satisfies AuthenticatedUser;
   }
 
-  private async signToken(user: AuthenticatedUser) {
+  private async signToken(user: AuthenticatedUser, authVersion: number) {
     return this.jwt.signAsync(
       {
         sub: user.id,
         role: user.role,
+        version: authVersion,
       } satisfies AuthTokenPayload,
       {
         expiresIn: "8h",

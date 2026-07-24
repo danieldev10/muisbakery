@@ -146,6 +146,56 @@ export function getInternalApiSecret() {
   return secret;
 }
 
+export type SmtpConfig = {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  password: string;
+  from: string;
+};
+
+export function getSmtpConfig(): SmtpConfig | null {
+  const values = {
+    host: process.env.SMTP_HOST?.trim(),
+    port: process.env.SMTP_PORT?.trim(),
+    secure: process.env.SMTP_SECURE?.trim(),
+    user: process.env.SMTP_USER?.trim(),
+    password: process.env.SMTP_PASSWORD?.trim(),
+    from: process.env.SMTP_FROM?.trim(),
+  };
+  const configured = Object.values(values).filter(Boolean).length;
+
+  if (configured === 0) {
+    return null;
+  }
+
+  if (configured !== Object.keys(values).length) {
+    throw new Error(
+      "SMTP configuration is incomplete. Set SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM together.",
+    );
+  }
+
+  const port = Number(values.port);
+
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("SMTP_PORT must be an integer between 1 and 65535.");
+  }
+
+  if (values.secure !== "true" && values.secure !== "false") {
+    throw new Error("SMTP_SECURE must be either true or false.");
+  }
+
+  return {
+    host: values.host!,
+    port,
+    secure: values.secure === "true",
+    user: values.user!,
+    password: values.password!,
+    from: values.from!,
+  };
+}
+
 export function assertRequiredEnv() {
   const missing: string[] = [];
 
@@ -175,4 +225,5 @@ export function assertRequiredEnv() {
   getJwtSecret();
   getWebOrigin();
   getInternalApiSecret();
+  getSmtpConfig();
 }

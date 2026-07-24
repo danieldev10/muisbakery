@@ -30,6 +30,9 @@ Set these before deploying:
 - `DATABASE_URL`: PostgreSQL connection string.
 - `AUTH_JWT_SECRET`: at least 32 characters in production.
 - `WEB_ORIGIN`: HTTPS origin of the web app, for example `https://muisfoods.vercel.app`.
+- Optional online password recovery requires all of `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`. Configure these
+  on the API service only; do not expose SMTP credentials to the web build.
 - `INTERNAL_API_SECRET`: at least 32 characters. Use the same value on the web app so Next server-side routes can call the API.
 - `API_URL`: server-side URL the Next app uses to call the Nest API.
 - `NEXT_PUBLIC_API_URL`: browser-visible API URL for public/client-side calls.

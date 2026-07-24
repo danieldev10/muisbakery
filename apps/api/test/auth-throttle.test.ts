@@ -63,7 +63,7 @@ function makeService({
 
   const jwt = {
     signAsync: async () => "signed-token",
-    verifyAsync: async () => ({ sub: "user-1" }),
+    verifyAsync: async () => ({ sub: "user-1", version: 0 }),
   };
 
   return {
@@ -114,6 +114,7 @@ test("a wrong password records an AUTH_LOGIN_FAILED audit entry and stays generi
       role: "ADMIN",
       isActive: true,
       passwordHash: hashSync(PASSWORD, 4),
+      authVersion: 0,
     },
   });
   const { response } = makeResponse();
@@ -163,6 +164,7 @@ test("a valid login below the threshold still succeeds and sets the cookie", asy
       role: "ADMIN",
       isActive: true,
       passwordHash: hashSync(PASSWORD, 4),
+      authVersion: 0,
     },
   });
   const { cookies, response } = makeResponse();
@@ -176,4 +178,23 @@ test("a valid login below the threshold still succeeds and sets the cookie", asy
   assert.equal(result.email, "admin@muisbakery.local");
   assert.equal(cookies.muisbakery_session, "signed-token");
   assert.equal(failureRecords.length, 0);
+});
+
+test("a password change invalidates an existing signed session", async () => {
+  const { service } = makeService({
+    user: {
+      id: "user-1",
+      name: "Admin",
+      email: "admin@muisbakery.local",
+      role: "ADMIN",
+      isActive: true,
+      authVersion: 1,
+    },
+  });
+
+  await assert.rejects(
+    service.me({ headers: { cookie: "muisbakery_session=old-token" } } as never),
+    (error) =>
+      error instanceof UnauthorizedException && error.message === "Not signed in.",
+  );
 });

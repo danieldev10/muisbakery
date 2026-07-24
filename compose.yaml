@@ -13,6 +13,12 @@ x-api-environment: &api-environment
   WEB_ORIGIN: http://${PUBLIC_HOST:-localhost}:${WEB_HOST_PORT:-3000}
   AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-docker-jwt-secret-change-before-sharing}
   INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-local-docker-internal-api-secret-change-me}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-}
+  SMTP_SECURE: ${SMTP_SECURE:-}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
 
 services:
   db:

@@ -52,6 +52,10 @@ async function bootstrap() {
     "/sales/pos/display",
     rateLimitMiddleware({ windowMs: 60_000, max: 120 }),
   );
+  app.use(
+    "/auth/password-reset",
+    rateLimitMiddleware({ windowMs: 15 * 60_000, max: 30 }),
+  );
 
   app.enableCors({
     origin(

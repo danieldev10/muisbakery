@@ -86,6 +86,23 @@ function EditUserForm({
         </div>
       </div>
 
+      <div className="grid gap-1.5">
+        <label className={labelClass} htmlFor={`edit-recovery-email-${user.id}`}>
+          Recovery email
+        </label>
+        <input
+          className={fieldClass}
+          defaultValue={user.recoveryEmail ?? ""}
+          id={`edit-recovery-email-${user.id}`}
+          name="recoveryEmail"
+          placeholder="staff@example.com"
+          type="email"
+        />
+        <p className="text-xs text-[var(--text-muted)]">
+          Used only to send online password recovery codes.
+        </p>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <label className={labelClass} htmlFor={`edit-role-${user.id}`}>

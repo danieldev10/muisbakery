@@ -163,6 +163,36 @@ The API accepts loopback and private-network web origins in the local
 development profile. Production deployments continue to accept only the
 configured `WEB_ORIGIN`.
 
+### Online Password Recovery
+
+The local installation can reset forgotten passwords through email, but this
+specific flow requires internet access. Normal sign-in and all operational
+work remain local.
+
+Admin must first add a real recovery email to each user from **Admin > Users**.
+Then configure all of these variables in the installation's `.env` file:
+
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=muisbakery.ng@gmail.com
+SMTP_PASSWORD=replace-with-google-app-password
+SMTP_FROM=Muis Bakery <muisbakery.ng@gmail.com>
+```
+
+For Gmail, enable two-step verification and create a Google App Password for
+`SMTP_PASSWORD`. Do not use or commit the normal Google account password.
+Restart the API after changing the values:
+
+```bash
+docker compose up -d
+```
+
+If SMTP is not configured, the application still starts and Admin can reset a
+staff password manually. Email recovery will not deliver a code until SMTP is
+configured.
+
 Use a URL-safe PostgreSQL password. The Compose file embeds it directly into
 the PostgreSQL connection URL.
 

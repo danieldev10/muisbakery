@@ -23,4 +23,5 @@ export function getRequestUser(request: Request): AuthenticatedUser {
 export type AuthTokenPayload = {
   sub: string;
   role: Role;
+  version?: number;
 };

@@ -17,6 +17,7 @@ test("UsersService.update can change a user's email address", async () => {
           id: "user-2",
           name: "Sales Rep",
           email: "sales.rep@muisbakery.local",
+          recoveryEmail: "sales.rep@example.com",
           role: "SALES",
           isActive: true,
           lastLoginAt: null,
@@ -29,6 +30,7 @@ test("UsersService.update can change a user's email address", async () => {
             id: "user-2",
             name: "Sales Lead",
             email: data.email,
+            recoveryEmail: data.recoveryEmail,
             role: "SALES",
             isActive: true,
             lastLoginAt: null,
@@ -45,6 +47,7 @@ test("UsersService.update can change a user's email address", async () => {
     {
       name: "Sales Lead",
       email: "SALES.LEAD@MUISBAKERY.LOCAL",
+      recoveryEmail: "SALES.LEAD@EXAMPLE.COM",
       role: "SALES",
       isActive: true,
     },
@@ -53,25 +56,73 @@ test("UsersService.update can change a user's email address", async () => {
 
   assert.equal(updateData?.email, "sales.lead@muisbakery.local");
   assert.equal(result.email, "sales.lead@muisbakery.local");
+  assert.equal(result.recoveryEmail, "sales.lead@example.com");
   assert.equal(records.length, 1);
   assert.deepEqual((records[0] as { metadata: unknown }).metadata, {
     email: "sales.lead@muisbakery.local",
+    recoveryEmail: "sales.lead@example.com",
     role: "SALES",
     isActive: true,
     passwordChanged: false,
     before: {
       name: "Sales Rep",
       email: "sales.rep@muisbakery.local",
+      recoveryEmail: "sales.rep@example.com",
       role: "SALES",
       isActive: true,
     },
     after: {
       name: "Sales Lead",
       email: "sales.lead@muisbakery.local",
+      recoveryEmail: "sales.lead@example.com",
       role: "SALES",
       isActive: true,
     },
   });
+});
+
+test("UsersService.update invalidates sessions when Admin resets a password", async () => {
+  let updateData: Record<string, unknown> | null = null;
+  const { audit } = createAuditMock();
+  const service = new UsersService(
+    {
+      user: {
+        findUnique: async () => ({
+          id: "user-2",
+          name: "Sales Rep",
+          email: "sales@muisbakery.local",
+          recoveryEmail: "sales@example.com",
+          role: "SALES",
+          isActive: true,
+          lastLoginAt: null,
+          createdAt: new Date(),
+        }),
+        update: async ({ data }: { data: Record<string, unknown> }) => {
+          updateData = data;
+          return {
+            id: "user-2",
+            name: "Sales Rep",
+            email: "sales@muisbakery.local",
+            recoveryEmail: "sales@example.com",
+            role: "SALES",
+            isActive: true,
+            lastLoginAt: null,
+            createdAt: new Date(),
+          };
+        },
+      },
+    } as never,
+    audit as never,
+  );
+
+  await service.update(
+    "user-2",
+    { password: "new-secure-password" },
+    actor,
+  );
+
+  assert.equal(typeof updateData?.passwordHash, "string");
+  assert.deepEqual(updateData?.authVersion, { increment: 1 });
 });
 
 test("UsersService.update rejects duplicate email addresses", async () => {

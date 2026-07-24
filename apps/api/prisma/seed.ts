@@ -362,7 +362,9 @@ async function seedAdmin() {
         name: adminName,
         role: "ADMIN",
         isActive: true,
-        ...(passwordHash ? { passwordHash } : {}),
+        ...(passwordHash
+          ? { passwordHash, authVersion: { increment: 1 } }
+          : {}),
       },
     });
 
@@ -440,6 +442,7 @@ async function seedDemoRoleUsers(adminId: string) {
       update: {
         name: demoUser.name,
         passwordHash,
+        authVersion: { increment: 1 },
         role: demoUser.role,
         isActive: true,
       },

@@ -71,6 +71,7 @@ export default async function UsersPage({
       matchesSearch(query, [
         user.name,
         user.email,
+        user.recoveryEmail,
         roleLabels[user.role],
         user.role,
       ]) &&
@@ -105,6 +106,13 @@ export default async function UsersPage({
               type="email"
             />
             <Field
+              hint="Used only for online password recovery."
+              label="Recovery email"
+              name="recoveryEmail"
+              placeholder="staff@example.com"
+              type="email"
+            />
+            <Field
               hint="At least 8 characters."
               label="Password"
               name="password"
@@ -127,7 +135,7 @@ export default async function UsersPage({
           <TableToolbar
             basePath="/admin/users"
             searchParams={params}
-            searchPlaceholder="Search name, email, or role"
+            searchPlaceholder="Search name, email, recovery email, or role"
             selectFilters={[
               {
                 label: "Role",
@@ -180,6 +188,9 @@ export default async function UsersPage({
                       </p>
                       <p className="truncate text-xs text-stone-500">
                         {user.email}
+                      </p>
+                      <p className="truncate text-xs text-stone-400">
+                        {user.recoveryEmail ?? "Recovery not configured"}
                       </p>
                     </div>
                   </div>

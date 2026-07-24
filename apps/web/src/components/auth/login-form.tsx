@@ -1,6 +1,7 @@
 "use client";
 
 import { LogIn } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
@@ -82,12 +83,20 @@ export function LoginForm({ callbackUrl }: LoginFormProps) {
       </div>
 
       <div className="grid gap-2">
-        <label
-          className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--text-muted)]"
-          htmlFor="password"
-        >
-          Password
-        </label>
+        <div className="flex items-center justify-between gap-3">
+          <label
+            className="text-xs font-semibold uppercase tracking-[1.3px] text-[var(--text-muted)]"
+            htmlFor="password"
+          >
+            Password
+          </label>
+          <Link
+            className="text-xs font-semibold text-[var(--brand-burgundy)] hover:underline"
+            href="/forgot-password"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <input
           autoComplete="current-password"
           className="h-11 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-sm text-[var(--text-primary)] shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]"

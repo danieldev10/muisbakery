@@ -5,6 +5,7 @@ import {
   assertRequiredEnv,
   getInternalApiSecret,
   getJwtSecret,
+  getSmtpConfig,
   getWebOrigin,
   isWebOriginAllowed,
 } from "../src/config/env";
@@ -16,6 +17,12 @@ const ENV_KEYS = [
   "INTERNAL_API_SECRET",
   "WEB_ORIGIN",
   "NODE_ENV",
+  "SMTP_HOST",
+  "SMTP_PORT",
+  "SMTP_SECURE",
+  "SMTP_USER",
+  "SMTP_PASSWORD",
+  "SMTP_FROM",
 ] as const;
 
 function withEnv(overrides: Record<string, string | undefined>, run: () => void) {
@@ -175,4 +182,33 @@ test("getInternalApiSecret is optional in development and required in production
   withEnv({ NODE_ENV: "production" }, () => {
     assert.throws(getInternalApiSecret, /server-to-server API secret/);
   });
+});
+
+test("SMTP configuration is optional but must be complete when enabled", () => {
+  withEnv({}, () => {
+    assert.equal(getSmtpConfig(), null);
+  });
+  withEnv({ SMTP_HOST: "smtp.example.com" }, () => {
+    assert.throws(getSmtpConfig, /SMTP configuration is incomplete/);
+  });
+  withEnv(
+    {
+      SMTP_HOST: "smtp.example.com",
+      SMTP_PORT: "465",
+      SMTP_SECURE: "true",
+      SMTP_USER: "mailer@example.com",
+      SMTP_PASSWORD: "app-password",
+      SMTP_FROM: "Muis Bakery <mailer@example.com>",
+    },
+    () => {
+      assert.deepEqual(getSmtpConfig(), {
+        host: "smtp.example.com",
+        port: 465,
+        secure: true,
+        user: "mailer@example.com",
+        password: "app-password",
+        from: "Muis Bakery <mailer@example.com>",
+      });
+    },
+  );
 });

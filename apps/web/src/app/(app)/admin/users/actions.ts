@@ -15,6 +15,7 @@ export async function createUser(
   const result = await apiSend(PATH, "POST", {
     name: getOptionalString(formData, "name"),
     email: getString(formData, "email"),
+    recoveryEmail: getOptionalString(formData, "recoveryEmail"),
     password: getString(formData, "password"),
     role: getString(formData, "role"),
   });
@@ -32,9 +33,11 @@ export async function updateUser(
   formData: FormData,
 ): Promise<FormState> {
   const password = getOptionalString(formData, "password");
+  const recoveryEmail = getOptionalString(formData, "recoveryEmail");
   const result = await apiSend(`${PATH}/${getString(formData, "id")}`, "PATCH", {
     name: getOptionalString(formData, "name"),
     email: getString(formData, "email"),
+    recoveryEmail: recoveryEmail ?? null,
     role: getString(formData, "role"),
     isActive: getString(formData, "isActive") === "true",
     ...(password ? { password } : {}),

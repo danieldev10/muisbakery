@@ -96,16 +96,18 @@ enum ProductionWasteType {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  name         String?
-  email        String    @unique
-  passwordHash String
-  role         Role      @default(STORE)
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  createdById  String?
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  recoveryEmail String?
+  passwordHash  String
+  authVersion   Int       @default(0)
+  role          Role      @default(STORE)
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  createdById   String?
 
   createdBy                   User?                             @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdUsers                User[]                            @relation("UserCreatedBy")
@@ -140,9 +142,27 @@ model User {
   terminalCloseOverrides      PosTerminalDayCloseReadiness[]    @relation("TerminalDayCloseOverriddenBy")
   terminalStockBatchesCreated PosTerminalStockBatch[]           @relation("PosTerminalStockBatchCreatedBy")
   terminalStockMovements      PosTerminalStockMovement[]        @relation("PosTerminalStockMovementActor")
+  passwordResetTokens         PasswordResetToken[]
 
   @@index([role])
   @@index([isActive])
+}
+
+model PasswordResetToken {
+  id             String    @id @default(cuid())
+  userId         String
+  codeHash       String
+  expiresAt      DateTime
+  usedAt         DateTime?
+  failedAttempts Int       @default(0)
+  requestIp      String?
+  userAgent      String?
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 // --- Phase 2: Admin master data ---

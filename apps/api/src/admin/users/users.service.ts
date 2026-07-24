@@ -24,6 +24,7 @@ const roleEnum = z.enum([
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   email: z.string().trim().toLowerCase().email(),
+  recoveryEmail: z.string().trim().toLowerCase().email().optional(),
   password: z.string().min(8).max(200),
   role: roleEnum,
 });
@@ -32,6 +33,7 @@ const updateSchema = z
   .object({
     name: z.string().trim().min(1).max(120).nullish(),
     email: z.string().trim().toLowerCase().email().optional(),
+    recoveryEmail: z.string().trim().toLowerCase().email().nullable().optional(),
     role: roleEnum.optional(),
     isActive: z.boolean().optional(),
     password: z.string().min(8).max(200).optional(),
@@ -44,6 +46,7 @@ const userSelect = {
   id: true,
   name: true,
   email: true,
+  recoveryEmail: true,
   role: true,
   isActive: true,
   lastLoginAt: true,
@@ -84,6 +87,7 @@ export class UsersService {
       data: {
         name: parsed.data.name ?? null,
         email: parsed.data.email,
+        recoveryEmail: parsed.data.recoveryEmail ?? null,
         passwordHash: await hash(parsed.data.password, 12),
         role: parsed.data.role,
         createdById: actor.id,
@@ -96,7 +100,11 @@ export class UsersService {
       action: "ADMIN_USER_CREATED",
       entityType: "User",
       entityId: user.id,
-      metadata: { email: user.email, role: user.role },
+      metadata: {
+        email: user.email,
+        recoveryEmail: user.recoveryEmail,
+        role: user.role,
+      },
     });
 
     return user;
@@ -144,12 +152,18 @@ export class UsersService {
       data: {
         ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
         ...(parsed.data.email ? { email: parsed.data.email } : {}),
+        ...(parsed.data.recoveryEmail !== undefined
+          ? { recoveryEmail: parsed.data.recoveryEmail }
+          : {}),
         ...(parsed.data.role ? { role: parsed.data.role } : {}),
         ...(parsed.data.isActive !== undefined
           ? { isActive: parsed.data.isActive }
           : {}),
         ...(parsed.data.password
-          ? { passwordHash: await hash(parsed.data.password, 12) }
+          ? {
+              passwordHash: await hash(parsed.data.password, 12),
+              authVersion: { increment: 1 },
+            }
           : {}),
       },
       select: userSelect,
@@ -162,18 +176,21 @@ export class UsersService {
       entityId: user.id,
       metadata: {
         email: user.email,
+        recoveryEmail: user.recoveryEmail,
         role: user.role,
         isActive: user.isActive,
         passwordChanged: Boolean(parsed.data.password),
         before: {
           name: target.name,
           email: target.email,
+          recoveryEmail: target.recoveryEmail,
           role: target.role,
           isActive: target.isActive,
         },
         after: {
           name: user.name,
           email: user.email,
+          recoveryEmail: user.recoveryEmail,
           role: user.role,
           isActive: user.isActive,
         },
