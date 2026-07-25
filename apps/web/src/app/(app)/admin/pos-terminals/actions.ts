@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { getBoolean, getOptionalString, getString } from "@/lib/admin/form-data";
+import { getBoolean, getString } from "@/lib/admin/form-data";
 import type { FormState } from "@/lib/admin/types";
 import { apiSend } from "@/lib/server-api";
 
@@ -18,9 +18,7 @@ export async function createPosTerminal(
   formData: FormData,
 ): Promise<FormState> {
   const result = await apiSend("/admin/pos-terminals", "POST", {
-    name: getOptionalString(formData, "name"),
-    pairingCode: getString(formData, "pairingCode"),
-    offlineEnabled: getBoolean(formData, "offlineEnabled"),
+    name: getString(formData, "name"),
   });
 
   if (!result.ok) {
@@ -39,97 +37,9 @@ export async function updatePosTerminal(
     `/admin/pos-terminals/${getString(formData, "id")}`,
     "PATCH",
     {
-      name: getOptionalString(formData, "name") ?? null,
+      name: getString(formData, "name"),
       isActive: getBoolean(formData, "isActive"),
-      offlineEnabled: getBoolean(formData, "offlineEnabled"),
       rotateDisplayToken: getBoolean(formData, "rotateDisplayToken"),
-    },
-  );
-
-  if (!result.ok) {
-    return { ok: false, error: result.message };
-  }
-
-  revalidateTerminalViews();
-  return { ok: true, error: null, token: Date.now() };
-}
-
-export async function rePairPosTerminal(
-  _state: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const terminalId = getString(formData, "terminalId");
-  const result = await apiSend(
-    `/admin/pos-terminals/${terminalId}/re-pair`,
-    "POST",
-    { pairingCode: getString(formData, "pairingCode") },
-  );
-
-  if (!result.ok) {
-    return { ok: false, error: result.message };
-  }
-
-  revalidateTerminalViews();
-  return { ok: true, error: null, token: Date.now() };
-}
-
-export async function setTerminalStockAllocation(
-  _state: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const terminalId = getString(formData, "terminalId");
-  const result = await apiSend(
-    `/admin/pos-terminals/${terminalId}/stock-allocations`,
-    "POST",
-    {
-      productId: getString(formData, "productId"),
-      allocatedQuantity: getString(formData, "allocatedQuantity"),
-    },
-  );
-
-  if (!result.ok) {
-    return { ok: false, error: result.message };
-  }
-
-  revalidateTerminalViews();
-  return { ok: true, error: null, token: Date.now() };
-}
-
-export async function adjustTerminalStock(
-  _state: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const terminalId = getString(formData, "terminalId");
-  const result = await apiSend(
-    `/admin/pos-terminals/${terminalId}/stock-adjustments`,
-    "POST",
-    {
-      terminalBatchId: getString(formData, "terminalBatchId"),
-      countedQuantity: getString(formData, "countedQuantity"),
-      reason: getString(formData, "reason"),
-    },
-  );
-
-  if (!result.ok) {
-    return { ok: false, error: result.message };
-  }
-
-  revalidateTerminalViews();
-  return { ok: true, error: null, token: Date.now() };
-}
-
-export async function setTerminalRetailerCreditAllocation(
-  _state: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const terminalId = getString(formData, "terminalId");
-  const result = await apiSend(
-    `/admin/pos-terminals/${terminalId}/retailer-credit-allocations`,
-    "POST",
-    {
-      retailerId: getString(formData, "retailerId"),
-      allocatedAmount: getString(formData, "allocatedAmount"),
-      isActive: getBoolean(formData, "isActive"),
     },
   );
 

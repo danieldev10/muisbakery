@@ -44,14 +44,13 @@ export async function recordBusinessDayActivity(
   const state = await lockBusinessDayState(tx, businessDate);
 
   if (
-    state.status === BusinessDayStatus.CLOSING ||
     state.status === BusinessDayStatus.SUBMITTED ||
     state.status === BusinessDayStatus.APPROVED
   ) {
     throw new BusinessDayPostingLockedException(
       state.status === BusinessDayStatus.APPROVED
         ? "This business day has already been approved. Management must reopen it before another transaction can be posted."
-        : "This business day is being closed. Complete or cancel the close before another transaction can be posted.",
+        : "This business day has been submitted for approval. Management must reopen it before another transaction can be posted.",
     );
   }
 

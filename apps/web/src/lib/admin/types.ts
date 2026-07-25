@@ -1,5 +1,4 @@
 import type { AppRole } from "@/lib/roles";
-import type { Sale } from "@/lib/operations/types";
 
 export type AdminUser = {
   id: string;
@@ -92,93 +91,21 @@ export type PosTerminal = {
   id: string;
   name: string | null;
   displayToken: string;
-  pairable: boolean;
-  pairingCodeExpiresAt: string | null;
-  pairedAt: string | null;
-  pairedBy: {
+  isActive: boolean;
+  createdBy: {
     id: string;
     name: string | null;
     email: string;
   } | null;
-  deviceSecretIssuedAt: string | null;
-  isActive: boolean;
-  offlineEnabled: boolean;
-  lastSeenAt: string | null;
-  lastSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;
   currentSession: {
     id: string;
     status: string;
+    customerType: string;
+    totalAmount: string;
     createdAt: string;
   } | null;
-  stockAllocations: Array<{
-    id: string;
-    allocatedQuantity: string;
-    soldQuantity: string;
-    remainingQuantity: string;
-    product: {
-      id: string;
-      name: string;
-      size: string;
-      unitPrice: string | null;
-      unit: UnitRef;
-    };
-    batches: Array<{
-      id: string;
-      quantityAllocated: string;
-      quantityRemaining: string;
-      allocatedAt: string;
-      updatedAt: string;
-      sourceBatch: {
-        id: string;
-        batchNumber: number;
-        batchDate: string;
-        receivedAt: string;
-      };
-    }>;
-    createdAt: string;
-    updatedAt: string;
-  }>;
-  retailerCreditAllocations: Array<{
-    id: string;
-    allocatedAmount: string;
-    usedAmount: string;
-    remainingAmount: string;
-    isActive: boolean;
-    retailer: {
-      id: string;
-      name: string;
-      contactPerson: string | null;
-    };
-    createdAt: string;
-    updatedAt: string;
-  }>;
-};
-
-export type PosOfflineSyncStatus =
-  | "SYNCED"
-  | "DUPLICATE"
-  | "CONFLICT"
-  | "FAILED";
-
-export type PosOfflineSyncAttempt = {
-  id: string;
-  terminal: {
-    id: string;
-    name: string | null;
-    offlineEnabled: boolean;
-  };
-  clientRequestId: string;
-  status: PosOfflineSyncStatus;
-  sale: Sale | null;
-  payload: unknown;
-  errorMessage: string | null;
-  conflictCode: string | null;
-  attemptedAt: string;
-  syncedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
 };
 
 export type FormState = {

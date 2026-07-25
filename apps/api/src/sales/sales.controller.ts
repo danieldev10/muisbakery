@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   Inject,
   Param,
   Patch,
@@ -18,8 +17,6 @@ import { getRequestUser } from "../auth/auth.types";
 import type { QueryParams } from "../common/pagination";
 import { DayCloseService } from "./day-close.service";
 import { SalesService } from "./sales.service";
-
-export const posTerminalSecretHeader = "x-muisbakery-pos-terminal-secret";
 
 @UseGuards(SalesGuard)
 @Controller("sales")
@@ -41,19 +38,14 @@ export class SalesController {
     return this.dayClose.submit(body, getRequestUser(request));
   }
 
-  @Post("day-close/prepare")
-  prepareDayClose(@Body() body: unknown, @Req() request: Request) {
-    return this.dayClose.prepare(body, getRequestUser(request));
-  }
-
   @Get("inventory")
   inventory() {
     return this.sales.inventory();
   }
 
   @Get("options")
-  options() {
-    return this.sales.options();
+  options(@Req() request: Request) {
+    return this.sales.options(getRequestUser(request));
   }
 
   @Get("retailers")
@@ -117,84 +109,16 @@ export class SalesController {
   createPosSession(
     @Body() body: unknown,
     @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
   ) {
-    return this.sales.createPosSession(
-      body,
-      getRequestUser(request),
-      terminalSecret,
-    );
-  }
-
-  @Get("pos/terminals/:id")
-  getPosTerminal(
-    @Param("id") id: string,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
-  ) {
-    return this.sales.getPosTerminal(id, terminalSecret);
-  }
-
-  @Get("pos/terminals/:id/offline-snapshot")
-  getPosOfflineSnapshot(
-    @Param("id") id: string,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
-  ) {
-    return this.sales.getPosOfflineSnapshot(id, terminalSecret);
-  }
-
-  @Post("pos/terminals/:id/display-preview")
-  publishPosTerminalDisplay(
-    @Param("id") id: string,
-    @Body() body: unknown,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
-  ) {
-    return this.sales.publishPosTerminalDisplay(id, body, terminalSecret);
-  }
-
-  @Post("pos/terminals/pair")
-  pairPosTerminal(@Body() body: unknown, @Req() request: Request) {
-    return this.sales.pairPosTerminal(body, getRequestUser(request));
-  }
-
-  @Post("pos/terminals/:id/day-close-readiness")
-  async confirmPosTerminalDayCloseReadiness(
-    @Param("id") id: string,
-    @Body() body: unknown,
-    @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
-  ) {
-    await this.sales.authenticatePosTerminal(id, terminalSecret);
-    return this.dayClose.confirmTerminalReadiness(
-      id,
-      body,
-      getRequestUser(request),
-    );
-  }
-
-  @Post("pos/sync")
-  syncOfflinePosSales(
-    @Body() body: unknown,
-    @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
-  ) {
-    return this.sales.syncOfflinePosSales(
-      body,
-      getRequestUser(request),
-      terminalSecret,
-    );
+    return this.sales.createPosSession(body, getRequestUser(request));
   }
 
   @Get("pos/sessions/:id")
   getPosSession(
     @Param("id") id: string,
     @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
   ) {
-    return this.sales.getPosSession(
-      id,
-      getRequestUser(request),
-      terminalSecret,
-    );
+    return this.sales.getPosSession(id, getRequestUser(request));
   }
 
   @Patch("pos/sessions/:id")
@@ -202,14 +126,8 @@ export class SalesController {
     @Param("id") id: string,
     @Body() body: unknown,
     @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
   ) {
-    return this.sales.updatePosSession(
-      id,
-      body,
-      getRequestUser(request),
-      terminalSecret,
-    );
+    return this.sales.updatePosSession(id, body, getRequestUser(request));
   }
 
   @Patch("pos/sessions/:id/items")
@@ -217,40 +135,24 @@ export class SalesController {
     @Param("id") id: string,
     @Body() body: unknown,
     @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
   ) {
-    return this.sales.upsertPosSessionItem(
-      id,
-      body,
-      getRequestUser(request),
-      terminalSecret,
-    );
+    return this.sales.upsertPosSessionItem(id, body, getRequestUser(request));
   }
 
   @Post("pos/sessions/:id/checkout")
   checkoutPosSession(
     @Param("id") id: string,
     @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
   ) {
-    return this.sales.checkoutPosSession(
-      id,
-      getRequestUser(request),
-      terminalSecret,
-    );
+    return this.sales.checkoutPosSession(id, getRequestUser(request));
   }
 
   @Post("pos/sessions/:id/cancel")
   cancelPosSession(
     @Param("id") id: string,
     @Req() request: Request,
-    @Headers(posTerminalSecretHeader) terminalSecret?: string,
   ) {
-    return this.sales.cancelPosSession(
-      id,
-      getRequestUser(request),
-      terminalSecret,
-    );
+    return this.sales.cancelPosSession(id, getRequestUser(request));
   }
 
   @Get("pos/retailers")

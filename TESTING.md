@@ -36,8 +36,10 @@ Railway, or the normal development database.
 
 `test:integration` resets only `muisbakery_test`, reapplies all migrations
 without seed data, and then runs each integration test file against a fresh
-database. The concurrency suite coordinates races with real PostgreSQL row
-locks and verifies the blocked transactions through `pg_stat_activity`.
+database. The concurrency suite exercises the real services and PostgreSQL
+transactions. It verifies that concurrent online sales cannot oversell central
+FIFO stock, retailer approvals cannot be reused, returns cannot exceed the sold
+quantity, and duplicate day-close submissions or approvals produce one winner.
 
 If the local role, password, port, or database name differs, set an explicit
 safe URL for that command:
@@ -48,9 +50,8 @@ TEST_DATABASE_URL="postgresql://postgres:password@127.0.0.1:5432/muisbakery_test
 
 ## Playwright production browser tests
 
-The Stage 3 suite runs Chromium against the production API and Next.js builds,
-the real service worker and IndexedDB, and the same local PostgreSQL test
-database. Install the browser once:
+The browser suite runs Chromium against production API and Next.js builds with
+the same local PostgreSQL test database. Install the browser once:
 
 ```bash
 npx playwright install chromium
@@ -70,19 +71,15 @@ worker. Failed tests retain a trace, screenshot, and video under
 
 The browser scenarios cover:
 
-- single-use terminal pairing and Admin-controlled re-pairing after storage loss;
-- allocated-product visibility and terminal stock enforcement;
-- real offline checkout, receipt printing/download, cold reload, and reconnect sync;
-- service-worker cache replacement;
-- retailer credit tracking, paid-now exceptions, terminal approval use, and reuse prevention;
-- terminal-aware day-close blocking, audited override, and late-sale reconciliation;
+- online sales-counter selection and server-backed checkout;
+- retailer credit tracking, paid-now exceptions, Admin approval use, and reuse prevention;
 - CSV formula-injection protection on downloaded reports.
 
 Useful focused commands:
 
 ```bash
-npx playwright test apps/web/e2e/offline-pos.spec.ts
 npx playwright test apps/web/e2e/retailer-credit.spec.ts --headed
+npx playwright test apps/web/e2e/report-export.spec.ts
 npm run test:e2e:report
 ```
 

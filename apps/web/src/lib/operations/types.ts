@@ -303,10 +303,6 @@ export type RetailerOrderApproval = {
   id: string;
   approvedAmount: string;
   status: "PENDING" | "APPROVED" | "USED" | "REVOKED";
-  terminal: {
-    id: string;
-    name: string | null;
-  } | null;
   reason: string | null;
   expiresAt: string | null;
   usedAt: string | null;
@@ -405,6 +401,14 @@ export type SalesOptions = {
   products: SalesInventoryItem[];
   saleItems: SaleItemOption[];
   retailers: Retailer[];
+  counters: Array<{
+    id: string;
+    name: string | null;
+    displayToken: string;
+    currentSessionId: string | null;
+    occupiedByCurrentUser: boolean;
+    occupiedByName: string | null;
+  }>;
   paymentMethods: PaymentMethod[];
   returnDispositions: SalesReturnDisposition[];
 };
@@ -472,8 +476,9 @@ export type PosSession = {
   displayToken: string;
   terminal: {
     id: string;
+    name: string | null;
     displayToken: string;
-    offlineEnabled: boolean;
+    isActive: boolean;
   } | null;
   status: PosSessionStatus;
   customerType: CustomerType;
@@ -506,166 +511,15 @@ export type PosTerminal = {
   id: string;
   name: string | null;
   displayToken: string;
-  pairable: boolean;
-  pairingCodeExpiresAt: string | null;
-  pairedAt: string | null;
-  pairedBy: UserRef | null;
-  deviceSecretIssuedAt: string | null;
   isActive: boolean;
-  offlineEnabled: boolean;
-  lastSeenAt: string | null;
-  lastSyncedAt: string | null;
+  createdBy: UserRef | null;
   createdAt: string;
   updatedAt: string;
   currentSession: PosSession | null;
-  stockAllocations: Array<{
-    id: string;
-    allocatedQuantity: string;
-    soldQuantity: string;
-    remainingQuantity: string;
-    product: SalesProductRef;
-    batches: Array<{
-      id: string;
-      quantityAllocated: string;
-      quantityRemaining: string;
-      allocatedAt: string;
-      updatedAt: string;
-      sourceBatch: {
-        id: string;
-        batchNumber: number;
-        batchDate: string;
-        receivedAt: string;
-      };
-    }>;
-    createdAt: string;
-    updatedAt: string;
-  }>;
-  retailerCreditAllocations: Array<{
-    id: string;
-    allocatedAmount: string;
-    usedAmount: string;
-    remainingAmount: string;
-    isActive: boolean;
-    retailer: {
-      id: string;
-      name: string;
-      contactPerson: string | null;
-    };
-    createdAt: string;
-    updatedAt: string;
-  }>;
-};
-
-export type PairedPosTerminal = PosTerminal & {
-  deviceSecret: string;
-};
-
-export type PosOfflineSnapshot = {
-  terminal: PosTerminal;
-  products: Array<{
-    allocation: PosTerminal["stockAllocations"][number];
-    inventory: SalesInventoryItem;
-  }>;
-  retailerCreditAllocations: PosTerminal["retailerCreditAllocations"];
-  retailers: Retailer[];
-  dayCloseBarrier?: PosDayCloseBarrier | null;
-  serverTime: string;
-  snapshotVersion: string;
-};
-
-export type PosOfflineSalePayload = {
-  terminalId: string;
-  clientRequestId: string;
-  customerType: CustomerType;
-  priceType: SalePriceType;
-  retailerId?: string;
-  retailerApprovalId?: string;
-  paymentMethod: PaymentMethod;
-  customerName?: string;
-  soldAt: string;
-  discount?: string;
-  amountPaid?: string;
-  notes?: string;
-  items: Array<{
-    productId: string;
-    quantity: string;
-    unitPrice?: string | null;
-  }>;
-};
-
-export type PosOfflineSyncStatus =
-  | "PENDING"
-  | "SYNCING"
-  | "SYNCED"
-  | "DUPLICATE"
-  | "CONFLICT"
-  | "FAILED";
-
-export type PosOfflineQueuedSale = {
-  clientRequestId: string;
-  terminalId: string;
-  status: PosOfflineSyncStatus;
-  payload: PosOfflineSalePayload;
-  createdAt: string;
-  updatedAt: string;
-  errorMessage: string | null;
-  syncedSale: Sale | null;
-};
-
-export type PosOfflineSyncResult = {
-  clientRequestId: string;
-  status: Exclude<PosOfflineSyncStatus, "PENDING" | "SYNCING">;
-  sale: Sale | null;
-  errorMessage: string | null;
-};
-
-export type PosOfflineSyncResponse = {
-  terminalId: string;
-  serverTime: string;
-  results: PosOfflineSyncResult[];
-  dayCloseBarrier?: PosDayCloseBarrier | null;
-};
-
-export type PosDayCloseBarrier = {
-  businessDate: string;
-  status: "CLOSING" | "SUBMITTED" | "APPROVED";
-  cutoffAt: string | null;
-  checkoutBlocked: true;
-  terminalConfirmed: boolean;
 };
 
 export type DayCloseStatus = "SUBMITTED" | "APPROVED";
-export type BusinessDayStatus =
-  | "OPEN"
-  | "CLOSING"
-  | "SUBMITTED"
-  | "STALE"
-  | "APPROVED";
-
-export type TerminalDayCloseReadiness = {
-  id: string;
-  businessDate: string;
-  cutoffAt: string;
-  terminal: {
-    id: string;
-    name: string | null;
-    lastSyncedAt: string | null;
-  };
-  confirmedAt: string | null;
-  syncedThroughAt: string | null;
-  pendingSaleCount: number | null;
-  overriddenAt: string | null;
-  overriddenBy: UserRef | null;
-  overrideReason: string | null;
-  ready: boolean;
-};
-
-export type TerminalReadinessSummary = {
-  required: number;
-  ready: number;
-  pending: number;
-  terminals: TerminalDayCloseReadiness[];
-};
+export type BusinessDayStatus = "OPEN" | "SUBMITTED" | "STALE" | "APPROVED";
 
 export type SalesDayClose = {
   id: string;
@@ -686,11 +540,9 @@ export type SalesDayClose = {
     status: BusinessDayStatus;
     activityVersion: number;
     lastActivityAt: string | null;
-    closeCutoffAt: string | null;
     reopenedAt: string | null;
     reopenedBy: UserRef | null;
     reopenReason: string | null;
-    terminalReadiness: TerminalReadinessSummary;
   };
   submittedAt: string;
   submittedBy: UserRef | null;
@@ -715,11 +567,8 @@ export type DayClosePreview = {
     status: BusinessDayStatus;
     activityVersion: number;
     lastActivityAt: string | null;
-    closeCutoffAt: string | null;
-    terminalReadiness: TerminalReadinessSummary;
   };
   needsReclose: boolean;
-  unresolvedOfflineSyncs: number;
 };
 
 export type DayCloseListReport = {
@@ -731,10 +580,4 @@ export type DayCloseListReport = {
     end: string;
   };
   closes: SalesDayClose[];
-  preparations: Array<{
-    businessDate: string;
-    status: "CLOSING";
-    cutoffAt: string | null;
-    terminalReadiness: TerminalReadinessSummary;
-  }>;
 };

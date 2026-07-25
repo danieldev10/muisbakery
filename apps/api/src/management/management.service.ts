@@ -104,23 +104,6 @@ const productInventoryInclude = {
     },
     orderBy: [{ batchDate: "asc" }, { batchNumber: "asc" }],
   },
-  posTerminalStockBatches: {
-    where: { quantityRemaining: { gt: 0 } },
-    include: {
-      terminal: { select: { id: true, name: true } },
-      sourceBatch: {
-        include: {
-          productionRun: {
-            select: {
-              id: true,
-              producedAt: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: [{ allocatedAt: "asc" }, { id: "asc" }],
-  },
 } satisfies Prisma.ProductInclude;
 
 const productionRunInclude = {
@@ -1293,11 +1276,7 @@ export class ManagementService {
       (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
       0,
     );
-    const custodyRemaining = product.posTerminalStockBatches.reduce(
-      (sum, batch) => sum + decimalToNumber(batch.quantityRemaining),
-      0,
-    );
-    const totalRemaining = centralRemaining + custodyRemaining;
+    const totalRemaining = centralRemaining;
     const centralCostValue = product.salesBatches.reduce(
       (sum, batch) =>
         sum +
@@ -1305,14 +1284,7 @@ export class ManagementService {
           decimalToNumber(batch.unitCost),
       0,
     );
-    const custodyCostValue = product.posTerminalStockBatches.reduce(
-      (sum, batch) =>
-        sum +
-        decimalToNumber(batch.quantityRemaining) *
-          decimalToNumber(batch.unitCost),
-      0,
-    );
-    const estimatedCostValue = centralCostValue + custodyCostValue;
+    const estimatedCostValue = centralCostValue;
     const estimatedRetailValue =
       totalRemaining * decimalToNumber(product.unitPrice);
 
@@ -1321,8 +1293,7 @@ export class ManagementService {
       totalRemaining: countString(totalRemaining),
       estimatedCostValue: moneyString(estimatedCostValue),
       estimatedRetailValue: moneyString(estimatedRetailValue),
-      batches: [
-        ...product.salesBatches.map((batch) => {
+      batches: product.salesBatches.map((batch) => {
         const batchRemaining = decimalToNumber(batch.quantityRemaining);
         const batchCostValue =
           batchRemaining * decimalToNumber(batch.unitCost);
@@ -1347,39 +1318,7 @@ export class ManagementService {
               }
             : null,
         };
-        }),
-        ...product.posTerminalStockBatches.map((custodyBatch) => {
-          const batchRemaining = decimalToNumber(
-            custodyBatch.quantityRemaining,
-          );
-          const batchCostValue =
-            batchRemaining * decimalToNumber(custodyBatch.unitCost);
-
-          return {
-            id: custodyBatch.id,
-            location:
-              custodyBatch.terminal.name ??
-              `POS terminal ${custodyBatch.terminal.id}`,
-            batchNumber: custodyBatch.sourceBatch.batchNumber,
-            batchDate: custodyBatch.sourceBatch.batchDate.toISOString(),
-            quantityReceived: custodyBatch.quantityAllocated.toString(),
-            quantityRemaining: custodyBatch.quantityRemaining.toString(),
-            unitCost: custodyBatch.unitCost.toString(),
-            estimatedCostValue: moneyString(batchCostValue),
-            estimatedRetailValue: moneyString(
-              batchRemaining * decimalToNumber(product.unitPrice),
-            ),
-            receivedAt: custodyBatch.allocatedAt.toISOString(),
-            productionRun: custodyBatch.sourceBatch.productionRun
-              ? {
-                  id: custodyBatch.sourceBatch.productionRun.id,
-                  producedAt:
-                    custodyBatch.sourceBatch.productionRun.producedAt.toISOString(),
-                }
-              : null,
-          };
-        }),
-      ],
+      }),
     };
   }
 }

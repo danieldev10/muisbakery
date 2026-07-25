@@ -30,7 +30,6 @@ export async function createSale(
     paymentMethod: getString(formData, "paymentMethod"),
     customerName: getOptionalString(formData, "customerName"),
     soldAt: getOptionalString(formData, "soldAt"),
-    discount: getOptionalString(formData, "discount"),
     amountPaid: getOptionalString(formData, "amountPaid"),
     notes: getOptionalString(formData, "notes"),
     items,

@@ -12,8 +12,8 @@ export type CurrentUser = {
 
 /**
  * Distinguishes "the API rejected this session" (null → send to login) from
- * "the API could not be reached at all" — the latter must not strand an
- * offline-capable POS device on the login page.
+ * "the API could not be reached at all" so the login page can show the
+ * correct operational message.
  */
 export const API_UNREACHABLE = "unreachable" as const;
 

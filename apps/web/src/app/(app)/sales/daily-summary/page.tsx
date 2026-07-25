@@ -27,7 +27,7 @@ import {
   matchesSelect,
 } from "@/lib/table-filters";
 
-import { prepareDayClose, submitDayClose } from "./actions";
+import { submitDayClose } from "./actions";
 import { SaleItemsSummary } from "./sale-items-summary";
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -227,13 +227,9 @@ export default async function SalesDailySummaryPage({
       })),
     },
   ];
-  const canPrepareClose =
+  const canSubmitClose =
     dayClose.businessDay.status === "OPEN" ||
     dayClose.businessDay.status === "STALE";
-  const canSubmitClose =
-    dayClose.businessDay.status === "CLOSING" &&
-    dayClose.businessDay.terminalReadiness.pending === 0 &&
-    dayClose.unresolvedOfflineSyncs === 0;
   const closeActionLabel = dayClose.close ? "Re-close this day" : "Close this day";
 
   return (
@@ -316,21 +312,7 @@ export default async function SalesDailySummaryPage({
               submit for Management sign-off.
             </p>
           </div>
-          {canPrepareClose ? (
-            <AdminFormModal
-              action={prepareDayClose}
-              description={`Freeze ${formatDate(summary.date)} at a cutoff, then require every offline POS terminal to synchronize and confirm an empty queue.`}
-              submitLabel="Start close"
-              title="Start day close"
-              triggerLabel="Start day close"
-            >
-              <input name="date" type="hidden" value={dayClose.date} />
-              <p className="text-sm leading-6 text-stone-600">
-                Checkout for this business date will pause until the close is
-                submitted or Management reopens the day.
-              </p>
-            </AdminFormModal>
-          ) : canSubmitClose ? (
+          {canSubmitClose ? (
             <AdminFormModal
               action={submitDayClose}
               description={`Record the counted drawer cash for ${formatDate(summary.date)}. Expected cash is ${formatMoney(dayClose.expected.expectedCash)}.`}
@@ -366,44 +348,12 @@ export default async function SalesDailySummaryPage({
             >
               {dayClose.businessDay.status === "APPROVED"
                 ? "Approved by Management"
-                : dayClose.businessDay.status === "CLOSING"
-                  ? "Waiting for POS terminals"
                 : "Awaiting Management review"}
             </span>
           ) : (
             <span className="text-sm text-stone-500">No close submitted</span>
           )}
         </div>
-
-        {dayClose.unresolvedOfflineSyncs > 0 ? (
-          <p className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-            {dayClose.unresolvedOfflineSyncs} offline sale(s) have not synced
-            cleanly. The day cannot be closed until they are resolved in
-            Admin&apos;s POS sync review.
-          </p>
-        ) : null}
-
-        {dayClose.businessDay.status === "CLOSING" ? (
-          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
-            <p className="font-semibold">
-              POS readiness: {dayClose.businessDay.terminalReadiness.ready} of{" "}
-              {dayClose.businessDay.terminalReadiness.required} terminal(s)
-              ready
-            </p>
-            {dayClose.businessDay.terminalReadiness.pending > 0 ? (
-              <p className="mt-1">
-                Ask each pending terminal to connect and use Sync now. Sales
-                submission remains blocked until its queue is empty or
-                Management records an override.
-              </p>
-            ) : (
-              <p className="mt-1">
-                All required terminals have confirmed an empty queue. Submit
-                the counted cash to Management.
-              </p>
-            )}
-          </div>
-        ) : null}
 
         {dayClose.close && dayClose.businessDay.status === "STALE" ? (
           <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

@@ -49,9 +49,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
           {apiUnreachable ? (
             <p className="mb-4 rounded-[5px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-800">
-              The server is temporarily unreachable, so sign-in may fail.
-              Offline-enabled POS terminals keep working — open Point of Sale
-              on the paired device.
+              The bakery server is temporarily unreachable. Sign-in and
+              operational workflows will resume when the connection is
+              restored.
             </p>
           ) : null}
 

@@ -58,17 +58,6 @@ export class ManagementController {
     return this.dayClose.reopen(id, body, getRequestUser(request));
   }
 
-  @Post("day-close-readiness/override")
-  overrideDayCloseReadiness(
-    @Body() body: unknown,
-    @Req() request: Request,
-  ) {
-    return this.dayClose.overrideTerminalReadiness(
-      body,
-      getRequestUser(request),
-    );
-  }
-
   @Get("dashboard")
   dashboard(
     @Query("from") from?: string,

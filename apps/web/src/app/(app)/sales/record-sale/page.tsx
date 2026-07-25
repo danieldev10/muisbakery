@@ -191,13 +191,6 @@ export default async function RecordSalePage({
                 type="datetime-local"
               />
               <Field
-                label="Discount"
-                min="0"
-                name="discount"
-                step="0.01"
-                type="number"
-              />
-              <Field
                 label="Amount paid"
                 min="0"
                 name="amountPaid"

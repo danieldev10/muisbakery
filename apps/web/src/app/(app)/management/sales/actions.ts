@@ -35,27 +35,3 @@ export async function reopenDayClose(
 
   return { ok: true, error: null, token: Date.now() };
 }
-
-export async function overrideDayCloseReadiness(
-  _state: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const terminalIds = formData
-    .getAll("terminalIds")
-    .filter((value): value is string => typeof value === "string" && Boolean(value));
-  const result = await apiSend(
-    "/management/day-close-readiness/override",
-    "POST",
-    {
-      date: getString(formData, "date"),
-      terminalIds,
-      reason: getString(formData, "reason"),
-    },
-  );
-
-  if (!result.ok) {
-    return { ok: false, error: result.message };
-  }
-
-  return { ok: true, error: null, token: Date.now() };
-}

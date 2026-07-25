@@ -1,8 +1,7 @@
-import { PaymentMethod } from "@prisma/client";
+import { PaymentMethod, PosSessionStatus } from "@prisma/client";
 
 import type {
   PosSessionWithIncludes,
-  PosOfflineSyncAttemptWithIncludes,
   PosTerminalWithIncludes,
   ProductInventory,
   RetailerOrderApprovalWithIncludes,
@@ -103,7 +102,6 @@ export function serializeRetailerOrderApproval(
     id: approval.id,
     approvedAmount: approval.approvedAmount.toString(),
     status: approval.status,
-    terminal: approval.terminal,
     reason: approval.reason,
     expiresAt: approval.expiresAt?.toISOString() ?? null,
     usedAt: approval.usedAt?.toISOString() ?? null,
@@ -267,7 +265,10 @@ export function serializePosSession(session: PosSessionWithIncludes) {
   const subtotal = roundMoney(
     items.reduce((sum, item) => sum + Number(item.lineTotal), 0),
   );
-  const discount = decimalToNumber(session.discount);
+  const discount =
+    session.status === PosSessionStatus.ACTIVE
+      ? 0
+      : decimalToNumber(session.discount);
   const totalAmount = Math.max(0, roundMoney(subtotal - discount));
   const amountPaid =
     session.amountPaid !== null
@@ -288,7 +289,7 @@ export function serializePosSession(session: PosSessionWithIncludes) {
     retailerApprovalId: session.retailerApprovalId,
     customerName: session.customerName,
     paymentMethod: session.paymentMethod,
-    discount: session.discount.toString(),
+    discount: discount.toFixed(2),
     amountPaid: amountPaid.toFixed(2),
     balanceDue: balanceDue.toFixed(2),
     subtotal: subtotal.toFixed(2),
@@ -316,97 +317,12 @@ export function serializePosTerminal(terminal: PosTerminalWithIncludes) {
     id: terminal.id,
     name: terminal.name,
     displayToken: terminal.displayToken,
-    pairable: Boolean(
-      !terminal.pairedAt &&
-        !terminal.deviceSecretHash &&
-        terminal.pairingCodeHash &&
-        (!terminal.pairingCodeExpiresAt ||
-          terminal.pairingCodeExpiresAt.getTime() > Date.now()),
-    ),
-    pairingCodeExpiresAt: terminal.pairingCodeExpiresAt?.toISOString() ?? null,
-    pairedAt: terminal.pairedAt?.toISOString() ?? null,
-    pairedBy: terminal.pairedBy,
-    deviceSecretIssuedAt:
-      terminal.deviceSecretIssuedAt?.toISOString() ?? null,
     isActive: terminal.isActive,
-    offlineEnabled: terminal.offlineEnabled,
-    lastSeenAt: terminal.lastSeenAt?.toISOString() ?? null,
-    lastSyncedAt: terminal.lastSyncedAt?.toISOString() ?? null,
+    createdBy: terminal.createdBy,
     createdAt: terminal.createdAt.toISOString(),
     updatedAt: terminal.updatedAt.toISOString(),
     currentSession: terminal.currentSession
       ? serializePosSession(terminal.currentSession)
       : null,
-    stockAllocations: terminal.stockAllocations.map((allocation) => ({
-      id: allocation.id,
-      allocatedQuantity: allocation.allocatedQuantity.toString(),
-      soldQuantity: allocation.soldQuantity.toString(),
-      remainingQuantity: Math.max(
-        0,
-        allocation.allocatedQuantity - allocation.soldQuantity,
-      ).toString(),
-      product: allocation.product,
-      batches: allocation.batches.map((batch) => ({
-        id: batch.id,
-        quantityAllocated: batch.quantityAllocated.toString(),
-        quantityRemaining: batch.quantityRemaining.toString(),
-        allocatedAt: batch.allocatedAt.toISOString(),
-        updatedAt: batch.updatedAt.toISOString(),
-        sourceBatch: {
-          id: batch.sourceBatch.id,
-          batchNumber: batch.sourceBatch.batchNumber,
-          batchDate: batch.sourceBatch.batchDate.toISOString(),
-          receivedAt: batch.sourceBatch.receivedAt.toISOString(),
-        },
-      })),
-      createdAt: allocation.createdAt.toISOString(),
-      updatedAt: allocation.updatedAt.toISOString(),
-    })),
-    retailerCreditAllocations: terminal.retailerCreditAllocations.map(
-      (allocation) => {
-        const allocatedAmount = Number(allocation.allocatedAmount);
-        const usedAmount = Number(allocation.usedAmount);
-
-        return {
-          id: allocation.id,
-          allocatedAmount: allocation.allocatedAmount.toString(),
-          usedAmount: allocation.usedAmount.toString(),
-          remainingAmount: Math.max(0, allocatedAmount - usedAmount).toFixed(2),
-          isActive: allocation.isActive,
-          retailer: allocation.retailer,
-          createdAt: allocation.createdAt.toISOString(),
-          updatedAt: allocation.updatedAt.toISOString(),
-        };
-      },
-    ),
-  };
-}
-
-export function serializePairedPosTerminal(
-  terminal: PosTerminalWithIncludes,
-  deviceSecret: string,
-) {
-  return {
-    ...serializePosTerminal(terminal),
-    deviceSecret,
-  };
-}
-
-export function serializePosOfflineSyncAttempt(
-  attempt: PosOfflineSyncAttemptWithIncludes,
-) {
-  return {
-    id: attempt.id,
-    terminal: attempt.terminal,
-    clientRequestId: attempt.clientRequestId,
-    status: attempt.status,
-    sale: attempt.sale ? serializeSale(attempt.sale) : null,
-    payload: attempt.payload,
-    errorMessage: attempt.errorMessage,
-    conflictCode: attempt.conflictCode,
-    attemptedAt: attempt.attemptedAt.toISOString(),
-    syncedAt: attempt.syncedAt?.toISOString() ?? null,
-    createdAt: attempt.createdAt.toISOString(),
-    updatedAt: attempt.updatedAt.toISOString(),
   };
 }

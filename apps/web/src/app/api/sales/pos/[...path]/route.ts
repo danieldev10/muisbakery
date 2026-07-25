@@ -25,13 +25,6 @@ async function proxy(request: Request, context: RouteContext) {
     headers: {
       "Content-Type": request.headers.get("content-type") ?? "application/json",
       cookie: await getAuthCookieHeader(),
-      ...(request.headers.get("x-muisbakery-pos-terminal-secret")
-        ? {
-            "x-muisbakery-pos-terminal-secret": request.headers.get(
-              "x-muisbakery-pos-terminal-secret",
-            ) as string,
-          }
-        : {}),
       ...getInternalApiHeaders(),
     },
     body,

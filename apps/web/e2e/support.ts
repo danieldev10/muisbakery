@@ -1,11 +1,9 @@
 import { readFile } from "node:fs/promises";
 
 import {
-  expect,
   request,
   type APIRequestContext,
   type Browser,
-  type BrowserContext,
   type Download,
   type Page,
 } from "@playwright/test";
@@ -16,34 +14,36 @@ export const WEB_ORIGIN = "http://127.0.0.1:3100";
 export const API_ORIGIN = "http://127.0.0.1:3101";
 export { E2E_FIXTURES };
 
-const E2E_OFFLINE_KEY = "muisbakery.e2e.offline";
-
 export type RoleName = keyof typeof E2E_FIXTURES.users;
 
-type PosTerminalResponse = {
+type SalesCounterResponse = {
   id: string;
   name: string | null;
+  isActive: boolean;
 };
 
-type RetailerResponse = {
+export type RetailerResponse = {
   id: string;
   name: string;
   outstandingBalance: string;
   requiresOrderApproval: boolean;
   orderApprovals: Array<{
     id: string;
+    approvedAmount: string;
     status: string;
-    terminal: { id: string } | null;
+    usedAt: string | null;
   }>;
   orderApprovalRequests: Array<{
     id: string;
+    approvedAmount: string;
     status: string;
     usedAt: string | null;
-    terminal: { id: string } | null;
   }>;
 };
 
-async function responseJson<T>(response: Awaited<ReturnType<APIRequestContext["post"]>>) {
+async function responseJson<T>(
+  response: Awaited<ReturnType<APIRequestContext["post"]>>,
+) {
   const body = (await response.json().catch(() => null)) as T | null;
 
   if (!response.ok()) {
@@ -92,188 +92,30 @@ export async function loginInBrowser(page: Page, role: RoleName) {
 
 export async function newRolePage(browser: Browser, role: RoleName) {
   const context = await browser.newContext({
-    serviceWorkers: "allow",
+    serviceWorkers: "block",
     permissions: ["clipboard-read", "clipboard-write"],
   });
-  await context.addInitScript((offlineKey) => {
-    Object.defineProperty(window.navigator, "onLine", {
-      configurable: true,
-      get() {
-        try {
-          return window.localStorage.getItem(offlineKey) !== "1";
-        } catch {
-          return true;
-        }
-      },
-    });
-  }, E2E_OFFLINE_KEY);
   const page = await context.newPage();
   await loginInBrowser(page, role);
   return { context, page };
 }
 
-export async function setBrowserOffline(
-  context: BrowserContext,
-  page: Page,
-  offline: boolean,
-) {
-  if (offline) {
-    await setPosOfflineState(page, true);
-    await context.setOffline(true);
-    await expect
-      .poll(() => page.evaluate(() => window.navigator.onLine))
-      .toBe(false);
-    await expect(page.getByText("Offline POS")).toBeVisible();
-    return;
-  }
-
-  await context.setOffline(false);
-  await setPosOfflineState(page, false);
-  await expect
-    .poll(() => page.evaluate(() => window.navigator.onLine))
-    .toBe(true);
-}
-
-export async function setPosOfflineState(page: Page, offline: boolean) {
-  await page.evaluate(({ offlineKey, isOffline }) => {
-    if (isOffline) {
-      window.localStorage.setItem(offlineKey, "1");
-      window.dispatchEvent(new Event("offline"));
-      return;
-    }
-
-    window.localStorage.removeItem(offlineKey);
-    window.dispatchEvent(new Event("online"));
-  }, { offlineKey: E2E_OFFLINE_KEY, isOffline: offline });
-  await expect
-    .poll(() => page.evaluate(() => window.navigator.onLine))
-    .toBe(!offline);
-
-  await expect(page.getByText(offline ? "Offline POS" : "Online POS")).toBeVisible();
-}
-
-export async function listBrowserQueuedSales(page: Page) {
-  return page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("muisbakery-pos-offline", 2);
-
-      request.addEventListener("success", () => resolve(request.result));
-      request.addEventListener("error", () =>
-        reject(request.error ?? new Error("Unable to open offline POS storage.")),
-      );
-    });
-
-    try {
-      return await new Promise<
-        Array<{
-          status: string;
-          payload: {
-            customerType: string;
-            paymentMethod: string;
-            retailerId: string | null;
-            retailerApprovalId: string | null;
-            amountPaid: string;
-          };
-        }>
-      >((resolve, reject) => {
-        const transaction = db.transaction("queuedSales", "readonly");
-        const request = transaction.objectStore("queuedSales").getAll();
-
-        request.addEventListener("success", () => resolve(request.result));
-        request.addEventListener("error", () =>
-          reject(request.error ?? new Error("Unable to read queued POS sales.")),
-        );
-      });
-    } finally {
-      db.close();
-    }
-  });
-}
-
-export async function createTerminal(
+export async function createSalesCounter(
   adminApi: APIRequestContext,
-  input: {
-    name: string;
-    pairingCode: string;
-    stock?: number;
-    retailerId?: string;
-    retailerCredit?: number;
-  },
+  name: string,
 ) {
-  const terminal = await responseJson<PosTerminalResponse>(
-    await adminApi.post("/admin/pos-terminals", {
-      data: {
-        name: input.name,
-        pairingCode: input.pairingCode,
-        offlineEnabled: true,
-      },
-    }),
-  );
-
-  if (input.stock !== undefined) {
-    await responseJson(
-      await adminApi.post(
-        `/admin/pos-terminals/${terminal.id}/stock-allocations`,
-        {
-          data: {
-            productId: E2E_FIXTURES.products.allocated.id,
-            allocatedQuantity: input.stock,
-          },
-        },
-      ),
-    );
-  }
-
-  if (input.retailerId && input.retailerCredit !== undefined) {
-    await responseJson(
-      await adminApi.post(
-        `/admin/pos-terminals/${terminal.id}/retailer-credit-allocations`,
-        {
-          data: {
-            retailerId: input.retailerId,
-            allocatedAmount: input.retailerCredit,
-            isActive: true,
-          },
-        },
-      ),
-    );
-  }
-
-  return terminal;
-}
-
-export async function rePairTerminal(
-  adminApi: APIRequestContext,
-  terminalId: string,
-  pairingCode: string,
-) {
-  return responseJson<PosTerminalResponse>(
-    await adminApi.post(`/admin/pos-terminals/${terminalId}/re-pair`, {
-      data: { pairingCode },
-    }),
+  return responseJson<SalesCounterResponse>(
+    await adminApi.post("/admin/pos-terminals", { data: { name } }),
   );
 }
 
-export async function disableTerminal(
+export async function disableSalesCounter(
   adminApi: APIRequestContext,
-  terminalId: string,
+  counterId: string,
 ) {
-  const terminals = await responseJson<
-    Array<{ id: string; name: string | null; offlineEnabled: boolean }>
-  >(await adminApi.get("/admin/pos-terminals"));
-  const terminal = terminals.find((entry) => entry.id === terminalId);
-
-  if (!terminal) {
-    return;
-  }
-
-  await responseJson(
-    await adminApi.patch(`/admin/pos-terminals/${terminalId}`, {
-      data: {
-        name: terminal.name,
-        isActive: false,
-        offlineEnabled: terminal.offlineEnabled,
-      },
+  await responseJson<SalesCounterResponse>(
+    await adminApi.patch(`/admin/pos-terminals/${counterId}`, {
+      data: { isActive: false },
     }),
   );
 }
@@ -291,7 +133,6 @@ export async function createRetailerApproval(
   adminApi: APIRequestContext,
   input: {
     retailerId: string;
-    terminalId: string;
     approvedAmount: number;
   },
 ) {
@@ -301,73 +142,20 @@ export async function createRetailerApproval(
       {
         data: {
           approvedAmount: input.approvedAmount,
-          terminalId: input.terminalId,
-          reason: "Stage 3 browser test approval",
+          reason: "Online POS browser test approval",
         },
       },
     ),
   );
 }
 
-export async function pairTerminalInBrowser(
-  page: Page,
-  terminalId: string,
-  pairingCode: string,
-) {
-  await page.goto("/sales/pos");
-  await expect(page.getByText("Terminal setup required")).toBeVisible();
-  await page.getByPlaceholder("POS terminal setup ID").fill(terminalId);
-  await page.getByPlaceholder("Pairing code").fill(pairingCode);
-  await page.getByRole("button", { name: "Pair terminal" }).click();
-  await expect(page.getByText("Terminal setup required")).toBeHidden();
-  await expect(page.getByText("Online POS")).toBeVisible();
-}
-
-export async function waitForOfflineShell(page: Page) {
-  await expect(page.getByText("Offline reload ready")).toBeVisible({
-    timeout: 20_000,
-  });
-}
-
-export async function clearBrowserDevice(
-  context: BrowserContext,
-  page: Page,
-) {
-  await page.evaluate(async () => {
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-
-    const databases = await indexedDB.databases();
-    await Promise.all(
-      databases
-        .map((database) => database.name)
-        .filter((name): name is string => Boolean(name))
-        .map(
-          (name) =>
-            new Promise<void>((resolve) => {
-              const request = indexedDB.deleteDatabase(name);
-              request.addEventListener("success", () => resolve());
-              request.addEventListener("error", () => resolve());
-              request.addEventListener("blocked", () => resolve());
-            }),
-        ),
-    );
-
-    const registrations = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(registrations.map((registration) => registration.unregister()));
-    const cacheNames = await caches.keys();
-    await Promise.all(cacheNames.map((name) => caches.delete(name)));
-  });
-  await context.clearCookies();
-}
-
-export async function addAllocatedProduct(page: Page, quantity = 1) {
-  const productName = `${E2E_FIXTURES.products.allocated.name} - ${E2E_FIXTURES.products.allocated.size}`;
+export async function addPrimaryProduct(page: Page, quantity = 1) {
+  const product = E2E_FIXTURES.products.primary;
+  const productName = `${product.name} - ${product.size}`;
   await page.getByRole("button", { name: new RegExp(productName) }).click();
   const input = page.getByRole("spinbutton", {
     name: `Quantity for ${productName}`,
   });
-  await expect(input).toBeVisible();
 
   if (quantity !== 1) {
     await input.fill(String(quantity));

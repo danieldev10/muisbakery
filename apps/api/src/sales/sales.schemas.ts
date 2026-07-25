@@ -2,7 +2,6 @@ import {
   CustomerType,
   PaymentMethod,
   SalePriceType,
-  PosSessionStatus,
   RetailerOrderApprovalStatus,
   SalesReturnDisposition,
 } from "@prisma/client";
@@ -37,12 +36,6 @@ const nullableId = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? null : value),
   z.string().trim().min(1).nullable().optional(),
 );
-
-const pairingCodeSchema = z
-  .string()
-  .trim()
-  .min(6, "Pairing code must be at least 6 characters.")
-  .max(64, "Pairing code is too long.");
 
 const quantitySchema = z.coerce
   .number()
@@ -82,12 +75,6 @@ const saleItemSchema = z.object({
   unitPrice: optionalMoneySchema,
 });
 
-const clientRequestIdSchema = z
-  .string()
-  .trim()
-  .min(1, "Offline sale is missing its local request ID.")
-  .max(120, "Offline sale request ID is too long.");
-
 export const createSaleSchema = z
   .object({
     customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
@@ -99,7 +86,6 @@ export const createSaleSchema = z
     paymentMethod: z.enum(PaymentMethod),
     customerName: optionalText(160),
     soldAt: optionalDate,
-    discount: optionalMoneySchema,
     amountPaid: optionalMoneySchema,
     notes: optionalText(500),
     items: z.array(saleItemSchema).min(1, "Add at least one sale item."),
@@ -179,120 +165,6 @@ export const createSaleSchema = z
     }
   });
 
-export const syncOfflinePosSaleSchema = z
-  .object({
-    terminalId: z.string().trim().min(1),
-    clientRequestId: clientRequestIdSchema,
-    customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
-    priceType: z.enum(SalePriceType).optional(),
-    retailerId: optionalId,
-    retailerApprovalId: optionalId,
-    paymentMethod: z.enum(PaymentMethod),
-    customerName: optionalText(160),
-    soldAt: optionalDate,
-    discount: optionalMoneySchema,
-    amountPaid: optionalMoneySchema,
-    notes: optionalText(500),
-    items: z.array(saleItemSchema).min(1, "Add at least one sale item."),
-  })
-  .superRefine((value, context) => {
-    const productIds = new Set<string>();
-
-    value.items.forEach((item, index) => {
-      if (productIds.has(item.productId)) {
-        context.addIssue({
-          code: "custom",
-          message: "Each product can only appear once on a sale.",
-          path: ["items", index, "productId"],
-        });
-      }
-      productIds.add(item.productId);
-    });
-
-    if (value.customerType === CustomerType.RETAILER && !value.retailerId) {
-      context.addIssue({
-        code: "custom",
-        message: "Select a retailer for retailer sales.",
-        path: ["retailerId"],
-      });
-    }
-
-
-    if (
-      value.customerType === CustomerType.RETAILER &&
-      value.priceType &&
-      value.priceType !== SalePriceType.RETAILER
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Retailer sales must use the retailer price.",
-        path: ["priceType"],
-      });
-    }
-
-    if (value.customerType === CustomerType.INDIVIDUAL && value.retailerId) {
-      context.addIssue({
-        code: "custom",
-        message: "Retailer can only be selected for retailer sales.",
-        path: ["retailerId"],
-      });
-    }
-
-    if (
-      value.customerType === CustomerType.INDIVIDUAL &&
-      value.priceType === SalePriceType.RETAILER
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Retailer pricing requires a retailer sale.",
-        path: ["priceType"],
-      });
-    }
-
-    if (
-      value.customerType === CustomerType.INDIVIDUAL &&
-      value.retailerApprovalId
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Retailer approval can only be selected for retailer sales.",
-        path: ["retailerApprovalId"],
-      });
-    }
-
-    if (
-      value.customerType === CustomerType.RETAILER &&
-      value.paymentMethod !== PaymentMethod.CREDIT &&
-      value.retailerApprovalId
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Retailer approval is only needed for credit sales.",
-        path: ["retailerApprovalId"],
-      });
-    }
-  });
-
-export const syncOfflinePosBatchSchema = z
-  .object({
-    terminalId: z.string().trim().min(1),
-    sales: z
-      .array(syncOfflinePosSaleSchema)
-      .min(1, "Add at least one offline sale to sync.")
-      .max(50, "Sync at most 50 offline sales at a time."),
-  })
-  .superRefine((value, context) => {
-    value.sales.forEach((sale, index) => {
-      if (sale.terminalId !== value.terminalId) {
-        context.addIssue({
-          code: "custom",
-          message: "Offline sale terminal does not match this sync request.",
-          path: ["sales", index, "terminalId"],
-        });
-      }
-    });
-  });
-
 export const recordReturnSchema = z
   .object({
     saleItemId: z.preprocess(
@@ -332,49 +204,18 @@ export const recordReturnSchema = z
   });
 
 export const createPosTerminalSchema = z.object({
-  name: optionalText(100),
-  pairingCode: pairingCodeSchema,
-  offlineEnabled: z.coerce.boolean().optional(),
+  name: z.string().trim().min(1, "Counter name is required.").max(100),
 });
 
 export const updatePosTerminalSchema = z
   .object({
     name: nullableText(100),
     isActive: z.coerce.boolean().optional(),
-    offlineEnabled: z.coerce.boolean().optional(),
     rotateDisplayToken: z.coerce.boolean().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "No changes provided.",
   });
-
-export const rePairPosTerminalSchema = z.object({
-  pairingCode: pairingCodeSchema,
-});
-
-export const pairPosTerminalSchema = z.object({
-  terminalId: z.string().trim().min(1),
-  pairingCode: pairingCodeSchema,
-});
-
-export const setTerminalStockAllocationSchema = z.object({
-  productId: z.string().trim().min(1),
-  allocatedQuantity: nonnegativeQuantitySchema,
-});
-
-export const adjustTerminalStockSchema = z.object({
-  terminalBatchId: z.string().trim().min(1),
-  countedQuantity: nonnegativeQuantitySchema,
-  reason: z.string().trim().min(3, "Enter an adjustment reason.").max(500),
-});
-
-export const setTerminalRetailerCreditAllocationSchema = z.object({
-  retailerId: z.string().trim().min(1),
-  allocatedAmount: moneySchema.refine((value) => value > 0, {
-    message: "Allocated amount must be greater than zero.",
-  }),
-  isActive: z.coerce.boolean().default(true),
-});
 
 export const createPosSessionSchema = z.object({
   customerType: z.enum(CustomerType).default(CustomerType.INDIVIDUAL),
@@ -382,7 +223,7 @@ export const createPosSessionSchema = z.object({
   retailerId: optionalId,
   retailerApprovalId: optionalId,
   customerName: optionalText(160),
-  terminalId: optionalText(80),
+  terminalId: z.string().trim().min(1, "Select a sales counter."),
 });
 
 export const updatePosSessionSchema = z.object({
@@ -392,7 +233,6 @@ export const updatePosSessionSchema = z.object({
   retailerApprovalId: nullableId,
   customerName: nullableText(160),
   paymentMethod: z.enum(PaymentMethod).optional(),
-  discount: optionalMoneySchema,
   amountPaid: nullableMoneySchema,
   notes: nullableText(500),
 });
@@ -401,24 +241,6 @@ export const upsertPosSessionItemSchema = z.object({
   productId: z.string().trim().min(1),
   quantity: nonnegativeQuantitySchema,
   unitPrice: optionalMoneySchema,
-});
-
-export const publishPosTerminalDisplaySchema = z.object({
-  session: z
-    .object({
-      id: z.string().trim().min(1).max(160),
-      status: z.enum(PosSessionStatus),
-      customerType: z.enum(CustomerType),
-      customerName: nullableText(160),
-      paymentMethod: z.enum(PaymentMethod),
-      discount: moneySchema,
-      amountPaid: moneySchema,
-      createdAt: z.coerce.date(),
-      updatedAt: z.coerce.date(),
-      completedAt: z.coerce.date().nullable().optional(),
-      items: z.array(saleItemSchema).max(100),
-    })
-    .nullable(),
 });
 
 export const createRetailerSchema = z.object({
@@ -442,14 +264,12 @@ export const updateRetailerSchema = z.object({
 
 export const createRetailerOrderApprovalSchema = z.object({
   approvedAmount: moneySchema.positive("Approved amount must be greater than zero."),
-  terminalId: optionalId,
   reason: optionalText(500),
   expiresAt: optionalDate,
 });
 
 export const requestRetailerOrderApprovalSchema = z.object({
   requestedAmount: moneySchema.positive("Requested amount must be greater than zero."),
-  terminalId: optionalId,
   reason: optionalText(500),
 });
 
@@ -469,4 +289,3 @@ export const recordRetailerPaymentSchema = z.object({
 });
 
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
-export type SyncOfflinePosSaleInput = z.infer<typeof syncOfflinePosSaleSchema>;

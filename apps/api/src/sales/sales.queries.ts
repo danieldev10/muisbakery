@@ -26,7 +26,6 @@ export const retailerOrderApprovalSelect = {
   id: true,
   approvedAmount: true,
   status: true,
-  terminal: { select: { id: true, name: true } },
   reason: true,
   expiresAt: true,
   usedAt: true,
@@ -132,12 +131,6 @@ export const saleInclude = {
               batchDate: true,
             },
           },
-          terminalBatch: {
-            select: {
-              id: true,
-              terminalId: true,
-            },
-          },
         },
         orderBy: { createdAt: "asc" },
       },
@@ -162,12 +155,6 @@ export const saleItemOptionInclude = {
           id: true,
           batchNumber: true,
           batchDate: true,
-        },
-      },
-      terminalBatch: {
-        select: {
-          id: true,
-          terminalId: true,
         },
       },
     },
@@ -201,12 +188,6 @@ export const returnInclude = {
       batchDate: true,
     },
   },
-  terminalBatch: {
-    select: {
-      id: true,
-      terminalId: true,
-    },
-  },
   createdBy: { select: userSelect },
 } satisfies Prisma.SalesProductReturnInclude;
 
@@ -214,8 +195,9 @@ export const posSessionInclude = {
   terminal: {
     select: {
       id: true,
+      name: true,
       displayToken: true,
-      offlineEnabled: true,
+      isActive: true,
     },
   },
   retailer: { select: retailerSelect },
@@ -241,52 +223,8 @@ export const posTerminalInclude = {
   currentSession: {
     include: posSessionInclude,
   },
-  stockAllocations: {
-    include: {
-      product: { select: productSelect },
-      batches: {
-        include: {
-          sourceBatch: {
-            select: {
-              id: true,
-              batchNumber: true,
-              batchDate: true,
-              receivedAt: true,
-            },
-          },
-        },
-        orderBy: [{ allocatedAt: "asc" }, { id: "asc" }],
-      },
-    },
-    orderBy: { product: { name: "asc" } },
-  },
-  retailerCreditAllocations: {
-    include: {
-      retailer: {
-        select: {
-          id: true,
-          name: true,
-          contactPerson: true,
-        },
-      },
-    },
-    orderBy: { retailer: { name: "asc" } },
-  },
-  pairedBy: { select: userSelect },
+  createdBy: { select: userSelect },
 } satisfies Prisma.PosTerminalInclude;
-
-export const posOfflineSyncAttemptInclude = {
-  terminal: {
-    select: {
-      id: true,
-      name: true,
-      offlineEnabled: true,
-    },
-  },
-  sale: {
-    include: saleInclude,
-  },
-} satisfies Prisma.PosOfflineSyncAttemptInclude;
 
 export type ProductInventory = Prisma.ProductGetPayload<{
   include: typeof inventoryInclude;
@@ -323,8 +261,3 @@ export type PosSessionWithIncludes = Prisma.PosSessionGetPayload<{
 export type PosTerminalWithIncludes = Prisma.PosTerminalGetPayload<{
   include: typeof posTerminalInclude;
 }>;
-
-export type PosOfflineSyncAttemptWithIncludes =
-  Prisma.PosOfflineSyncAttemptGetPayload<{
-    include: typeof posOfflineSyncAttemptInclude;
-  }>;

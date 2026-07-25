@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { ServiceWorkerRegistration } from "@/components/layout/service-worker-registration";
+import { LegacyPwaCleanup } from "@/components/layout/legacy-pwa-cleanup";
 
 import "./globals.css";
 
@@ -16,8 +16,6 @@ export const metadata: Metadata = {
       },
     ],
     shortcut: "/icons/icon-192.png?v=2",
-    // iOS ignores the web manifest; this is what "Add to Home Screen" uses.
-    apple: "/icons/icon-192.png?v=2",
   },
 };
 
@@ -29,7 +27,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="flex min-h-full flex-col">
-        <ServiceWorkerRegistration />
+        <LegacyPwaCleanup />
         {children}
       </body>
     </html>

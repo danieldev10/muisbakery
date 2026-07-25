@@ -6,16 +6,12 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  BusinessDayStatus,
   CustomerType,
   FinishedProductStockMovementType,
   PaymentMethod,
   SalePriceType,
-  PosOfflineSyncStatus,
   PosSessionStatus,
-  PosTerminalStockMovementType,
   Prisma,
   RetailerOrderApprovalStatus,
   SalesReturnDisposition,
@@ -34,7 +30,6 @@ import {
 } from "../common/pagination";
 import { PrismaService } from "../database/prisma.service";
 import {
-  BusinessDayPostingLockedException,
   businessDateForInstant,
   recordBusinessDayActivity,
 } from "./business-day";
@@ -43,19 +38,11 @@ import { consumeRetailerOrderApproval } from "./retailer-credit";
 import {
   createPosSessionSchema,
   createPosTerminalSchema,
-  adjustTerminalStockSchema,
-  pairPosTerminalSchema,
-  publishPosTerminalDisplaySchema,
-  rePairPosTerminalSchema,
   createRetailerOrderApprovalSchema,
   createRetailerSchema,
   createSaleSchema,
   recordRetailerPaymentSchema,
   requestRetailerOrderApprovalSchema,
-  setTerminalRetailerCreditAllocationSchema,
-  setTerminalStockAllocationSchema,
-  syncOfflinePosBatchSchema,
-  syncOfflinePosSaleSchema,
   updateRetailerOrderApprovalSchema,
   recordReturnSchema,
   updateRetailerSchema,
@@ -63,11 +50,9 @@ import {
   updatePosSessionSchema,
   upsertPosSessionItemSchema,
   type CreateSaleInput,
-  type SyncOfflinePosSaleInput,
 } from "./sales.schemas";
 import {
   inventoryInclude,
-  posOfflineSyncAttemptInclude,
   posSessionInclude,
   posTerminalInclude,
   productSelect,
@@ -83,11 +68,10 @@ import {
 } from "./sales.queries";
 import {
   serializeInventoryItem,
-  serializePairedPosTerminal,
-  serializePosOfflineSyncAttempt,
   serializePosSession,
   serializePosTerminal,
   serializeRetailer,
+  serializeRetailerOrderApproval,
   serializeRetailerPayment,
   serializeReturn,
   serializeSale,
@@ -135,35 +119,6 @@ function priceConfigurationLabel(priceType: SalePriceType) {
     default:
       return "walk-in price";
   }
-}
-
-function jsonPayload(value: unknown): Prisma.InputJsonValue {
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-}
-
-function hashSecret(value: string) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function secretsMatch(value: string | undefined, hash: string | null) {
-  if (!value || !hash) {
-    return false;
-  }
-
-  const candidate = Buffer.from(hashSecret(value), "hex");
-  const stored = Buffer.from(hash, "hex");
-
-  return candidate.length === stored.length && timingSafeEqual(candidate, stored);
-}
-
-function generateDeviceSecret() {
-  return randomBytes(32).toString("base64url");
-}
-
-const POS_PAIRING_CODE_TTL_MS = 60 * 60 * 1000;
-
-function posPairingCodeExpiresAt() {
-  return new Date(Date.now() + POS_PAIRING_CODE_TTL_MS);
 }
 
 function saleWhere(query: QueryParams | undefined) {
@@ -287,43 +242,6 @@ function returnWhere(query: QueryParams | undefined) {
   return where;
 }
 
-function offlineSyncWhere(query: QueryParams | undefined) {
-  const search = queryText(query, "q");
-  const status = queryText(query, "status");
-  const terminalId = queryText(query, "terminalId");
-  const attemptedAt = dateRangeFilter(
-    queryText(query, "from"),
-    queryText(query, "to"),
-  );
-  const where: Prisma.PosOfflineSyncAttemptWhereInput = {};
-
-  if (
-    status &&
-    Object.values(PosOfflineSyncStatus).includes(status as PosOfflineSyncStatus)
-  ) {
-    where.status = status as PosOfflineSyncStatus;
-  }
-
-  if (terminalId) {
-    where.terminalId = terminalId;
-  }
-
-  if (attemptedAt) {
-    where.attemptedAt = attemptedAt;
-  }
-
-  if (search) {
-    where.OR = [
-      { clientRequestId: containsFilter(search) },
-      { errorMessage: containsFilter(search) },
-      { conflictCode: containsFilter(search) },
-      { terminal: { name: containsFilter(search) } },
-    ];
-  }
-
-  return where;
-}
-
 @Injectable()
 export class SalesService {
   private readonly logger = new Logger(SalesService.name);
@@ -352,8 +270,8 @@ export class SalesService {
     return products.map(serializeInventoryItem);
   }
 
-  async options() {
-    const [products, saleItems, retailers] = await Promise.all([
+  async options(actor: AuthenticatedUser) {
+    const [products, saleItems, retailers, counters] = await Promise.all([
       this.prisma.product.findMany({
         where: {
           isActive: true,
@@ -368,7 +286,32 @@ export class SalesService {
         take: 80,
       }),
       this.listRetailers(),
+      this.prisma.posTerminal.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          displayToken: true,
+          currentSessionId: true,
+          currentSession: {
+            select: {
+              id: true,
+              status: true,
+              expiresAt: true,
+              createdById: true,
+              createdBy: {
+                select: {
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { name: "asc" },
+      }),
     ]);
+    const now = new Date();
 
     return {
       products: products.map(serializeInventoryItem),
@@ -376,6 +319,26 @@ export class SalesService {
         .map(serializeSaleItemOption)
         .filter((item) => Number(item.returnableQuantity) > 0),
       retailers: retailers.filter((retailer) => retailer.isActive),
+      counters: counters.map((counter) => {
+        const activeSession =
+          counter.currentSession?.status === PosSessionStatus.ACTIVE &&
+          (!counter.currentSession.expiresAt ||
+            counter.currentSession.expiresAt > now)
+            ? counter.currentSession
+            : null;
+
+        return {
+          id: counter.id,
+          name: counter.name,
+          displayToken: counter.displayToken,
+          currentSessionId: activeSession?.id ?? null,
+          occupiedByCurrentUser: activeSession?.createdById === actor.id,
+          occupiedByName:
+            activeSession?.createdBy?.name ??
+            activeSession?.createdBy?.email ??
+            null,
+        };
+      }),
       paymentMethods: Object.values(PaymentMethod),
       returnDispositions: Object.values(SalesReturnDisposition),
     };
@@ -558,25 +521,9 @@ export class SalesService {
       throw new BadRequestException("That retailer account is inactive.");
     }
 
-    if (parsed.data.terminalId) {
-      const terminal = await this.prisma.posTerminal.findUnique({
-        where: { id: parsed.data.terminalId },
-        select: { id: true, isActive: true },
-      });
-
-      if (!terminal) {
-        throw new NotFoundException("POS terminal not found.");
-      }
-
-      if (!terminal.isActive) {
-        throw new BadRequestException("That POS terminal is inactive.");
-      }
-    }
-
     const approval = await this.prisma.retailerOrderApproval.create({
       data: {
         retailerId: retailer.id,
-        terminalId: parsed.data.terminalId,
         approvedAmount: new Prisma.Decimal(
           roundMoney(parsed.data.approvedAmount).toFixed(2),
         ),
@@ -586,19 +533,7 @@ export class SalesService {
         reviewedAt: new Date(),
         approvedById: actor.id,
       },
-      select: {
-        id: true,
-        approvedAmount: true,
-        status: true,
-        reason: true,
-        expiresAt: true,
-        usedAt: true,
-        createdAt: true,
-        reviewedAt: true,
-        terminal: { select: { id: true, name: true } },
-        requestedBy: { select: { id: true, name: true, email: true } },
-        approvedBy: { select: { id: true, name: true, email: true } },
-      },
+      select: retailerOrderApprovalSelect,
     });
 
     await this.audit.record({
@@ -609,25 +544,12 @@ export class SalesService {
       metadata: {
         retailerId: retailer.id,
         retailerName: retailer.name,
-        terminalId: parsed.data.terminalId ?? null,
         approvedAmount: approval.approvedAmount.toString(),
         expiresAt: approval.expiresAt?.toISOString() ?? null,
       },
     });
 
-    return {
-      id: approval.id,
-      approvedAmount: approval.approvedAmount.toString(),
-      status: approval.status,
-      reason: approval.reason,
-      terminal: approval.terminal,
-      expiresAt: approval.expiresAt?.toISOString() ?? null,
-      usedAt: approval.usedAt?.toISOString() ?? null,
-      createdAt: approval.createdAt.toISOString(),
-      reviewedAt: approval.reviewedAt?.toISOString() ?? null,
-      requestedBy: approval.requestedBy,
-      approvedBy: approval.approvedBy,
-    };
+    return serializeRetailerOrderApproval(approval);
   }
 
   async requestRetailerOrderApproval(
@@ -669,25 +591,9 @@ export class SalesService {
       );
     }
 
-    if (parsed.data.terminalId) {
-      const terminal = await this.prisma.posTerminal.findUnique({
-        where: { id: parsed.data.terminalId },
-        select: { id: true, isActive: true },
-      });
-
-      if (!terminal) {
-        throw new NotFoundException("POS terminal not found.");
-      }
-
-      if (!terminal.isActive) {
-        throw new BadRequestException("That POS terminal is inactive.");
-      }
-    }
-
     const approval = await this.prisma.retailerOrderApproval.create({
       data: {
         retailerId: retailer.id,
-        terminalId: parsed.data.terminalId,
         approvedAmount: new Prisma.Decimal(
           roundMoney(parsed.data.requestedAmount).toFixed(2),
         ),
@@ -695,19 +601,7 @@ export class SalesService {
         reason: parsed.data.reason,
         requestedById: actor.id,
       },
-      select: {
-        id: true,
-        approvedAmount: true,
-        status: true,
-        reason: true,
-        expiresAt: true,
-        usedAt: true,
-        createdAt: true,
-        reviewedAt: true,
-        terminal: { select: { id: true, name: true } },
-        requestedBy: { select: { id: true, name: true, email: true } },
-        approvedBy: { select: { id: true, name: true, email: true } },
-      },
+      select: retailerOrderApprovalSelect,
     });
 
     await this.audit.record({
@@ -718,25 +612,12 @@ export class SalesService {
       metadata: {
         retailerId: retailer.id,
         retailerName: retailer.name,
-        terminalId: parsed.data.terminalId ?? null,
         requestedAmount: approval.approvedAmount.toString(),
         outstandingBalance: outstandingBalance.toFixed(2),
       },
     });
 
-    return {
-      id: approval.id,
-      approvedAmount: approval.approvedAmount.toString(),
-      status: approval.status,
-      reason: approval.reason,
-      terminal: approval.terminal,
-      expiresAt: approval.expiresAt?.toISOString() ?? null,
-      usedAt: approval.usedAt?.toISOString() ?? null,
-      createdAt: approval.createdAt.toISOString(),
-      reviewedAt: approval.reviewedAt?.toISOString() ?? null,
-      requestedBy: approval.requestedBy,
-      approvedBy: approval.approvedBy,
-    };
+    return serializeRetailerOrderApproval(approval);
   }
 
   async updateRetailerOrderApproval(
@@ -789,19 +670,7 @@ export class SalesService {
 
     const approval = await this.prisma.retailerOrderApproval.findUniqueOrThrow({
       where: { id: approvalId },
-      select: {
-        id: true,
-        approvedAmount: true,
-        status: true,
-        reason: true,
-        expiresAt: true,
-        usedAt: true,
-        createdAt: true,
-        reviewedAt: true,
-        terminal: { select: { id: true, name: true } },
-        requestedBy: { select: { id: true, name: true, email: true } },
-        approvedBy: { select: { id: true, name: true, email: true } },
-      },
+      select: retailerOrderApprovalSelect,
     });
 
     await this.audit.record({
@@ -816,19 +685,7 @@ export class SalesService {
       },
     });
 
-    return {
-      id: approval.id,
-      approvedAmount: approval.approvedAmount.toString(),
-      status: approval.status,
-      reason: approval.reason,
-      terminal: approval.terminal,
-      expiresAt: approval.expiresAt?.toISOString() ?? null,
-      usedAt: approval.usedAt?.toISOString() ?? null,
-      createdAt: approval.createdAt.toISOString(),
-      reviewedAt: approval.reviewedAt?.toISOString() ?? null,
-      requestedBy: approval.requestedBy,
-      approvedBy: approval.approvedBy,
-    };
+    return serializeRetailerOrderApproval(approval);
   }
 
   async listRetailerPayments(retailerId?: string) {
@@ -884,7 +741,6 @@ export class SalesService {
                 where: { id: { in: lockedSaleIds.map((sale) => sale.id) } },
                 select: {
                   id: true,
-                  terminalId: true,
                   saleNumber: true,
                   amountPaid: true,
                   balanceDue: true,
@@ -968,44 +824,6 @@ export class SalesService {
             },
           });
 
-          if (sale.terminalId) {
-            const lockedAllocationIds = await tx.$queryRaw<
-              Array<{ id: string }>
-            >(
-              Prisma.sql`
-                SELECT "id"
-                FROM "PosTerminalRetailerCreditAllocation"
-                WHERE "terminalId" = ${sale.terminalId}
-                  AND "retailerId" = ${retailer.id}
-                FOR UPDATE
-              `,
-            );
-            const lockedAllocationId = lockedAllocationIds[0]?.id;
-            const creditAllocation = lockedAllocationId
-              ? await tx.posTerminalRetailerCreditAllocation.findUnique({
-                  where: { id: lockedAllocationId },
-                  select: { id: true, usedAmount: true },
-                })
-              : null;
-
-            if (creditAllocation) {
-              const nextUsedAmount = roundMoney(
-                Math.max(
-                  0,
-                  decimalToNumber(creditAllocation.usedAmount) -
-                    allocationAmount,
-                ),
-              );
-
-              await tx.posTerminalRetailerCreditAllocation.update({
-                where: { id: creditAllocation.id },
-                data: {
-                  usedAmount: new Prisma.Decimal(nextUsedAmount.toFixed(2)),
-                },
-              });
-            }
-          }
-
           remaining = roundMoney(remaining - allocationAmount);
         }
 
@@ -1047,9 +865,6 @@ export class SalesService {
       data: {
         name: parsed.data.name,
         displayToken: generateDisplayToken(),
-        pairingCodeHash: hashSecret(parsed.data.pairingCode),
-        pairingCodeExpiresAt: posPairingCodeExpiresAt(),
-        offlineEnabled: parsed.data.offlineEnabled ?? false,
         createdById: actor.id,
       },
       include: posTerminalInclude,
@@ -1062,8 +877,6 @@ export class SalesService {
       entityId: terminal.id,
       metadata: {
         name: terminal.name,
-        offlineEnabled: terminal.offlineEnabled,
-        pairingCodeExpiresAt: terminal.pairingCodeExpiresAt?.toISOString() ?? null,
       },
     });
 
@@ -1092,34 +905,46 @@ export class SalesService {
 
     const existing = await this.prisma.posTerminal.findUnique({
       where: { id },
-      select: { id: true, displayToken: true },
+      select: {
+        id: true,
+        name: true,
+        displayToken: true,
+        currentSessionId: true,
+        isActive: true,
+      },
     });
 
     if (!existing) {
       throw new NotFoundException("POS terminal not found.");
     }
 
-    const terminal = await this.prisma.posTerminal.update({
-      where: { id },
-      data: {
-        name: parsed.data.name,
-        isActive: parsed.data.isActive,
-        offlineEnabled: parsed.data.offlineEnabled,
-        // Rotation invalidates a leaked customer-display URL without
-        // recreating the terminal.
-        ...(parsed.data.rotateDisplayToken
-          ? { displayToken: generateDisplayToken() }
-          : {}),
-      },
-      include: posTerminalInclude,
+    const terminal = await this.prisma.$transaction(async (tx) => {
+      if (parsed.data.isActive === false && existing.currentSessionId) {
+        await tx.posSession.updateMany({
+          where: {
+            id: existing.currentSessionId,
+            status: PosSessionStatus.ACTIVE,
+          },
+          data: { status: PosSessionStatus.CANCELLED },
+        });
+      }
+
+      return tx.posTerminal.update({
+        where: { id },
+        data: {
+          name: parsed.data.name ?? undefined,
+          isActive: parsed.data.isActive,
+          ...(parsed.data.isActive === false ? { currentSessionId: null } : {}),
+          ...(parsed.data.rotateDisplayToken
+            ? { displayToken: generateDisplayToken() }
+            : {}),
+        },
+        include: posTerminalInclude,
+      });
     });
 
-    if (
-      parsed.data.rotateDisplayToken ||
-      !terminal.isActive ||
-      !terminal.offlineEnabled
-    ) {
-      this.posDisplayEvents.clearTerminalPreview(existing.displayToken);
+    if (parsed.data.isActive === false) {
+      await this.emitPosTerminalUpdate(existing.displayToken);
     }
 
     await this.audit.record({
@@ -1128,9 +953,12 @@ export class SalesService {
       entityType: "PosTerminal",
       entityId: terminal.id,
       metadata: {
+        before: {
+          name: existing.name,
+          isActive: existing.isActive,
+        },
         name: terminal.name,
         isActive: terminal.isActive,
-        offlineEnabled: terminal.offlineEnabled,
         displayTokenRotated: Boolean(parsed.data.rotateDisplayToken),
       },
     });
@@ -1138,1409 +966,9 @@ export class SalesService {
     return serializePosTerminal(terminal);
   }
 
-  async rePairPosTerminal(
-    id: string,
-    input: unknown,
-    actor: AuthenticatedUser,
-  ) {
-    const parsed = rePairPosTerminalSchema.safeParse(input ?? {});
-
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message);
-    }
-
-    const existing = await this.prisma.posTerminal.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        isActive: true,
-        pairedAt: true,
-        deviceSecretIssuedAt: true,
-      },
-    });
-
-    if (!existing) {
-      throw new NotFoundException("POS terminal not found.");
-    }
-
-    if (!existing.isActive) {
-      throw new BadRequestException(
-        "Activate this POS terminal before generating a pairing code.",
-      );
-    }
-
-    const pairingCodeExpiresAt = posPairingCodeExpiresAt();
-    const terminal = await this.prisma.posTerminal.update({
-      where: { id },
-      data: {
-        pairingCodeHash: hashSecret(parsed.data.pairingCode),
-        pairingCodeExpiresAt,
-        pairedAt: null,
-        pairedById: null,
-        deviceSecretHash: null,
-        deviceSecretIssuedAt: null,
-        lastSeenAt: null,
-      },
-      include: posTerminalInclude,
-    });
-
-    await this.audit.record({
-      actorId: actor.id,
-      action: "ADMIN_POS_TERMINAL_REPAIR_STARTED",
-      entityType: "PosTerminal",
-      entityId: terminal.id,
-      metadata: {
-        terminalName: terminal.name,
-        previousPairedAt: existing.pairedAt?.toISOString() ?? null,
-        previousDeviceSecretIssuedAt:
-          existing.deviceSecretIssuedAt?.toISOString() ?? null,
-        pairingCodeExpiresAt: pairingCodeExpiresAt.toISOString(),
-      },
-    });
-
-    return serializePosTerminal(terminal);
-  }
-
-  async pairPosTerminal(input: unknown, actor: AuthenticatedUser) {
-    const parsed = pairPosTerminalSchema.safeParse(input ?? {});
-
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message);
-    }
-
-    const existing = await this.prisma.posTerminal.findUnique({
-      where: { id: parsed.data.terminalId },
-      select: {
-        id: true,
-        isActive: true,
-        pairingCodeHash: true,
-        pairingCodeExpiresAt: true,
-        pairedAt: true,
-        deviceSecretHash: true,
-      },
-    });
-
-    if (!existing) {
-      throw new NotFoundException("POS terminal not found.");
-    }
-
-    if (!existing.isActive) {
-      throw new BadRequestException("This POS terminal has been deactivated.");
-    }
-
-    if (existing.pairedAt || existing.deviceSecretHash) {
-      throw new ConflictException(
-        "This POS terminal is already paired. Ask Admin to start re-pairing.",
-      );
-    }
-
-    if (
-      !existing.pairingCodeHash ||
-      !secretsMatch(parsed.data.pairingCode, existing.pairingCodeHash)
-    ) {
-      throw new BadRequestException("Invalid POS terminal pairing code.");
-    }
-
-    if (
-      !existing.pairingCodeExpiresAt ||
-      existing.pairingCodeExpiresAt.getTime() <= Date.now()
-    ) {
-      throw new BadRequestException(
-        "This POS terminal pairing code has expired. Ask Admin for a new code.",
-      );
-    }
-
-    const pairedAt = new Date();
-    const deviceSecret = generateDeviceSecret();
-    const paired = await this.prisma.posTerminal.updateMany({
-      where: {
-        id: existing.id,
-        isActive: true,
-        pairedAt: null,
-        deviceSecretHash: null,
-        pairingCodeHash: existing.pairingCodeHash,
-        pairingCodeExpiresAt: { gt: pairedAt },
-      },
-      data: {
-        pairingCodeHash: null,
-        pairingCodeExpiresAt: null,
-        pairedAt,
-        pairedById: actor.id,
-        deviceSecretHash: hashSecret(deviceSecret),
-        deviceSecretIssuedAt: pairedAt,
-        lastSeenAt: pairedAt,
-      },
-    });
-
-    if (paired.count === 0) {
-      throw new ConflictException(
-        "This pairing code was already used or the terminal pairing changed. Ask Admin for a new code.",
-      );
-    }
-
-    const terminal = await this.prisma.posTerminal.findUniqueOrThrow({
-      where: { id: existing.id },
-      include: posTerminalInclude,
-    });
-
-    await this.audit.record({
-      actorId: actor.id,
-      action: "SALES_POS_TERMINAL_PAIRED",
-      entityType: "PosTerminal",
-      entityId: terminal.id,
-      metadata: {
-        terminalName: terminal.name,
-      },
-    });
-
-    return serializePairedPosTerminal(terminal, deviceSecret);
-  }
-
-  private async assertTerminalDevice(
-    id: string | undefined | null,
-    deviceSecret: string | undefined,
-  ) {
-    if (!id) {
-      return null;
-    }
-
-    const existing = await this.prisma.posTerminal.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        displayToken: true,
-        isActive: true,
-        deviceSecretHash: true,
-      },
-    });
-
-    if (!existing) {
-      throw new NotFoundException("POS terminal not found.");
-    }
-
-    if (!existing.isActive) {
-      throw new BadRequestException("This POS terminal has been deactivated.");
-    }
-
-    if (!secretsMatch(deviceSecret, existing.deviceSecretHash)) {
-      throw new BadRequestException(
-        "This device is not paired to that POS terminal.",
-      );
-    }
-
-    return existing;
-  }
-
-  async authenticatePosTerminal(
-    id: string,
-    deviceSecret: string | undefined,
-  ) {
-    return this.assertTerminalDevice(id, deviceSecret);
-  }
-
-  private async terminalDayCloseBarrier(terminalId: string, now = new Date()) {
-    const businessDate = businessDateForInstant(now);
-    const state = await this.prisma.businessDayState.findUnique({
-      where: { businessDate },
-      select: {
-        status: true,
-        closeCutoffAt: true,
-        terminalReadiness: {
-          where: { terminalId },
-          select: {
-            confirmedAt: true,
-            syncedThroughAt: true,
-            overriddenAt: true,
-          },
-          take: 1,
-        },
-      },
-    });
-
-    if (
-      !state ||
-      state.status === BusinessDayStatus.OPEN ||
-      state.status === BusinessDayStatus.STALE
-    ) {
-      return null;
-    }
-
-    const readiness = state.terminalReadiness[0];
-
-    return {
-      businessDate: businessDate.toISOString().slice(0, 10),
-      status: state.status,
-      cutoffAt: state.closeCutoffAt?.toISOString() ?? null,
-      checkoutBlocked: true,
-      terminalConfirmed: Boolean(
-        readiness?.overriddenAt ||
-          (readiness?.confirmedAt && readiness.syncedThroughAt),
-      ),
-    };
-  }
-
-  async getPosTerminal(id: string, deviceSecret: string | undefined) {
-    await this.assertTerminalDevice(id, deviceSecret);
-
-    const terminal = await this.prisma.posTerminal.update({
-      where: { id },
-      data: { lastSeenAt: new Date() },
-      include: posTerminalInclude,
-    });
-
-    return serializePosTerminal(terminal);
-  }
-
-  async publishPosTerminalDisplay(
-    id: string,
-    input: unknown,
-    deviceSecret: string | undefined,
-  ) {
-    const authenticatedTerminal = await this.assertTerminalDevice(
-      id,
-      deviceSecret,
-    );
-    const terminal = await this.prisma.posTerminal.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        displayToken: true,
-        offlineEnabled: true,
-      },
-    });
-
-    if (!authenticatedTerminal || !terminal || !terminal.offlineEnabled) {
-      throw new BadRequestException(
-        "Live previews are only used by offline-enabled POS terminals.",
-      );
-    }
-
-    const parsed = publishPosTerminalDisplaySchema.safeParse(input ?? {});
-
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message);
-    }
-
-    if (!parsed.data.session) {
-      this.posDisplayEvents.clearTerminalPreview(terminal.displayToken);
-      this.posDisplayEvents.emitTerminalUpdate(
-        terminal.displayToken,
-        await this.getPosTerminalDisplay(terminal.displayToken),
-      );
-      return { ok: true };
-    }
-
-    const previewInput = parsed.data.session;
-    const productIds = [
-      ...new Set(previewInput.items.map((item) => item.productId)),
-    ];
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, isActive: true },
-      select: productSelect,
-    });
-    const productsById = new Map(
-      products.map((product) => [product.id, product]),
-    );
-
-    if (products.length !== productIds.length) {
-      throw new BadRequestException(
-        "One or more products on the customer display are unavailable.",
-      );
-    }
-
-    const items = previewInput.items.map((item) => {
-      const product = productsById.get(item.productId);
-
-      if (!product) {
-        throw new BadRequestException(
-          "One or more products on the customer display are unavailable.",
-        );
-      }
-
-      const lineTotal = roundMoney(item.quantity * (item.unitPrice ?? 0));
-
-      return {
-        id: `preview-${previewInput.id}-${product.id}`,
-        quantity: formatQuantity(item.quantity),
-        unitPrice: (item.unitPrice ?? 0).toFixed(2),
-        lineTotal: lineTotal.toFixed(2),
-        product: {
-          ...product,
-          unitPrice: product.unitPrice?.toString() ?? null,
-          retailerPrice: product.retailerPrice?.toString() ?? null,
-          discountPercent: product.discountPercent.toString(),
-        },
-      };
-    });
-    const subtotal = roundMoney(
-      items.reduce((sum, item) => sum + Number(item.lineTotal), 0),
-    );
-    const totalAmount = Math.max(
-      0,
-      roundMoney(subtotal - previewInput.discount),
-    );
-    const balanceDue = Math.max(
-      0,
-      roundMoney(totalAmount - previewInput.amountPaid),
-    );
-    const preview = {
-      id: previewInput.id,
-      displayToken: terminal.displayToken,
-      terminal: {
-        id: terminal.id,
-        displayToken: terminal.displayToken,
-        offlineEnabled: terminal.offlineEnabled,
-      },
-      status: previewInput.status,
-      customerType: previewInput.customerType,
-      retailer: null,
-      retailerApprovalId: null,
-      customerName: previewInput.customerName ?? null,
-      paymentMethod: previewInput.paymentMethod,
-      discount: previewInput.discount.toFixed(2),
-      amountPaid: previewInput.amountPaid.toFixed(2),
-      balanceDue: balanceDue.toFixed(2),
-      subtotal: subtotal.toFixed(2),
-      totalAmount: totalAmount.toFixed(2),
-      notes: null,
-      createdAt: previewInput.createdAt.toISOString(),
-      updatedAt: previewInput.updatedAt.toISOString(),
-      completedAt: previewInput.completedAt?.toISOString() ?? null,
-      completedSale: null,
-      items,
-    };
-
-    this.posDisplayEvents.setTerminalPreview(terminal.displayToken, preview);
-    this.posDisplayEvents.emitTerminalSessionUpdate(
-      terminal.displayToken,
-      preview,
-    );
-
-    return { ok: true };
-  }
-
-  async getPosOfflineSnapshot(id: string, deviceSecret: string | undefined) {
-    await this.assertTerminalDevice(id, deviceSecret);
-
-    const terminal = await this.prisma.posTerminal.update({
-      where: { id },
-      data: { lastSeenAt: new Date() },
-      include: posTerminalInclude,
-    });
-
-    if (!terminal.offlineEnabled) {
-      throw new BadRequestException(
-        "Offline mode is not enabled for this POS terminal.",
-      );
-    }
-
-    const serializedTerminal = serializePosTerminal(terminal);
-    const activeCreditAllocations =
-      serializedTerminal.retailerCreditAllocations.filter(
-        (allocation) => allocation.isActive,
-      );
-    const now = new Date();
-    const retailers = await this.prisma.retailer.findMany({
-      where: { isActive: true },
-      select: {
-        ...retailerSelect,
-        orderApprovals: {
-          where: {
-            terminalId: terminal.id,
-            status: RetailerOrderApprovalStatus.APPROVED,
-            usedAt: null,
-            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-          },
-          select: retailerOrderApprovalSelect,
-          orderBy: { createdAt: "asc" },
-        },
-      },
-      orderBy: { name: "asc" },
-    });
-    const outstandingByRetailer = new Map(
-      (
-        await this.prisma.sale.groupBy({
-          by: ["retailerId"],
-          where: {
-            retailerId: { in: retailers.map((retailer) => retailer.id) },
-            balanceDue: { gt: 0 },
-          },
-          _sum: { balanceDue: true },
-        })
-      ).flatMap((balance) =>
-        balance.retailerId
-          ? [
-              [
-                balance.retailerId,
-                decimalToNumber(balance._sum.balanceDue ?? 0),
-              ] as const,
-            ]
-          : [],
-      ),
-    );
-    const creditAllocationByRetailer = new Map(
-      activeCreditAllocations.map((allocation) => [
-        allocation.retailer.id,
-        allocation,
-      ]),
-    );
-    const offlineRetailers = retailers.map((retailer) => {
-      const allocation = creditAllocationByRetailer.get(retailer.id);
-
-      return {
-        ...serializeRetailer(retailer, {
-          outstandingBalance: outstandingByRetailer.get(retailer.id) ?? 0,
-        }),
-        creditLimit: allocation?.allocatedAmount ?? "0.00",
-        availableCredit: allocation?.remainingAmount ?? "0.00",
-        orderApprovalRequests: [],
-      };
-    });
-    const allocationVersion = terminal.stockAllocations
-      .map(
-        (allocation) =>
-          `${allocation.id}:${allocation.allocatedQuantity}:${allocation.soldQuantity}:${allocation.updatedAt.getTime()}:${allocation.batches
-            .map(
-              (batch) =>
-                `${batch.id}:${batch.quantityRemaining}:${batch.updatedAt.getTime()}`,
-            )
-            .join(",")}`,
-      )
-      .join("|");
-    const creditVersion = terminal.retailerCreditAllocations
-      .map(
-        (allocation) =>
-          `${allocation.id}:${allocation.allocatedAmount.toString()}:${allocation.usedAmount.toString()}:${allocation.isActive}:${allocation.updatedAt.getTime()}`,
-      )
-      .join("|");
-    const retailerVersion = retailers
-      .map(
-        (retailer) =>
-          `${retailer.id}:${retailer.updatedAt.getTime()}:${outstandingByRetailer.get(retailer.id) ?? 0}:${retailer.orderApprovals
-            .map(
-              (approval) =>
-                `${approval.id}:${approval.approvedAmount.toString()}:${approval.expiresAt?.getTime() ?? "none"}`,
-            )
-            .join(",")}`,
-      )
-      .join("|");
-
-    return {
-      terminal: serializedTerminal,
-      products: serializedTerminal.stockAllocations.map((allocation) => ({
-        allocation,
-        inventory: {
-          product: allocation.product,
-          totalRemaining: allocation.remainingQuantity,
-          batches: allocation.batches
-            .filter((batch) => Number(batch.quantityRemaining) > 0)
-            .map((batch) => ({
-              id: batch.id,
-              batchNumber: batch.sourceBatch.batchNumber,
-              batchDate: batch.sourceBatch.batchDate,
-              quantityReceived: batch.quantityAllocated,
-              quantityRemaining: batch.quantityRemaining,
-              receivedAt: batch.allocatedAt,
-              notes: "POS terminal custody",
-              productionRun: null,
-              createdBy: null,
-            })),
-        },
-      })),
-      retailerCreditAllocations:
-        activeCreditAllocations,
-      retailers: offlineRetailers,
-      dayCloseBarrier: await this.terminalDayCloseBarrier(terminal.id, now),
-      serverTime: new Date().toISOString(),
-      snapshotVersion: hashSecret(
-        `${terminal.id}:${terminal.updatedAt.getTime()}:${allocationVersion}:${creditVersion}:${retailerVersion}`,
-      ),
-    };
-  }
-
-  async syncOfflinePosSales(
-    input: unknown,
-    actor: AuthenticatedUser,
-    deviceSecret?: string,
-  ) {
-    const parsed = syncOfflinePosBatchSchema.safeParse(input ?? {});
-
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message);
-    }
-
-    await this.assertTerminalDevice(parsed.data.terminalId, deviceSecret);
-
-    const terminal = await this.prisma.posTerminal.findUnique({
-      where: { id: parsed.data.terminalId },
-      select: { id: true, offlineEnabled: true },
-    });
-
-    if (!terminal) {
-      throw new NotFoundException("POS terminal not found.");
-    }
-
-    if (!terminal.offlineEnabled) {
-      throw new BadRequestException(
-        "Offline mode is not enabled for this POS terminal.",
-      );
-    }
-
-    const results = [];
-
-    for (const sale of parsed.data.sales) {
-      results.push(await this.syncOfflinePosSale(sale, actor));
-    }
-
-    await this.prisma.posTerminal.update({
-      where: { id: parsed.data.terminalId },
-      data: {
-        lastSeenAt: new Date(),
-        lastSyncedAt: new Date(),
-      },
-    });
-
-    return {
-      terminalId: parsed.data.terminalId,
-      serverTime: new Date().toISOString(),
-      results,
-      dayCloseBarrier: await this.terminalDayCloseBarrier(
-        parsed.data.terminalId,
-      ),
-    };
-  }
-
-  private async recordOfflineSyncAttempt(input: {
-    terminalId: string;
-    clientRequestId: string;
-    status: PosOfflineSyncStatus;
-    payload: unknown;
-    saleId?: string | null;
-    errorMessage?: string | null;
-    conflictCode?: string | null;
-    syncedAt?: Date | null;
-  }) {
-    await this.prisma.posOfflineSyncAttempt.upsert({
-      where: {
-        terminalId_clientRequestId: {
-          terminalId: input.terminalId,
-          clientRequestId: input.clientRequestId,
-        },
-      },
-      create: {
-        terminalId: input.terminalId,
-        clientRequestId: input.clientRequestId,
-        status: input.status,
-        saleId: input.saleId ?? null,
-        payload: jsonPayload(input.payload),
-        errorMessage: input.errorMessage ?? null,
-        conflictCode: input.conflictCode ?? null,
-        attemptedAt: new Date(),
-        syncedAt: input.syncedAt ?? null,
-      },
-      update: {
-        status: input.status,
-        saleId: input.saleId ?? null,
-        payload: jsonPayload(input.payload),
-        errorMessage: input.errorMessage ?? null,
-        conflictCode: input.conflictCode ?? null,
-        attemptedAt: new Date(),
-        syncedAt: input.syncedAt ?? null,
-      },
-    });
-  }
-
-  private async syncOfflinePosSale(
-    sale: SyncOfflinePosSaleInput,
-    actor: AuthenticatedUser,
-  ) {
-    const payload = jsonPayload(sale);
-    const existing = await this.prisma.sale.findUnique({
-      where: { clientRequestId: sale.clientRequestId },
-      include: saleInclude,
-    });
-
-    if (existing) {
-      await this.recordOfflineSyncAttempt({
-        terminalId: sale.terminalId,
-        clientRequestId: sale.clientRequestId,
-        status: PosOfflineSyncStatus.DUPLICATE,
-        payload,
-        saleId: existing.id,
-        syncedAt: new Date(),
-      });
-
-      return {
-        clientRequestId: sale.clientRequestId,
-        status: PosOfflineSyncStatus.DUPLICATE,
-        sale: serializeSale(existing),
-        errorMessage: null,
-      };
-    }
-
-    try {
-      const createdRecord = await this.prisma.$transaction(
-        async (tx) =>
-          this.createSaleInTransaction(
-            tx,
-            {
-              ...sale,
-              terminalId: sale.terminalId,
-              clientRequestId: sale.clientRequestId,
-            } satisfies CreateSaleInput,
-            actor,
-          ),
-        { timeout: 15000, maxWait: 15000 },
-      );
-      const created = await this.prisma.sale.findUniqueOrThrow({
-        where: { id: createdRecord.id },
-        include: saleInclude,
-      });
-
-      await this.auditSaleRecorded(created, actor);
-      await this.recordOfflineSyncAttempt({
-        terminalId: sale.terminalId,
-        clientRequestId: sale.clientRequestId,
-        status: PosOfflineSyncStatus.SYNCED,
-        payload,
-        saleId: created.id,
-        syncedAt: new Date(),
-      });
-
-      return {
-        clientRequestId: sale.clientRequestId,
-        status: PosOfflineSyncStatus.SYNCED,
-        sale: serializeSale(created),
-        errorMessage: null,
-      };
-    } catch (error: unknown) {
-      // A racing sync for the same clientRequestId can win between the
-      // duplicate check and the insert; the unique constraint then fires
-      // here. That is a duplicate, not a failure — return the winner's sale.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        const winner = await this.prisma.sale.findUnique({
-          where: { clientRequestId: sale.clientRequestId },
-          include: saleInclude,
-        });
-
-        if (winner) {
-          await this.recordOfflineSyncAttempt({
-            terminalId: sale.terminalId,
-            clientRequestId: sale.clientRequestId,
-            status: PosOfflineSyncStatus.DUPLICATE,
-            payload,
-            saleId: winner.id,
-            syncedAt: new Date(),
-          });
-
-          return {
-            clientRequestId: sale.clientRequestId,
-            status: PosOfflineSyncStatus.DUPLICATE,
-            sale: serializeSale(winner),
-            errorMessage: null,
-          };
-        }
-      }
-
-      const expectedConflict =
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException ||
-        error instanceof ConflictException;
-      const errorMessage =
-        error instanceof Error ? error.message : "Offline sale sync failed.";
-      const status = expectedConflict
-        ? PosOfflineSyncStatus.CONFLICT
-        : PosOfflineSyncStatus.FAILED;
-
-      if (!expectedConflict) {
-        this.logger.error(
-          `Offline POS sync failed terminal=${sale.terminalId} request=${sale.clientRequestId} reason=${errorMessage}`,
-        );
-      }
-
-      await this.recordOfflineSyncAttempt({
-        terminalId: sale.terminalId,
-        clientRequestId: sale.clientRequestId,
-        status,
-        payload,
-        errorMessage,
-        conflictCode:
-          error instanceof BusinessDayPostingLockedException
-            ? error.conflictCode
-            : expectedConflict
-              ? "BUSINESS_RULE"
-              : "SERVER_ERROR",
-        syncedAt: null,
-      });
-
-      return {
-        clientRequestId: sale.clientRequestId,
-        status,
-        sale: null,
-        errorMessage,
-      };
-    }
-  }
-
-  async listPosOfflineSyncAttempts(query?: QueryParams) {
-    const where = offlineSyncWhere(query);
-    const orderBy = { attemptedAt: "desc" } as const;
-
-    if (hasPaginatedRequest(query)) {
-      const { page, pageSize, skip, take } = parsePagination(query);
-      const [total, attempts] = await this.prisma.$transaction([
-        this.prisma.posOfflineSyncAttempt.count({ where }),
-        this.prisma.posOfflineSyncAttempt.findMany({
-          where,
-          include: posOfflineSyncAttemptInclude,
-          orderBy,
-          skip,
-          take,
-        }),
-      ]);
-
-      return paginatedResult(
-        attempts.map(serializePosOfflineSyncAttempt),
-        total,
-        page,
-        pageSize,
-      );
-    }
-
-    const attempts = await this.prisma.posOfflineSyncAttempt.findMany({
-      where,
-      include: posOfflineSyncAttemptInclude,
-      orderBy,
-      take: 200,
-    });
-
-    return attempts.map(serializePosOfflineSyncAttempt);
-  }
-
-  async retryPosOfflineSyncAttempt(id: string, actor: AuthenticatedUser) {
-    const attempt = await this.prisma.posOfflineSyncAttempt.findUnique({
-      where: { id },
-      include: posOfflineSyncAttemptInclude,
-    });
-
-    if (!attempt) {
-      throw new NotFoundException("Offline POS sync attempt not found.");
-    }
-
-    if (
-      attempt.status === PosOfflineSyncStatus.SYNCED ||
-      attempt.status === PosOfflineSyncStatus.DUPLICATE
-    ) {
-      return serializePosOfflineSyncAttempt(attempt);
-    }
-
-    const parsed = syncOfflinePosSaleSchema.safeParse(attempt.payload);
-
-    if (!parsed.success) {
-      await this.recordOfflineSyncAttempt({
-        terminalId: attempt.terminalId,
-        clientRequestId: attempt.clientRequestId,
-        status: PosOfflineSyncStatus.FAILED,
-        payload: attempt.payload,
-        errorMessage: parsed.error.issues[0]?.message ?? "Invalid sync payload.",
-        conflictCode: "INVALID_PAYLOAD",
-      });
-
-      const updated = await this.prisma.posOfflineSyncAttempt.findUniqueOrThrow({
-        where: { id },
-        include: posOfflineSyncAttemptInclude,
-      });
-
-      return serializePosOfflineSyncAttempt(updated);
-    }
-
-    if (
-      parsed.data.terminalId !== attempt.terminalId ||
-      parsed.data.clientRequestId !== attempt.clientRequestId
-    ) {
-      await this.recordOfflineSyncAttempt({
-        terminalId: attempt.terminalId,
-        clientRequestId: attempt.clientRequestId,
-        status: PosOfflineSyncStatus.FAILED,
-        payload: attempt.payload,
-        errorMessage: "Sync payload identity does not match this attempt.",
-        conflictCode: "INVALID_PAYLOAD",
-      });
-
-      const updated = await this.prisma.posOfflineSyncAttempt.findUniqueOrThrow({
-        where: { id },
-        include: posOfflineSyncAttemptInclude,
-      });
-
-      return serializePosOfflineSyncAttempt(updated);
-    }
-
-    await this.syncOfflinePosSale(parsed.data, actor);
-
-    const updated = await this.prisma.posOfflineSyncAttempt.findUniqueOrThrow({
-      where: { id },
-      include: posOfflineSyncAttemptInclude,
-    });
-
-    return serializePosOfflineSyncAttempt(updated);
-  }
-
-  async setPosTerminalStockAllocation(
-    terminalId: string,
-    input: unknown,
-    actor: AuthenticatedUser,
-  ) {
-    const parsed = setTerminalStockAllocationSchema.safeParse(input ?? {});
-
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message);
-    }
-
-    const result = await this.prisma.$transaction(
-      async (tx) => {
-        const terminal = await tx.posTerminal.findUnique({
-          where: { id: terminalId },
-          select: { id: true, name: true },
-        });
-
-        if (!terminal) {
-          throw new NotFoundException("POS terminal not found.");
-        }
-
-        // The Product row coordinates every mutation of central or terminal
-        // custody stock for this product.
-        await tx.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "Product" WHERE "id" = ${parsed.data.productId} FOR UPDATE`,
-        );
-
-        const product = await tx.product.findUnique({
-          where: { id: parsed.data.productId },
-          select: productSelect,
-        });
-
-        if (!product) {
-          throw new NotFoundException("Product not found.");
-        }
-
-        await tx.$queryRaw(
-          Prisma.sql`
-            SELECT "id"
-            FROM "PosTerminalStockAllocation"
-            WHERE "productId" = ${product.id}
-            ORDER BY "terminalId" ASC
-            FOR UPDATE
-          `,
-        );
-        const allocations = await tx.posTerminalStockAllocation.findMany({
-          where: { productId: product.id },
-          select: {
-            id: true,
-            terminalId: true,
-            allocatedQuantity: true,
-            soldQuantity: true,
-          },
-        });
-        const existing = allocations.find(
-          (allocation) => allocation.terminalId === terminalId,
-        );
-        const soldQuantity = existing?.soldQuantity ?? 0;
-
-        if (parsed.data.allocatedQuantity < soldQuantity) {
-          throw new BadRequestException(
-            `Allocated quantity cannot be below the ${formatQuantity(soldQuantity)} ${product.unit.abbreviation} already sold by this terminal.`,
-          );
-        }
-
-        const lockedCentralBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
-          Prisma.sql`
-            SELECT "id"
-            FROM "SalesProductBatch"
-            WHERE "productId" = ${product.id}
-            ORDER BY "receivedAt" ASC, "batchNumber" ASC, "id" ASC
-            FOR UPDATE
-          `,
-        );
-        const centralBatches =
-          lockedCentralBatchIds.length > 0
-            ? await tx.salesProductBatch.findMany({
-                where: {
-                  id: {
-                    in: lockedCentralBatchIds.map((batch) => batch.id),
-                  },
-                },
-                select: {
-                  id: true,
-                  quantityRemaining: true,
-                  unitCost: true,
-                  receivedAt: true,
-                  batchNumber: true,
-                },
-                orderBy: [
-                  { receivedAt: "asc" },
-                  { batchNumber: "asc" },
-                  { id: "asc" },
-                ],
-              })
-            : [];
-        const centralStockBefore = centralBatches.reduce(
-          (sum, batch) => sum + batch.quantityRemaining,
-          0,
-        );
-
-        const allocation = await tx.posTerminalStockAllocation.upsert({
-          where: {
-            terminalId_productId: {
-              terminalId,
-              productId: product.id,
-            },
-          },
-          create: {
-            terminalId,
-            productId: product.id,
-            allocatedQuantity: parsed.data.allocatedQuantity,
-          },
-          update: {
-            allocatedQuantity: parsed.data.allocatedQuantity,
-          },
-        });
-
-        await tx.$queryRaw(
-          Prisma.sql`
-            SELECT "id"
-            FROM "PosTerminalStockBatch"
-            WHERE "allocationId" = ${allocation.id}
-            ORDER BY "allocatedAt" ASC, "id" ASC
-            FOR UPDATE
-          `,
-        );
-        const custodyBatches = await tx.posTerminalStockBatch.findMany({
-          where: { allocationId: allocation.id },
-          select: {
-            id: true,
-            sourceBatchId: true,
-            quantityAllocated: true,
-            quantityRemaining: true,
-            allocatedAt: true,
-          },
-          orderBy: [{ allocatedAt: "asc" }, { id: "asc" }],
-        });
-        const custodyBefore = custodyBatches.reduce(
-          (sum, batch) => sum + batch.quantityRemaining,
-          0,
-        );
-        const expectedCustodyBefore = Math.max(
-          (existing?.allocatedQuantity ?? 0) - soldQuantity,
-          0,
-        );
-
-        if (custodyBefore !== expectedCustodyBefore) {
-          throw new ConflictException(
-            `Terminal stock custody is out of balance for ${productLabel(product)}. Expected ${formatQuantity(expectedCustodyBefore)} ${product.unit.abbreviation}, but found ${formatQuantity(custodyBefore)}. Reconcile the terminal before changing its allocation.`,
-          );
-        }
-
-        const requestedCustody = parsed.data.allocatedQuantity - soldQuantity;
-        const custodyChange = requestedCustody - custodyBefore;
-
-        if (custodyChange > centralStockBefore) {
-          throw new BadRequestException(
-            `Only ${formatQuantity(centralStockBefore)} ${product.unit.abbreviation} of ${productLabel(product)} is available in central Sales stock.`,
-          );
-        }
-
-        if (custodyChange > 0) {
-          let remainingToAllocate = custodyChange;
-
-          for (const batch of centralBatches) {
-            if (remainingToAllocate <= 0) {
-              break;
-            }
-
-            const quantityFromBatch = Math.min(
-              batch.quantityRemaining,
-              remainingToAllocate,
-            );
-
-            if (quantityFromBatch <= 0) {
-              continue;
-            }
-
-            const centralBalanceAfter =
-              batch.quantityRemaining - quantityFromBatch;
-            const custodyBatch = await tx.posTerminalStockBatch.create({
-              data: {
-                allocationId: allocation.id,
-                terminalId,
-                productId: product.id,
-                sourceBatchId: batch.id,
-                quantityAllocated: quantityFromBatch,
-                quantityRemaining: quantityFromBatch,
-                unitCost: batch.unitCost,
-                createdById: actor.id,
-              },
-            });
-
-            await tx.salesProductBatch.update({
-              where: { id: batch.id },
-              data: { quantityRemaining: centralBalanceAfter },
-            });
-            await tx.salesProductStockMovement.create({
-              data: {
-                productId: product.id,
-                batchId: batch.id,
-                type: FinishedProductStockMovementType.ALLOCATE_TO_TERMINAL,
-                quantity: quantityFromBatch,
-                balanceAfter: centralBalanceAfter,
-                actorId: actor.id,
-                note: `Allocated to ${terminal.name ?? terminal.id}`,
-              },
-            });
-            await tx.posTerminalStockMovement.create({
-              data: {
-                terminalId,
-                productId: product.id,
-                terminalBatchId: custodyBatch.id,
-                type: PosTerminalStockMovementType.ALLOCATE,
-                quantity: quantityFromBatch,
-                balanceAfter: quantityFromBatch,
-                actorId: actor.id,
-                note: `Allocated from Sales batch ${batch.batchNumber}`,
-              },
-            });
-
-            batch.quantityRemaining = centralBalanceAfter;
-            remainingToAllocate -= quantityFromBatch;
-          }
-        } else if (custodyChange < 0) {
-          let remainingToRelease = Math.abs(custodyChange);
-          const centralBatchById = new Map(
-            centralBatches.map((batch) => [batch.id, batch]),
-          );
-
-          for (const custodyBatch of [...custodyBatches].reverse()) {
-            if (remainingToRelease <= 0) {
-              break;
-            }
-
-            const quantityToRelease = Math.min(
-              custodyBatch.quantityRemaining,
-              remainingToRelease,
-            );
-
-            if (quantityToRelease <= 0) {
-              continue;
-            }
-
-            const sourceBatch = centralBatchById.get(custodyBatch.sourceBatchId);
-
-            if (!sourceBatch) {
-              throw new ConflictException(
-                "A terminal custody batch has no valid central source batch.",
-              );
-            }
-
-            const custodyBalanceAfter =
-              custodyBatch.quantityRemaining - quantityToRelease;
-            const centralBalanceAfter =
-              sourceBatch.quantityRemaining + quantityToRelease;
-
-            await tx.posTerminalStockBatch.update({
-              where: { id: custodyBatch.id },
-              data: { quantityRemaining: custodyBalanceAfter },
-            });
-            await tx.posTerminalStockMovement.create({
-              data: {
-                terminalId,
-                productId: product.id,
-                terminalBatchId: custodyBatch.id,
-                type: PosTerminalStockMovementType.RELEASE,
-                quantity: quantityToRelease,
-                balanceAfter: custodyBalanceAfter,
-                actorId: actor.id,
-                note: "Released unsold stock to central Sales custody",
-              },
-            });
-            await tx.salesProductBatch.update({
-              where: { id: sourceBatch.id },
-              data: { quantityRemaining: centralBalanceAfter },
-            });
-            await tx.salesProductStockMovement.create({
-              data: {
-                productId: product.id,
-                batchId: sourceBatch.id,
-                type: FinishedProductStockMovementType.RELEASE_FROM_TERMINAL,
-                quantity: quantityToRelease,
-                balanceAfter: centralBalanceAfter,
-                actorId: actor.id,
-                note: `Released from ${terminal.name ?? terminal.id}`,
-              },
-            });
-
-            sourceBatch.quantityRemaining = centralBalanceAfter;
-            remainingToRelease -= quantityToRelease;
-          }
-
-          if (remainingToRelease > 0) {
-            throw new ConflictException(
-              "The requested release exceeds this terminal's unsold custody balance.",
-            );
-          }
-        }
-
-        const updatedTerminal = await tx.posTerminal.findUniqueOrThrow({
-          where: { id: terminalId },
-          include: posTerminalInclude,
-        });
-
-        return {
-          allocation,
-          centralStockBefore,
-          custodyBefore,
-          custodyChange,
-          previousAllocatedQuantity: existing?.allocatedQuantity ?? 0,
-          product,
-          terminal,
-          updatedTerminal,
-        };
-      },
-      { timeout: 30000, maxWait: 15000 },
-    );
-
-    await this.audit.record({
-      actorId: actor.id,
-      action: "ADMIN_POS_TERMINAL_STOCK_ALLOCATED",
-      entityType: "PosTerminalStockAllocation",
-      entityId: result.allocation.id,
-      metadata: {
-        terminalId,
-        terminalName: result.terminal.name,
-        productId: result.product.id,
-        productName: productLabel(result.product),
-        previousAllocatedQuantity: result.previousAllocatedQuantity,
-        allocatedQuantity: result.allocation.allocatedQuantity,
-        soldQuantity: result.allocation.soldQuantity,
-        centralStockBefore: result.centralStockBefore,
-        custodyBefore: result.custodyBefore,
-        custodyChange: result.custodyChange,
-      },
-    });
-
-    return serializePosTerminal(result.updatedTerminal);
-  }
-
-  async adjustPosTerminalStock(
-    terminalId: string,
-    input: unknown,
-    actor: AuthenticatedUser,
-  ) {
-    const parsed = adjustTerminalStockSchema.safeParse(input ?? {});
-
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message);
-    }
-
-    const result = await this.prisma.$transaction(
-      async (tx) => {
-        const candidate = await tx.posTerminalStockBatch.findFirst({
-          where: {
-            id: parsed.data.terminalBatchId,
-            terminalId,
-          },
-          select: { id: true, productId: true, allocationId: true },
-        });
-
-        if (!candidate) {
-          throw new NotFoundException("POS terminal custody batch not found.");
-        }
-
-        await tx.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "Product" WHERE "id" = ${candidate.productId} FOR UPDATE`,
-        );
-        await tx.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "PosTerminalStockAllocation" WHERE "id" = ${candidate.allocationId} FOR UPDATE`,
-        );
-        await tx.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "PosTerminalStockBatch" WHERE "id" = ${candidate.id} FOR UPDATE`,
-        );
-
-        const custodyBatch = await tx.posTerminalStockBatch.findUniqueOrThrow({
-          where: { id: candidate.id },
-          include: {
-            allocation: true,
-            product: { select: productSelect },
-            terminal: { select: { id: true, name: true } },
-          },
-        });
-        const previousQuantity = custodyBatch.quantityRemaining;
-        const difference = parsed.data.countedQuantity - previousQuantity;
-
-        if (difference === 0) {
-          throw new BadRequestException(
-            "The physical count matches the current custody balance.",
-          );
-        }
-
-        const aggregateAllocatedAfter =
-          custodyBatch.allocation.allocatedQuantity + difference;
-
-        if (aggregateAllocatedAfter < custodyBatch.allocation.soldQuantity) {
-          throw new ConflictException(
-            "This adjustment would reduce allocated stock below quantity already sold.",
-          );
-        }
-
-        await tx.posTerminalStockBatch.update({
-          where: { id: custodyBatch.id },
-          data: {
-            quantityRemaining: parsed.data.countedQuantity,
-            ...(difference > 0
-              ? { quantityAllocated: { increment: difference } }
-              : {}),
-          },
-        });
-        await tx.posTerminalStockAllocation.update({
-          where: { id: custodyBatch.allocationId },
-          data: { allocatedQuantity: aggregateAllocatedAfter },
-        });
-        await tx.posTerminalStockMovement.create({
-          data: {
-            terminalId,
-            productId: custodyBatch.productId,
-            terminalBatchId: custodyBatch.id,
-            type: PosTerminalStockMovementType.ADJUST,
-            quantity: Math.abs(difference),
-            balanceAfter: parsed.data.countedQuantity,
-            actorId: actor.id,
-            note: `Physical count adjustment (${difference > 0 ? "+" : ""}${difference}): ${parsed.data.reason}`,
-          },
-        });
-
-        const updatedTerminal = await tx.posTerminal.findUniqueOrThrow({
-          where: { id: terminalId },
-          include: posTerminalInclude,
-        });
-
-        return {
-          custodyBatch,
-          difference,
-          previousQuantity,
-          terminal: custodyBatch.terminal,
-          updatedTerminal,
-        };
-      },
-      { timeout: 15000, maxWait: 15000 },
-    );
-
-    await this.audit.record({
-      actorId: actor.id,
-      action: "ADMIN_POS_TERMINAL_STOCK_ADJUSTED",
-      entityType: "PosTerminalStockBatch",
-      entityId: result.custodyBatch.id,
-      metadata: {
-        terminalId,
-        terminalName: result.terminal.name,
-        productId: result.custodyBatch.productId,
-        productName: productLabel(result.custodyBatch.product),
-        previousQuantity: result.previousQuantity,
-        countedQuantity: parsed.data.countedQuantity,
-        difference: result.difference,
-        reason: parsed.data.reason,
-      },
-    });
-
-    return serializePosTerminal(result.updatedTerminal);
-  }
-
-  async setPosTerminalRetailerCreditAllocation(
-    terminalId: string,
-    input: unknown,
-    actor: AuthenticatedUser,
-  ) {
-    const parsed = setTerminalRetailerCreditAllocationSchema.safeParse(
-      input ?? {},
-    );
-
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message);
-    }
-
-    const [terminal, retailer] = await Promise.all([
-      this.prisma.posTerminal.findUnique({
-        where: { id: terminalId },
-        select: { id: true, name: true },
-      }),
-      this.prisma.retailer.findUnique({
-        where: { id: parsed.data.retailerId },
-        select: { id: true, name: true, isActive: true },
-      }),
-    ]);
-
-    if (!terminal) {
-      throw new NotFoundException("POS terminal not found.");
-    }
-
-    if (!retailer) {
-      throw new NotFoundException("Retailer not found.");
-    }
-
-    if (!retailer.isActive) {
-      throw new BadRequestException("That retailer account is inactive.");
-    }
-
-    const allocatedAmount = new Prisma.Decimal(
-      roundMoney(parsed.data.allocatedAmount).toFixed(2),
-    );
-    const allocation =
-      await this.prisma.posTerminalRetailerCreditAllocation.upsert({
-        where: {
-          terminalId_retailerId: {
-            terminalId,
-            retailerId: retailer.id,
-          },
-        },
-        create: {
-          terminalId,
-          retailerId: retailer.id,
-          allocatedAmount,
-          isActive: parsed.data.isActive,
-        },
-        update: {
-          allocatedAmount,
-          isActive: parsed.data.isActive,
-        },
-      });
-
-    await this.audit.record({
-      actorId: actor.id,
-      action: "ADMIN_POS_TERMINAL_RETAILER_CREDIT_ALLOCATED",
-      entityType: "PosTerminalRetailerCreditAllocation",
-      entityId: allocation.id,
-      metadata: {
-        terminalId,
-        terminalName: terminal.name,
-        retailerId: retailer.id,
-        retailerName: retailer.name,
-        allocatedAmount: allocation.allocatedAmount.toString(),
-        isActive: allocation.isActive,
-      },
-    });
-
-    const updated = await this.prisma.posTerminal.findUniqueOrThrow({
-      where: { id: terminalId },
-      include: posTerminalInclude,
-    });
-
-    return serializePosTerminal(updated);
-  }
-
   async createPosSession(
     input: unknown,
     actor: AuthenticatedUser,
-    deviceSecret?: string,
   ) {
     const parsed = createPosSessionSchema.safeParse(input ?? {});
 
@@ -2548,7 +976,6 @@ export class SalesService {
       throw new BadRequestException(parsed.error.issues[0]?.message);
     }
 
-    let terminalDisplayToken: string | null = null;
     let retailer:
       | { id: string; name: string; isActive: boolean }
       | null = null;
@@ -2572,72 +999,127 @@ export class SalesService {
       }
     }
 
-    if (parsed.data.terminalId) {
-      const terminal = await this.assertTerminalDevice(
-        parsed.data.terminalId,
-        deviceSecret,
+    const session = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`
+          SELECT "id"
+          FROM "PosTerminal"
+          WHERE "id" = ${parsed.data.terminalId}
+          FOR UPDATE
+        `,
       );
-      if (!terminal) {
-        throw new NotFoundException("POS terminal not found.");
-      }
-      terminalDisplayToken = terminal.displayToken;
-    }
 
-    let session = await this.prisma.posSession.create({
-      data: {
-        displayToken: generateDisplayToken(),
-        terminalId: parsed.data.terminalId,
-        customerType: parsed.data.customerType,
-        priceType: resolveSalePriceType(
-          parsed.data.customerType,
-          parsed.data.priceType,
-        ),
-        retailerId: retailer?.id ?? null,
-        retailerApprovalId:
-          parsed.data.customerType === CustomerType.RETAILER
-            ? parsed.data.retailerApprovalId ?? null
-            : null,
-        customerName: retailer?.name ?? parsed.data.customerName,
-        paymentMethod: retailer ? PaymentMethod.CREDIT : PaymentMethod.CASH,
-        createdById: actor.id,
-        expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
-      },
-      include: posSessionInclude,
-    });
-
-    if (parsed.data.terminalId) {
-      await this.prisma.posTerminal.update({
+      const terminal = await tx.posTerminal.findUnique({
         where: { id: parsed.data.terminalId },
-        data: { currentSessionId: session.id },
+        select: {
+          id: true,
+          displayToken: true,
+          isActive: true,
+          currentSessionId: true,
+          currentSession: {
+            select: {
+              id: true,
+              status: true,
+              expiresAt: true,
+              createdById: true,
+              createdBy: {
+                select: {
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
       });
 
-      session = await this.prisma.posSession.findUniqueOrThrow({
-        where: { id: session.id },
+      if (!terminal || !terminal.isActive) {
+        throw new BadRequestException(
+          "The selected sales counter is not available.",
+        );
+      }
+
+      const now = new Date();
+      const activeSession =
+        terminal.currentSession?.status === PosSessionStatus.ACTIVE &&
+        (!terminal.currentSession.expiresAt ||
+          terminal.currentSession.expiresAt > now)
+          ? terminal.currentSession
+          : null;
+
+      if (activeSession) {
+        if (activeSession.createdById !== actor.id) {
+          const cashier =
+            activeSession.createdBy?.name ??
+            activeSession.createdBy?.email ??
+            "another cashier";
+          throw new ConflictException(
+            `This sales counter is currently in use by ${cashier}. Select another counter or ask them to complete or cancel their sale.`,
+          );
+        }
+
+        return tx.posSession.findUniqueOrThrow({
+          where: { id: activeSession.id },
+          include: posSessionInclude,
+        });
+      }
+
+      if (terminal.currentSessionId) {
+        await tx.posSession.updateMany({
+          where: {
+            id: terminal.currentSessionId,
+            status: PosSessionStatus.ACTIVE,
+          },
+          data: { status: PosSessionStatus.CANCELLED },
+        });
+      }
+
+      const created = await tx.posSession.create({
+        data: {
+          displayToken: generateDisplayToken(),
+          terminalId: terminal.id,
+          customerType: parsed.data.customerType,
+          priceType: resolveSalePriceType(
+            parsed.data.customerType,
+            parsed.data.priceType,
+          ),
+          retailerId: retailer?.id ?? null,
+          retailerApprovalId:
+            parsed.data.customerType === CustomerType.RETAILER
+              ? parsed.data.retailerApprovalId ?? null
+              : null,
+          customerName: retailer?.name ?? parsed.data.customerName,
+          paymentMethod: retailer ? PaymentMethod.CREDIT : PaymentMethod.CASH,
+          createdById: actor.id,
+          expiresAt: new Date(now.getTime() + 12 * 60 * 60 * 1000),
+        },
+      });
+
+      await tx.posTerminal.update({
+        where: { id: terminal.id },
+        data: { currentSessionId: created.id },
+      });
+
+      return tx.posSession.findUniqueOrThrow({
+        where: { id: created.id },
         include: posSessionInclude,
       });
-    }
+    });
 
     const serializedSession = serializePosSession(session);
 
     await this.emitPosSessionUpdate(session.displayToken, serializedSession);
-    if (session.terminal) {
+    if (session.terminal?.displayToken) {
       await this.emitPosTerminalUpdate(
         session.terminal.displayToken,
         serializedSession,
       );
-    } else if (terminalDisplayToken) {
-      await this.emitPosTerminalUpdate(terminalDisplayToken, serializedSession);
     }
     return serializedSession;
   }
 
-  async getPosSession(
-    id: string,
-    actor: AuthenticatedUser,
-    deviceSecret?: string,
-  ) {
+  async getPosSession(id: string, actor: AuthenticatedUser) {
     const session = await this.getPosSessionForActor(id, actor);
-    await this.assertPosSessionDevice(session, deviceSecret);
     return serializePosSession(session);
   }
 
@@ -2645,8 +1127,17 @@ export class SalesService {
     id: string,
     input: unknown,
     actor: AuthenticatedUser,
-    deviceSecret?: string,
   ) {
+    if (
+      input !== null &&
+      typeof input === "object" &&
+      Object.prototype.hasOwnProperty.call(input, "discount")
+    ) {
+      throw new BadRequestException(
+        "Cashiers cannot set discount amounts. Product discounts are configured by Admin.",
+      );
+    }
+
     const parsed = updatePosSessionSchema.safeParse(input ?? {});
 
     if (!parsed.success) {
@@ -2654,7 +1145,6 @@ export class SalesService {
     }
 
     const existing = await this.getPosSessionForActor(id, actor);
-    await this.assertPosSessionDevice(existing, deviceSecret);
     this.assertActivePosSession(existing);
 
     const nextCustomerType = parsed.data.customerType ?? existing.customerType;
@@ -2728,7 +1218,7 @@ export class SalesService {
               ? retailer?.name
               : parsed.data.customerName,
           paymentMethod: nextPaymentMethod,
-          discount: parsed.data.discount,
+          discount: 0,
           amountPaid: parsed.data.amountPaid,
           notes: parsed.data.notes,
         },
@@ -2767,7 +1257,6 @@ export class SalesService {
     id: string,
     input: unknown,
     actor: AuthenticatedUser,
-    deviceSecret?: string,
   ) {
     const parsed = upsertPosSessionItemSchema.safeParse(input);
 
@@ -2776,7 +1265,6 @@ export class SalesService {
     }
 
     const existing = await this.getPosSessionForActor(id, actor);
-    await this.assertPosSessionDevice(existing, deviceSecret);
     this.assertActivePosSession(existing);
 
     const product = await this.prisma.product.findUnique({
@@ -2851,13 +1339,8 @@ export class SalesService {
     return serializedSession;
   }
 
-  async checkoutPosSession(
-    id: string,
-    actor: AuthenticatedUser,
-    deviceSecret?: string,
-  ) {
+  async checkoutPosSession(id: string, actor: AuthenticatedUser) {
     const session = await this.getPosSessionForActor(id, actor);
-    await this.assertPosSessionDevice(session, deviceSecret);
     this.assertActivePosSession(session);
 
     if (session.items.length === 0) {
@@ -2871,7 +1354,6 @@ export class SalesService {
       retailerApprovalId: session.retailerApprovalId ?? undefined,
       paymentMethod: session.paymentMethod,
       customerName: session.customerName ?? undefined,
-      discount: session.discount.toString(),
       amountPaid: session.amountPaid?.toString(),
       notes: session.notes
         ? `POS checkout. ${session.notes}`
@@ -2900,6 +1382,7 @@ export class SalesService {
             data: {
               status: PosSessionStatus.COMPLETED,
               completedAt: new Date(),
+              discount: 0,
             },
           });
 
@@ -2955,22 +1438,33 @@ export class SalesService {
     return serializedSession;
   }
 
-  async cancelPosSession(
-    id: string,
-    actor: AuthenticatedUser,
-    deviceSecret?: string,
-  ) {
+  async cancelPosSession(id: string, actor: AuthenticatedUser) {
     const existing = await this.getPosSessionForActor(id, actor);
-    await this.assertPosSessionDevice(existing, deviceSecret);
 
     if (existing.status !== PosSessionStatus.ACTIVE) {
       return serializePosSession(existing);
     }
 
-    const session = await this.prisma.posSession.update({
-      where: { id: existing.id },
-      data: { status: PosSessionStatus.CANCELLED },
-      include: posSessionInclude,
+    const session = await this.prisma.$transaction(async (tx) => {
+      await tx.posSession.update({
+        where: { id: existing.id },
+        data: { status: PosSessionStatus.CANCELLED },
+      });
+
+      if (existing.terminalId) {
+        await tx.posTerminal.updateMany({
+          where: {
+            id: existing.terminalId,
+            currentSessionId: existing.id,
+          },
+          data: { currentSessionId: null },
+        });
+      }
+
+      return tx.posSession.findUniqueOrThrow({
+        where: { id: existing.id },
+        include: posSessionInclude,
+      });
     });
 
     const serializedSession = serializePosSession(session);
@@ -3017,17 +1511,7 @@ export class SalesService {
       throw new NotFoundException("POS terminal display not found.");
     }
 
-    const serialized = serializePosTerminal(terminal);
-
-    if (!terminal.offlineEnabled) {
-      return serialized;
-    }
-
-    return {
-      ...serialized,
-      currentSession:
-        this.posDisplayEvents.getTerminalPreview(displayToken) ?? null,
-    };
+    return serializePosTerminal(terminal);
   }
 
   async listSales(query?: QueryParams) {
@@ -3096,6 +1580,16 @@ export class SalesService {
   }
 
   async createSale(input: unknown, actor: AuthenticatedUser) {
+    if (
+      input !== null &&
+      typeof input === "object" &&
+      Object.prototype.hasOwnProperty.call(input, "discount")
+    ) {
+      throw new BadRequestException(
+        "Cashiers cannot set discount amounts. Product discounts are configured by Admin.",
+      );
+    }
+
     const parsed = createSaleSchema.safeParse(input);
 
     if (!parsed.success) {
@@ -3187,28 +1681,19 @@ export class SalesService {
     const subtotal = roundMoney(
       items.reduce((sum, item) => sum + item.lineTotal, 0),
     );
-    const discount = roundMoney(data.discount ?? 0);
-
-    if (discount > subtotal) {
-      throw new BadRequestException("Discount cannot exceed sale subtotal.");
-    }
-
-    const totalAmount = roundMoney(subtotal - discount);
+    const discount = 0;
+    const totalAmount = subtotal;
     let terminal:
       | {
           id: string;
           name: string | null;
           isActive: boolean;
-          offlineEnabled: boolean;
         }
       | null = null;
     let retailer:
       | { id: string; name: string; isActive: boolean }
       | null = null;
     let retailerApprovalId: string | null = null;
-    let terminalRetailerCreditAllocation:
-      | { id: string; usedAmount: number }
-      | null = null;
     let paymentMethod = data.paymentMethod;
     let customerName = data.customerName;
     let amountPaid = roundMoney(
@@ -3219,7 +1704,7 @@ export class SalesService {
     if (data.terminalId) {
       terminal = await tx.posTerminal.findUnique({
         where: { id: data.terminalId },
-        select: { id: true, name: true, isActive: true, offlineEnabled: true },
+        select: { id: true, name: true, isActive: true },
       });
 
       if (!terminal) {
@@ -3295,7 +1780,6 @@ export class SalesService {
           select: {
             id: true,
             retailerId: true,
-            terminalId: true,
             approvedAmount: true,
             status: true,
             expiresAt: true,
@@ -3306,21 +1790,6 @@ export class SalesService {
         if (!approval || approval.retailerId !== retailer.id) {
           throw new BadRequestException(
             "Select a valid Admin approval for this retailer.",
-          );
-        }
-
-        if (
-          terminal?.offlineEnabled &&
-          approval.terminalId !== terminal.id
-        ) {
-          throw new BadRequestException(
-            "Offline retailer approvals must be assigned to this POS terminal.",
-          );
-        }
-
-        if (approval.terminalId && approval.terminalId !== terminal?.id) {
-          throw new BadRequestException(
-            "This Admin approval is assigned to another POS terminal.",
           );
         }
 
@@ -3352,171 +1821,12 @@ export class SalesService {
       }
     }
 
-    if (
-      terminal?.offlineEnabled &&
-      retailer &&
-      paymentMethod === PaymentMethod.CREDIT &&
-      balanceDue > 0
-    ) {
-      const lockedCreditAllocationIds = await tx.$queryRaw<
-        Array<{ id: string }>
-      >(
-        Prisma.sql`
-          SELECT "id"
-          FROM "PosTerminalRetailerCreditAllocation"
-          WHERE "terminalId" = ${terminal.id}
-            AND "retailerId" = ${retailer.id}
-          FOR UPDATE
-        `,
-      );
-      const lockedCreditAllocationId = lockedCreditAllocationIds[0]?.id;
-      const creditAllocation = lockedCreditAllocationId
-        ? await tx.posTerminalRetailerCreditAllocation.findUnique({
-            where: { id: lockedCreditAllocationId },
-            select: {
-              id: true,
-              allocatedAmount: true,
-              usedAmount: true,
-              isActive: true,
-            },
-          })
-        : null;
-
-      if (!creditAllocation || !creditAllocation.isActive) {
-        throw new BadRequestException(
-          `${retailer.name} has no active retailer credit allocation for this POS terminal.`,
-        );
-      }
-
-      const remainingCredit = roundMoney(
-        decimalToNumber(creditAllocation.allocatedAmount) -
-          decimalToNumber(creditAllocation.usedAmount),
-      );
-
-      if (remainingCredit < balanceDue) {
-        throw new BadRequestException(
-          `Only ₦${remainingCredit.toLocaleString("en", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })} retailer credit is allocated to this POS terminal for ${retailer.name}.`,
-        );
-      }
-
-      terminalRetailerCreditAllocation = {
-        id: creditAllocation.id,
-        usedAmount: decimalToNumber(creditAllocation.usedAmount),
-      };
-    }
-
-    const terminalAllocations = new Map<
-      string,
-      {
-        id: string;
-        allocatedQuantity: number;
-        soldQuantity: number;
-        batches: Array<{
-          id: string;
-          sourceBatchId: string;
-          quantityRemaining: number;
-        }>;
-      }
-    >();
-
-    if (terminal) {
-      for (const item of items) {
-        const lockedAllocationIds = await tx.$queryRaw<Array<{ id: string }>>(
-          Prisma.sql`
-            SELECT "id"
-            FROM "PosTerminalStockAllocation"
-            WHERE "terminalId" = ${terminal.id}
-              AND "productId" = ${item.productId}
-            FOR UPDATE
-          `,
-        );
-        const lockedAllocationId = lockedAllocationIds[0]?.id;
-        const allocation = lockedAllocationId
-          ? await tx.posTerminalStockAllocation.findUnique({
-              where: { id: lockedAllocationId },
-            })
-          : null;
-
-        if (!allocation) {
-          if (terminal.offlineEnabled) {
-            throw new BadRequestException(
-              `${productLabel(item.product)} has not been allocated to this POS terminal.`,
-            );
-          }
-
-          continue;
-        }
-
-        const lockedCustodyBatchIds = await tx.$queryRaw<
-          Array<{ id: string }>
-        >(
-          Prisma.sql`
-            SELECT "id"
-            FROM "PosTerminalStockBatch"
-            WHERE "allocationId" = ${allocation.id}
-              AND "quantityRemaining" > 0
-            ORDER BY "allocatedAt" ASC, "id" ASC
-            FOR UPDATE
-          `,
-        );
-        const custodyBatches =
-          lockedCustodyBatchIds.length > 0
-            ? await tx.posTerminalStockBatch.findMany({
-                where: {
-                  id: {
-                    in: lockedCustodyBatchIds.map((batch) => batch.id),
-                  },
-                },
-                select: {
-                  id: true,
-                  sourceBatchId: true,
-                  quantityRemaining: true,
-                  allocatedAt: true,
-                },
-                orderBy: [{ allocatedAt: "asc" }, { id: "asc" }],
-              })
-            : [];
-        const remainingAllocation = custodyBatches.reduce(
-          (sum, batch) => sum + batch.quantityRemaining,
-          0,
-        );
-        const expectedRemaining =
-          allocation.allocatedQuantity - allocation.soldQuantity;
-
-        if (remainingAllocation !== expectedRemaining) {
-          throw new ConflictException(
-            `${productLabel(item.product)} custody is out of balance for this POS terminal. Sync or reconcile the terminal before selling it.`,
-          );
-        }
-
-        if (remainingAllocation < item.quantity) {
-          throw new BadRequestException(
-            `Only ${formatQuantity(remainingAllocation)} ${item.product.unit.abbreviation} of ${productLabel(item.product)} is allocated to this POS terminal.`,
-          );
-        }
-
-        terminalAllocations.set(item.productId, {
-          id: allocation.id,
-          allocatedQuantity: allocation.allocatedQuantity,
-          soldQuantity: allocation.soldQuantity,
-          batches: custodyBatches,
-        });
-      }
-    }
-
     const stockBatches = new Map<
       string,
       Array<{ id: string; quantityRemaining: number }>
     >();
 
     for (const item of items) {
-      if (terminalAllocations.has(item.productId)) {
-        continue;
-      }
-
       const lockedBatchIds = await tx.$queryRaw<Array<{ id: string }>>(
         Prisma.sql`
           SELECT "id"
@@ -3575,22 +1885,7 @@ export class SalesService {
       await consumeRetailerOrderApproval(tx, retailerApprovalId);
     }
 
-    if (terminalRetailerCreditAllocation) {
-      await tx.posTerminalRetailerCreditAllocation.update({
-        where: { id: terminalRetailerCreditAllocation.id },
-        data: {
-          usedAmount: new Prisma.Decimal(
-            roundMoney(
-              terminalRetailerCreditAllocation.usedAmount + balanceDue,
-            ).toFixed(2),
-          ),
-        },
-      });
-    }
-
     for (const item of items) {
-      const allocation = terminalAllocations.get(item.productId);
-
       const saleItem = await tx.saleItem.create({
         data: {
           saleId: createdSale.id,
@@ -3602,63 +1897,6 @@ export class SalesService {
       });
 
       let remainingToSell = item.quantity;
-
-      if (allocation && terminal) {
-        for (const batch of allocation.batches) {
-          if (remainingToSell <= 0) {
-            break;
-          }
-
-          const quantityFromBatch = Math.min(
-            batch.quantityRemaining,
-            remainingToSell,
-          );
-
-          if (quantityFromBatch <= 0) {
-            continue;
-          }
-
-          const balanceAfter = batch.quantityRemaining - quantityFromBatch;
-
-          await tx.posTerminalStockBatch.update({
-            where: { id: batch.id },
-            data: { quantityRemaining: balanceAfter },
-          });
-          await tx.saleItemBatch.create({
-            data: {
-              saleItemId: saleItem.id,
-              batchId: batch.sourceBatchId,
-              terminalBatchId: batch.id,
-              quantity: quantityFromBatch,
-            },
-          });
-          await tx.posTerminalStockMovement.create({
-            data: {
-              terminalId: terminal.id,
-              productId: item.productId,
-              terminalBatchId: batch.id,
-              type: PosTerminalStockMovementType.SALE,
-              quantity: quantityFromBatch,
-              balanceAfter,
-              saleId: createdSale.id,
-              saleItemId: saleItem.id,
-              actorId: actor.id,
-              note: `Sale #${createdSale.saleNumber}`,
-            },
-          });
-
-          remainingToSell -= quantityFromBatch;
-        }
-
-        await tx.posTerminalStockAllocation.update({
-          where: { id: allocation.id },
-          data: {
-            soldQuantity: { increment: item.quantity },
-          },
-        });
-
-        continue;
-      }
 
       const batches = stockBatches.get(item.productId) ?? [];
 
@@ -3903,13 +2141,12 @@ export class SalesService {
       include: {
         product: { select: productSelect },
         batchIssues: {
-          include: { batch: true, terminalBatch: true },
+          include: { batch: true },
           orderBy: { createdAt: "asc" },
         },
         returns: {
           select: {
             batchId: true,
-            terminalBatchId: true,
             quantity: true,
           },
         },
@@ -3945,10 +2182,11 @@ export class SalesService {
       const quantity = decimalToNumber(entry.quantity);
 
       if (entry.batchId) {
-        const issueKey = `${entry.batchId}:${entry.terminalBatchId ?? "central"}`;
         returnedByIssue.set(
-          issueKey,
-          roundQuantity((returnedByIssue.get(issueKey) ?? 0) + quantity),
+          entry.batchId,
+          roundQuantity(
+            (returnedByIssue.get(entry.batchId) ?? 0) + quantity,
+          ),
         );
       } else {
         unbatchedReturnedQuantity = roundQuantity(
@@ -3963,8 +2201,7 @@ export class SalesService {
       }
 
       const issueQuantity = roundQuantity(decimalToNumber(issue.quantity));
-      const issueKey = `${issue.batchId}:${issue.terminalBatchId ?? "central"}`;
-      const alreadyReturned = returnedByIssue.get(issueKey) ?? 0;
+      const alreadyReturned = returnedByIssue.get(issue.batchId) ?? 0;
       let availableFromIssue = roundQuantity(
         Math.max(issueQuantity - alreadyReturned, 0),
       );
@@ -3995,7 +2232,6 @@ export class SalesService {
             saleItemId: saleItem.id,
             productId: saleItem.productId,
             batchId: issue.batchId,
-            terminalBatchId: issue.terminalBatchId,
             disposition: SalesReturnDisposition.DAMAGED,
             quantity: quantityToBatch,
             reason: input.reason,
@@ -4007,77 +2243,6 @@ export class SalesService {
 
         createdReturns.push(createdReturn);
         remainingToReturn = roundQuantity(remainingToReturn - quantityToBatch);
-        continue;
-      }
-
-      if (issue.terminalBatchId) {
-        if (!issue.terminalBatch) {
-          throw new ConflictException(
-            "The original terminal custody batch is no longer available.",
-          );
-        }
-
-        await tx.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "PosTerminalStockAllocation" WHERE "id" = ${issue.terminalBatch.allocationId} FOR UPDATE`,
-        );
-        await tx.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "PosTerminalStockBatch" WHERE "id" = ${issue.terminalBatchId} FOR UPDATE`,
-        );
-
-        const custodyBatch = await tx.posTerminalStockBatch.findUniqueOrThrow({
-          where: { id: issue.terminalBatchId },
-          select: {
-            id: true,
-            allocationId: true,
-            terminalId: true,
-            productId: true,
-            quantityRemaining: true,
-          },
-        });
-        const custodyBalanceAfter =
-          custodyBatch.quantityRemaining + quantityToBatch;
-
-        await tx.posTerminalStockBatch.update({
-          where: { id: custodyBatch.id },
-          data: { quantityRemaining: custodyBalanceAfter },
-        });
-        await tx.posTerminalStockAllocation.update({
-          where: { id: custodyBatch.allocationId },
-          data: { soldQuantity: { decrement: quantityToBatch } },
-        });
-        await tx.posTerminalStockMovement.create({
-          data: {
-            terminalId: custodyBatch.terminalId,
-            productId: custodyBatch.productId,
-            terminalBatchId: custodyBatch.id,
-            type: PosTerminalStockMovementType.RETURN,
-            quantity: quantityToBatch,
-            balanceAfter: custodyBalanceAfter,
-            saleItemId: saleItem.id,
-            actorId: input.actorId,
-            note: input.reason ?? "Customer return to terminal stock",
-          },
-        });
-
-        const createdReturn = await tx.salesProductReturn.create({
-          data: {
-            saleItemId: saleItem.id,
-            productId: saleItem.productId,
-            batchId: issue.batchId,
-            terminalBatchId: custodyBatch.id,
-            disposition: SalesReturnDisposition.RETURN_TO_STOCK,
-            quantity: quantityToBatch,
-            reason: input.reason,
-            recordedAt: input.recordedAt,
-            createdById: input.actorId,
-          },
-          include: returnInclude,
-        });
-
-        createdReturns.push(createdReturn);
-        remainingToReturn = roundQuantity(
-          remainingToReturn - quantityToBatch,
-        );
         continue;
       }
 
@@ -4256,17 +2421,6 @@ export class SalesService {
     }
 
     return session;
-  }
-
-  private async assertPosSessionDevice(
-    session: PosSessionWithIncludes,
-    deviceSecret?: string,
-  ) {
-    if (!session.terminalId) {
-      return;
-    }
-
-    await this.assertTerminalDevice(session.terminalId, deviceSecret);
   }
 
   private assertActivePosSession(session: PosSessionWithIncludes) {

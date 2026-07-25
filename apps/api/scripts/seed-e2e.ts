@@ -16,6 +16,11 @@ export const E2E_FIXTURES = {
       email: "sales.e2e@muisbakery.test",
       name: "E2E Sales",
     },
+    secondSales: {
+      id: "e2e-user-sales-second",
+      email: "sales-second.e2e@muisbakery.test",
+      name: "E2E Sales Two",
+    },
     management: {
       id: "e2e-user-management",
       email: "management.e2e@muisbakery.test",
@@ -28,15 +33,15 @@ export const E2E_FIXTURES = {
     abbreviation: "loaf",
   },
   products: {
-    allocated: {
-      id: "e2e-product-allocated",
-      name: "E2E Allocated Bread",
+    primary: {
+      id: "e2e-product-primary",
+      name: "E2E Primary Bread",
       size: "700g",
       price: "1200.00",
     },
-    unallocated: {
-      id: "e2e-product-unallocated",
-      name: "E2E Unallocated Bread",
+    secondary: {
+      id: "e2e-product-secondary",
+      name: "E2E Secondary Bread",
       size: "500g",
       price: "900.00",
     },
@@ -78,6 +83,11 @@ async function main() {
           role: Role.SALES,
         },
         {
+          ...E2E_FIXTURES.users.secondSales,
+          passwordHash,
+          role: Role.SALES,
+        },
+        {
           ...E2E_FIXTURES.users.management,
           passwordHash,
           role: Role.MANAGEMENT,
@@ -94,6 +104,7 @@ async function main() {
         size: product.size,
         unitId: E2E_FIXTURES.unit.id,
         unitPrice: product.price,
+        retailerPrice: product.price,
       })),
     });
 

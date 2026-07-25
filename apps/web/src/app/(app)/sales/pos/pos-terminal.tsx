@@ -1,79 +1,109 @@
 "use client";
 
 import {
-  Check,
   Copy,
   Download,
+  ExternalLink,
   Minus,
-  MonitorUp,
   Plus,
   Printer,
-  RotateCcw,
   Search,
   Trash2,
+  Wifi,
+  WifiOff,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
+import { Spinner } from "@/components/spinner";
 import type {
   CustomerType,
   PaymentMethod,
-  PosOfflineQueuedSale,
-  PosOfflineSnapshot,
-  PosOfflineSyncResponse,
-  PairedPosTerminal,
   PosSession,
-  PosTerminal as PosTerminalRecord,
   Retailer,
   SalePriceType,
   SalesInventoryItem,
   SalesOptions,
 } from "@/lib/operations/types";
-import {
-  POS_SHELL_STATUS_EVENT,
-  requestPosShellStatus,
-  type PosShellStatus,
-} from "@/lib/pos-shell";
 import { formatProductName } from "@/lib/product-label";
-import { Spinner } from "@/components/spinner";
+
 import {
   apiJson,
-  buildPosDisplayPreview,
-  calculateSessionTotals,
-  CART_SYNC_DELAY_MS,
-  buildOfflineSalePayload,
-  createUuid,
+  configuredProductDiscountAmount,
+  createOptimisticPosSession,
   fieldClass,
   formatMoney,
   formatQuantity,
   iconButtonClass,
-  createLocalPosSession,
   paymentLabels,
   productAvailable,
   productPriceForType,
-  repriceSession,
   roundCount,
-  updateSessionProductQuantity,
+  withOptimisticProductQuantity,
   type PosSessionPatch,
 } from "./_lib/pos-terminal-helpers";
-import {
-  addQueuedOfflineSale,
-  clearActiveOfflineSession,
-  listQueuedOfflineSales,
-  loadActiveOfflineSession,
-  loadOfflineSnapshot,
-  saveActiveOfflineSession,
-  saveOfflineSnapshot,
-  unresolvedOfflineSales,
-  updateQueuedOfflineSale,
-} from "./_lib/offline-pos-store";
-import { deriveOfflineRetailers } from "./_lib/offline-retailer-credit";
 
 type ReceiptDocument = {
   filename: string;
   html: string;
   text: string;
 };
+
+type CompletedReceipt = {
+  document: ReceiptDocument;
+  session: PosSession;
+};
+
+type PendingQuantity = {
+  item: SalesInventoryItem;
+  quantity: number;
+};
+
+// Coalesce window: rapid taps within this window collapse into a single
+// server sync so cashiers never wait on a round trip between taps.
+const SYNC_DEBOUNCE_MS = 250;
+
+const COUNTER_STORAGE_KEY = "muisbakery.selectedSalesCounter";
+const COUNTER_STORAGE_EVENT = "muisbakery:selected-sales-counter";
+
+function subscribeToCounterStorage(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(COUNTER_STORAGE_EVENT, onStoreChange);
+
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(COUNTER_STORAGE_EVENT, onStoreChange);
+  };
+}
+
+function storedCounterId() {
+  return window.localStorage.getItem(COUNTER_STORAGE_KEY) ?? "";
+}
+
+function serverCounterId() {
+  return "";
+}
+
+function storeCounterId(counterId: string) {
+  window.localStorage.setItem(COUNTER_STORAGE_KEY, counterId);
+  window.dispatchEvent(new Event(COUNTER_STORAGE_EVENT));
+}
+
+function counterIsSelectable(
+  counter: SalesOptions["counters"][number],
+) {
+  return !counter.currentSessionId || counter.occupiedByCurrentUser;
+}
+
+function defaultCounterId(counters: SalesOptions["counters"]) {
+  return counters.find(counterIsSelectable)?.id ?? "";
+}
 
 function receiptDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en", {
@@ -98,21 +128,15 @@ function receiptCustomer(session: PosSession) {
   return session.customerName ?? "Individual";
 }
 
-// The printed receipt is for the customer: totals and purchase details only,
-// never system state like sync/queue status. Cashier-facing state stays on
-// screen.
 function buildReceiptDocument({
   session,
   terminalName,
-  saleNumber,
 }: {
   session: PosSession;
   terminalName: string | null | undefined;
-  saleNumber?: number | null;
 }): ReceiptDocument {
-  const resolvedSaleNumber =
-    session.completedSale?.saleNumber ?? saleNumber ?? null;
-  const saleLabel = resolvedSaleNumber ? `#${resolvedSaleNumber}` : null;
+  const saleNumber = session.completedSale?.saleNumber ?? null;
+  const saleLabel = saleNumber ? `#${saleNumber}` : null;
   const soldAt = session.completedSale?.soldAt ?? session.completedAt;
   const itemLines = session.items.map(
     (item) =>
@@ -125,7 +149,7 @@ function buildReceiptDocument({
     "Muis Bakery",
     "Sales receipt",
     ...(saleLabel ? [`Sale: ${saleLabel}`] : []),
-    `Terminal: ${terminalName ?? "POS terminal"}`,
+    `Counter: ${terminalName ?? "Sales counter"}`,
     `Customer: ${receiptCustomer(session)}`,
     `Payment: ${paymentLabels[session.paymentMethod]}`,
     `Date: ${receiptDate(soldAt)}`,
@@ -248,7 +272,7 @@ function buildReceiptDocument({
           </div>
           <div class="meta">
             ${saleLabel ? `<p><strong>Sale:</strong> ${escapeHtml(saleLabel)}</p>` : ""}
-            <p><strong>Terminal:</strong> ${escapeHtml(terminalName ?? "POS terminal")}</p>
+            <p><strong>Counter:</strong> ${escapeHtml(terminalName ?? "Sales counter")}</p>
             <p><strong>Customer:</strong> ${escapeHtml(receiptCustomer(session))}</p>
             <p><strong>Payment:</strong> ${escapeHtml(paymentLabels[session.paymentMethod])}</p>
             <p><strong>Date:</strong> ${escapeHtml(receiptDate(soldAt))}</p>
@@ -319,9 +343,7 @@ function printReceipt(
   receiptWindow.document.write(receipt.html);
   receiptWindow.document.close();
 
-  const cleanup = () => {
-    receiptFrame.remove();
-  };
+  const cleanup = () => receiptFrame.remove();
 
   window.setTimeout(() => {
     try {
@@ -350,692 +372,432 @@ function downloadReceipt(receipt: ReceiptDocument) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function fallbackCopy(value: string) {
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  document.execCommand("copy");
+  field.remove();
+}
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Private-network HTTP may block the Clipboard API.
+    }
+  }
+
+  fallbackCopy(value);
+}
+
+function validApprovedOrders(retailer: Retailer | null) {
+  const now = Date.now();
+
+  return (
+    retailer?.orderApprovals.filter(
+      (approval) =>
+        approval.status === "APPROVED" &&
+        !approval.usedAt &&
+        (!approval.expiresAt ||
+          new Date(approval.expiresAt).getTime() > now),
+    ) ?? []
+  );
+}
+
+function salePriceLabel(priceType: SalePriceType) {
+  if (priceType === "RETAILER") {
+    return "Retailer";
+  }
+  if (priceType === "DISCOUNTED") {
+    return "Discounted";
+  }
+  return "Walk-in";
+}
+
+function QuantityInput({
+  busy,
+  entry,
+  maximum,
+  onCommit,
+}: {
+  busy: boolean;
+  entry: PosSession["items"][number];
+  maximum: number;
+  onCommit: (quantity: number) => void;
+}) {
+  const quantity = roundCount(Number(entry.quantity));
+  const [value, setValue] = useState(String(quantity));
+
+  function commit() {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+      setValue(String(quantity));
+      return;
+    }
+
+    const nextQuantity = Math.min(
+      maximum,
+      Math.max(0, roundCount(parsed)),
+    );
+    setValue(String(nextQuantity));
+
+    if (nextQuantity !== quantity) {
+      onCommit(nextQuantity);
+    }
+  }
+
+  return (
+    <input
+      aria-label={`${formatProductName(entry.product)} quantity`}
+      className={`${fieldClass} w-24 text-center`}
+      disabled={busy}
+      inputMode="numeric"
+      max={maximum}
+      min="0"
+      onBlur={commit}
+      onChange={(event) => setValue(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        }
+      }}
+      step="1"
+      type="number"
+      value={value}
+    />
+  );
+}
+
 export function PosTerminal({ options }: { options: SalesOptions }) {
   const [session, setSession] = useState<PosSession | null>(null);
-  const [terminal, setTerminal] = useState<PosTerminalRecord | null>(null);
   const [query, setQuery] = useState("");
   const [retailers, setRetailers] = useState(options.retailers);
+  const persistedCounterId = useSyncExternalStore(
+    subscribeToCounterStorage,
+    storedCounterId,
+    serverCounterId,
+  );
+  const persistedCounter = options.counters.find(
+    (counter) => counter.id === persistedCounterId,
+  );
+  const selectedCounterId =
+    persistedCounter && counterIsSelectable(persistedCounter)
+      ? persistedCounter.id
+      : defaultCounterId(options.counters);
+  const [availability, setAvailability] = useState<Record<string, number>>(
+    Object.fromEntries(
+      options.products.map((item) => [
+        item.product.id,
+        productAvailable(item),
+      ]),
+    ),
+  );
   const [error, setError] = useState<string | null>(null);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [isOnline, setIsOnline] = useState(() =>
-    typeof navigator === "undefined" ? true : navigator.onLine,
-  );
-  const [posShellStatus, setPosShellStatus] =
-    useState<PosShellStatus | null>(null);
-  const [offlineSnapshot, setOfflineSnapshot] =
-    useState<PosOfflineSnapshot | null>(null);
-  const [queuedOfflineSales, setQueuedOfflineSales] = useState<
-    PosOfflineQueuedSale[]
-  >([]);
-  const [lastReceipt, setLastReceipt] = useState<ReceiptDocument | null>(null);
-  const [approvalRequestBusy, setApprovalRequestBusy] = useState(false);
-  const [approvalRequestSent, setApprovalRequestSent] = useState(false);
-  const [cartSyncCount, setCartSyncCount] = useState(0);
-  const [sessionPatchBusy, setSessionPatchBusy] = useState(false);
-  const [origin] = useState(() =>
-    typeof window === "undefined" ? "" : window.location.origin,
-  );
-  const [terminalSetupId, setTerminalSetupId] = useState(() =>
-    typeof window === "undefined"
-      ? ""
-      : (window.localStorage.getItem("muisbakery.posTerminalId") ?? ""),
-  );
-  const [terminalPairingCode, setTerminalPairingCode] = useState("");
-  const [customerType, setCustomerType] =
-    useState<CustomerType>("INDIVIDUAL");
-  const [priceType, setPriceType] = useState<SalePriceType>("WALK_IN");
-  const [retailerId, setRetailerId] = useState("");
-  const [retailerApprovalId, setRetailerApprovalId] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
-  const terminalRef = useRef<PosTerminalRecord | null>(null);
-  const terminalLoadPromiseRef = useRef<Promise<PosTerminalRecord | null> | null>(
-    null,
-  );
+  const [cartSaving, setCartSaving] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [lastReceipt, setLastReceipt] = useState<CompletedReceipt | null>(null);
+  // Desired quantity per product that has not yet been confirmed by the
+  // server. Kept in a ref so taps can accumulate synchronously without
+  // waiting on React state or the network.
+  const pendingRef = useRef(new Map<string, PendingQuantity>());
+  const flushingRef = useRef(false);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionRef = useRef<PosSession | null>(null);
-  const sessionStartPromiseRef = useRef<Promise<PosSession | null> | null>(null);
-  const sessionPatchQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const sessionPatchCountRef = useRef(0);
-  const nextCartSyncIdRef = useRef(1);
-  const cartSyncsRef = useRef(
-    new Map<
-      string,
-      {
-        item: SalesInventoryItem;
-        quantity: number;
-        requestId: number;
-        sessionId: string;
-        timeout: ReturnType<typeof setTimeout>;
+  const sessionIdRef = useRef<string | null>(null);
+  const lastSyncedRef = useRef<PosSession | null>(null);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
       }
-    >(),
-  );
-
-  const applySession = useCallback(
-    (nextSession: PosSession | null, syncDetails = true) => {
-      sessionRef.current = nextSession;
-      setSession(nextSession);
-
-      if (!syncDetails) {
-        return;
-      }
-
-      setPaymentMethod(nextSession?.paymentMethod ?? "CASH");
-      setCustomerType(nextSession?.customerType ?? "INDIVIDUAL");
-      setPriceType(nextSession?.priceType ?? "WALK_IN");
-      setRetailerId(nextSession?.retailer?.id ?? "");
-      setRetailerApprovalId(nextSession?.retailerApprovalId ?? "");
-    },
-    [],
-  );
-
-  const applyTerminal = useCallback((nextTerminal: PosTerminalRecord | null) => {
-    terminalRef.current = nextTerminal;
-    setTerminal(nextTerminal);
+    };
   }, []);
 
-  const ensureTerminal = useCallback(async () => {
-    if (terminalRef.current) {
-      return terminalRef.current;
-    }
+  useEffect(() => {
+    const updateConnection = () => setIsOnline(navigator.onLine);
+    updateConnection();
+    window.addEventListener("online", updateConnection);
+    window.addEventListener("offline", updateConnection);
 
-    if (terminalLoadPromiseRef.current) {
-      return terminalLoadPromiseRef.current;
-    }
-
-    terminalLoadPromiseRef.current = (async () => {
-      const existingId = window.localStorage.getItem("muisbakery.posTerminalId");
-      const existingSecret = window.localStorage.getItem(
-        "muisbakery.posTerminalSecret",
-      );
-
-      if (existingId && existingSecret) {
-        try {
-          const loaded = await apiJson<PosTerminalRecord>(
-            `/terminals/${existingId}`,
-          );
-          applyTerminal(loaded);
-          return loaded;
-        } catch (caught) {
-          const cached = await loadOfflineSnapshot(existingId).catch(() => null);
-
-          if (cached) {
-            setOfflineSnapshot(cached);
-            applyTerminal(cached.terminal);
-            return cached.terminal;
-          }
-
-          if (navigator.onLine) {
-            window.localStorage.removeItem("muisbakery.posTerminalId");
-            window.localStorage.removeItem("muisbakery.posTerminalSecret");
-            setTerminalSetupId("");
-          }
-
-          throw caught;
-        }
-      }
-
-      throw new Error(
-        "This device is not paired to a POS terminal. Ask Admin for the terminal setup ID and pairing code.",
-      );
-    })();
-
-    try {
-      return await terminalLoadPromiseRef.current;
-    } finally {
-      terminalLoadPromiseRef.current = null;
-    }
-  }, [applyTerminal]);
-
-  function refreshCartSyncCount() {
-    setCartSyncCount(cartSyncsRef.current.size);
-  }
-
-  function clearCartSyncs() {
-    for (const entry of cartSyncsRef.current.values()) {
-      clearTimeout(entry.timeout);
-    }
-    cartSyncsRef.current.clear();
-    refreshCartSyncCount();
-  }
-
-  const refreshQueuedSales = useCallback(async (terminalId = terminalRef.current?.id) => {
-    if (!terminalId) {
-      setQueuedOfflineSales([]);
-      return [];
-    }
-
-    const records = await listQueuedOfflineSales(terminalId);
-
-    setQueuedOfflineSales(records);
-    return records;
+    return () => {
+      window.removeEventListener("online", updateConnection);
+      window.removeEventListener("offline", updateConnection);
+    };
   }, []);
 
-  const prepareOfflineSnapshot = useCallback(async (
-    currentTerminal: PosTerminalRecord,
-    allowNetwork = true,
-  ) => {
-    if (!currentTerminal.offlineEnabled) {
-      setOfflineSnapshot(null);
+  const selectedCounter =
+    options.counters.find((counter) => counter.id === selectedCounterId) ?? null;
+  const selectableCounterCount = options.counters.filter(
+    counterIsSelectable,
+  ).length;
+  const activeRetailer =
+    session?.retailer &&
+    retailers.find((retailer) => retailer.id === session.retailer?.id)
+      ? retailers.find((retailer) => retailer.id === session.retailer?.id) ??
+        null
+      : null;
+  const approvedOrders = validApprovedOrders(activeRetailer);
+  const hasPendingApprovalRequest =
+    activeRetailer?.orderApprovalRequests.some(
+      (approval) => approval.status === "PENDING",
+    ) ?? false;
+  const filteredProducts = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+
+    return options.products.filter((item) => {
+      if (!normalized) {
+        return true;
+      }
+      return formatProductName(item.product)
+        .toLocaleLowerCase()
+        .includes(normalized);
+    });
+  }, [options.products, query]);
+  const displayUrl = selectedCounter
+    ? `/customer-display/terminal/${selectedCounter.displayToken}`
+    : "";
+
+  function requireConnection() {
+    if (!navigator.onLine) {
+      setError("An internet or server connection is required to process sales.");
+      return false;
+    }
+
+    if (!selectedCounterId) {
+      setError("Select a sales counter before adding products.");
+      return false;
+    }
+
+    if (selectedCounter && !counterIsSelectable(selectedCounter)) {
+      setError(
+        `${selectedCounter.name ?? "This sales counter"} is already in use by ${
+          selectedCounter.occupiedByName ?? "another cashier"
+        }. Select another counter.`,
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  async function createSession(
+    customerType: CustomerType = "INDIVIDUAL",
+    commit = true,
+  ) {
+    if (!requireConnection()) {
       return null;
     }
 
-    if (allowNetwork && navigator.onLine) {
-      const snapshot = await apiJson<PosOfflineSnapshot>(
-        `/terminals/${currentTerminal.id}/offline-snapshot`,
-      );
+    const retailer =
+      customerType === "RETAILER" ? retailers.find((item) => item.isActive) : null;
+    const created = await apiJson<PosSession>("/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        terminalId: selectedCounterId,
+        customerType,
+        ...(retailer ? { retailerId: retailer.id } : {}),
+      }),
+    });
 
-      await saveOfflineSnapshot(snapshot);
-      setOfflineSnapshot(snapshot);
-      applyTerminal(snapshot.terminal);
-      return snapshot;
+    sessionIdRef.current = created.id;
+    lastSyncedRef.current = created;
+
+    if (commit) {
+      setSession(created);
     }
-
-    const cached = await loadOfflineSnapshot(currentTerminal.id);
-
-    if (!cached) {
-      throw new Error(
-        "This POS terminal has no offline snapshot yet. Connect to the internet once before selling offline.",
-      );
-    }
-
-    setOfflineSnapshot(cached);
-    applyTerminal(cached.terminal);
-    return cached;
-  }, [applyTerminal]);
-
-  const loadOfflineState = useCallback(async (currentTerminal: PosTerminalRecord) => {
-    const snapshot = await prepareOfflineSnapshot(
-      currentTerminal,
-      navigator.onLine,
-    );
-    const activeSession = await loadActiveOfflineSession(currentTerminal.id);
-
-    if (activeSession) {
-      applySession(activeSession);
-    }
-
-    await refreshQueuedSales(currentTerminal.id);
-
-    return snapshot;
-  }, [applySession, prepareOfflineSnapshot, refreshQueuedSales]);
-
-  const confirmDayCloseReadiness = useCallback(
-    async (snapshot: PosOfflineSnapshot | null, pendingSaleCount: number) => {
-      const barrier = snapshot?.dayCloseBarrier;
-
-      if (
-        !snapshot ||
-        !barrier ||
-        barrier.status !== "CLOSING" ||
-        !barrier.cutoffAt ||
-        barrier.terminalConfirmed ||
-        pendingSaleCount !== 0
-      ) {
-        return snapshot;
-      }
-
-      await apiJson(
-        `/terminals/${snapshot.terminal.id}/day-close-readiness`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            date: barrier.businessDate,
-            cutoffAt: barrier.cutoffAt,
-            pendingSaleCount: 0,
-          }),
-        },
-      );
-
-      const confirmedSnapshot: PosOfflineSnapshot = {
-        ...snapshot,
-        dayCloseBarrier: { ...barrier, terminalConfirmed: true },
-      };
-      await saveOfflineSnapshot(confirmedSnapshot);
-      setOfflineSnapshot(confirmedSnapshot);
-      return confirmedSnapshot;
-    },
-    [],
-  );
-
-  async function claimTerminal() {
-    const setupId = terminalSetupId.trim();
-    const pairingCode = terminalPairingCode.trim();
-
-    if (!setupId) {
-      setError("Enter the POS terminal setup ID from Admin.");
-      return;
-    }
-
-    if (!pairingCode) {
-      setError("Enter the POS terminal pairing code from Admin.");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const loaded = await apiJson<PairedPosTerminal>("/terminals/pair", {
-        method: "POST",
-        body: JSON.stringify({ terminalId: setupId, pairingCode }),
-      });
-
-      window.localStorage.setItem("muisbakery.posTerminalId", loaded.id);
-      window.localStorage.setItem(
-        "muisbakery.posTerminalSecret",
-        loaded.deviceSecret,
-      );
-      setTerminalSetupId(loaded.id);
-      setTerminalPairingCode("");
-      applyTerminal(loaded);
-      if (loaded.offlineEnabled) {
-        await loadOfflineState(loaded);
-      }
-    } catch (caught) {
-      window.localStorage.removeItem("muisbakery.posTerminalId");
-      window.localStorage.removeItem("muisbakery.posTerminalSecret");
-      applyTerminal(null);
-      setError(
-        caught instanceof Error ? caught.message : "Unable to pair terminal.",
-      );
-    } finally {
-      setBusy(false);
-    }
+    return created;
   }
 
-  useEffect(() => {
-    function handlePosShellStatus(event: Event) {
-      setPosShellStatus((event as CustomEvent<PosShellStatus>).detail);
+  async function updateSession(
+    patch: PosSessionPatch,
+    target: PosSession | null = session,
+  ) {
+    if (!target || !requireConnection()) {
+      return null;
     }
 
-    window.addEventListener(POS_SHELL_STATUS_EVENT, handlePosShellStatus);
+    const updated = await apiJson<PosSession>(`/sessions/${target.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
 
-    const worker = navigator.serviceWorker?.controller;
+    sessionIdRef.current = updated.id;
+    lastSyncedRef.current = updated;
+    setSession(updated);
+    return updated;
+  }
 
-    if (worker) {
-      void requestPosShellStatus(worker, "CHECK_POS_SHELL")
-        .then(setPosShellStatus)
-        .catch((caught) => {
-          setPosShellStatus({
-            ready: false,
-            message:
-              caught instanceof Error
-                ? caught.message
-                : "Unable to check the offline POS shell.",
-          });
-        });
+  function currentQuantity(productId: string) {
+    const pending = pendingRef.current.get(productId);
+    if (pending) {
+      return pending.quantity;
     }
 
-    return () => {
-      window.removeEventListener(POS_SHELL_STATUS_EVENT, handlePosShellStatus);
-    };
-  }, []);
+    const existing = sessionRef.current?.items.find(
+      (item) => item.product.id === productId,
+    );
+    return Number(existing?.quantity ?? 0);
+  }
 
-  useEffect(() => {
-    const cartSyncs = cartSyncsRef.current;
+  function scheduleFlush() {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+    }
+    flushTimerRef.current = setTimeout(() => {
+      void flushPending();
+    }, SYNC_DEBOUNCE_MS);
+  }
 
-    void ensureTerminal()
-      .then(async (loadedTerminal) => {
-        if (!loadedTerminal) {
-          return;
+  // Taps update the cart optimistically and record the desired quantity; the
+  // server sync is coalesced (see flushPending) so cashiers never wait on a
+  // round trip between taps. Quantities are absolute, so the latest tap wins.
+  function enqueueQuantity(
+    item: SalesInventoryItem,
+    resolve: (current: number) => number,
+  ) {
+    if (!requireConnection() || busy) {
+      return;
+    }
+
+    const maximum = availability[item.product.id] ?? 0;
+    const current = currentQuantity(item.product.id);
+    const nextQuantity = Math.min(
+      maximum,
+      Math.max(0, roundCount(resolve(current))),
+    );
+
+    if (nextQuantity === current) {
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    setSession((previous) => {
+      if (!previous) {
+        if (!selectedCounter) {
+          return previous;
         }
+        return createOptimisticPosSession(selectedCounter, item, nextQuantity);
+      }
+      return withOptimisticProductQuantity(previous, item, nextQuantity);
+    });
+    pendingRef.current.set(item.product.id, { item, quantity: nextQuantity });
+    setCartSaving(true);
+    scheduleFlush();
+  }
 
-        if (loadedTerminal.offlineEnabled) {
-          await loadOfflineState(loadedTerminal);
-          return;
-        }
+  function nextPendingQuantity() {
+    const iterator = pendingRef.current.entries().next();
+    return iterator.done ? null : iterator.value;
+  }
 
-        const existingId = window.localStorage.getItem("muisbakery.posSessionId");
+  async function flushPending() {
+    if (flushingRef.current) {
+      return;
+    }
+    if (pendingRef.current.size === 0) {
+      setCartSaving(false);
+      return;
+    }
 
-        if (!existingId) {
-          return;
-        }
+    flushingRef.current = true;
 
-        await apiJson<PosSession>(`/sessions/${existingId}`)
-          .then((loaded) => {
-            if (loaded.status === "ACTIVE") {
-              applySession(loaded);
-            } else {
-              window.localStorage.removeItem("muisbakery.posSessionId");
-            }
-          })
-          .catch(() => {
-            window.localStorage.removeItem("muisbakery.posSessionId");
-          });
-      })
-      .catch((caught) => {
-        void (async () => {
-          const existingId = window.localStorage.getItem(
-            "muisbakery.posTerminalId",
-          );
+    try {
+      let sessionId = sessionIdRef.current;
 
-          if (existingId) {
-            const cached = await loadOfflineSnapshot(existingId).catch(
-              () => null,
-            );
-
-            if (cached) {
-              applyTerminal(cached.terminal);
-              setOfflineSnapshot(cached);
-              const activeSession = await loadActiveOfflineSession(existingId);
-              if (activeSession) {
-                applySession(activeSession);
-              }
-              await refreshQueuedSales(existingId);
-              setError(null);
-              return;
-            }
+      if (!sessionId) {
+        try {
+          const created = await createSession("INDIVIDUAL", false);
+          if (!created) {
+            pendingRef.current.clear();
+            setSession(null);
+            return;
           }
-
+          sessionId = created.id;
+        } catch (caught) {
+          pendingRef.current.clear();
+          setSession(null);
           setError(
             caught instanceof Error
               ? caught.message
-              : "Unable to prepare POS terminal.",
+              : "Unable to start the sale.",
           );
-        })();
-      });
-
-    return () => {
-      for (const entry of cartSyncs.values()) {
-        clearTimeout(entry.timeout);
-      }
-      cartSyncs.clear();
-    };
-  }, [
-    applySession,
-    applyTerminal,
-    ensureTerminal,
-    loadOfflineState,
-    refreshQueuedSales,
-  ]);
-
-  const terminalStockByProductId = useMemo(() => {
-    return new Map(
-      terminal?.stockAllocations.map((allocation) => [
-        allocation.product.id,
-        allocation,
-      ]) ?? [],
-    );
-  }, [terminal]);
-  const unresolvedQueuedSales = useMemo(
-    () =>
-      queuedOfflineSales.filter(
-        (sale) =>
-          sale.status === "PENDING" ||
-          sale.status === "SYNCING" ||
-          sale.status === "FAILED" ||
-          sale.status === "CONFLICT",
-      ),
-    [queuedOfflineSales],
-  );
-  const availableRetailers = useMemo(
-    () =>
-      terminal?.offlineEnabled && offlineSnapshot
-        ? deriveOfflineRetailers(offlineSnapshot, unresolvedQueuedSales)
-        : retailers,
-    [offlineSnapshot, retailers, terminal?.offlineEnabled, unresolvedQueuedSales],
-  );
-  const offlineQueuedQuantityByProductId = useMemo(() => {
-    const quantities = new Map<string, number>();
-
-    for (const sale of unresolvedQueuedSales) {
-      for (const item of sale.payload.items) {
-        quantities.set(
-          item.productId,
-          (quantities.get(item.productId) ?? 0) + Number(item.quantity),
-        );
-      }
-    }
-
-    return quantities;
-  }, [unresolvedQueuedSales]);
-
-  const productAvailability = useCallback(
-    (item: SalesInventoryItem) => {
-      const globalAvailable = productAvailable(item);
-
-      if (!terminal?.offlineEnabled) {
-        return globalAvailable;
-      }
-
-      const allocation = terminalStockByProductId.get(item.product.id);
-
-      if (!allocation) {
-        return 0;
-      }
-
-      const queuedQuantity =
-        offlineQueuedQuantityByProductId.get(item.product.id) ?? 0;
-      const localRemaining = Math.max(
-        0,
-        Number(allocation.remainingQuantity) - queuedQuantity,
-      );
-
-      return Math.min(globalAvailable, localRemaining);
-    },
-    [offlineQueuedQuantityByProductId, terminal?.offlineEnabled, terminalStockByProductId],
-  );
-
-  const filteredProducts = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    const products =
-      terminal?.offlineEnabled && offlineSnapshot
-        ? offlineSnapshot.products.map((entry) => entry.inventory)
-        : options.products;
-
-    return products.filter((item) => {
-      if (productAvailability(item) <= 0) {
-        return false;
-      }
-      if (!search) {
-        return true;
-      }
-      return formatProductName(item.product).toLowerCase().includes(search);
-    });
-  }, [offlineSnapshot, options.products, productAvailability, query, terminal?.offlineEnabled]);
-  const productSource =
-    terminal?.offlineEnabled && offlineSnapshot
-      ? offlineSnapshot.products.map((entry) => entry.inventory)
-      : options.products;
-
-  const selectedRetailer: Retailer | null =
-    availableRetailers.find((retailer) => retailer.id === retailerId) ??
-    session?.retailer ??
-    null;
-  const selectedApproval =
-    selectedRetailer?.orderApprovals.find(
-      (approval) => approval.id === retailerApprovalId,
-    ) ?? null;
-  const pendingApprovalRequest =
-    selectedRetailer?.orderApprovalRequests.find(
-      (approval) => approval.status === "PENDING",
-    ) ?? null;
-  const retailerSelectionMissing =
-    customerType === "RETAILER" && retailerId.trim() === "";
-  const retailerApprovalMissing =
-    customerType === "RETAILER" &&
-    paymentMethod === "CREDIT" &&
-    Boolean(selectedRetailer?.requiresOrderApproval) &&
-    retailerApprovalId.trim() === "";
-  const displayUrl =
-    terminal && origin
-      ? `${origin}/customer-display/terminal/${terminal.displayToken}`
-      : "";
-  const cartIsSyncing = cartSyncCount > 0;
-  const offlineEnabled = Boolean(terminal?.offlineEnabled);
-  const failedOfflineCount = unresolvedQueuedSales.filter(
-    (sale) => sale.status === "FAILED" || sale.status === "CONFLICT",
-  ).length;
-  const syncedOfflineCount = queuedOfflineSales.filter(
-    (sale) => sale.status === "SYNCED" || sale.status === "DUPLICATE",
-  ).length;
-
-  async function startSession() {
-    if (sessionRef.current?.status === "ACTIVE") {
-      return sessionRef.current;
-    }
-
-    if (sessionStartPromiseRef.current) {
-      return sessionStartPromiseRef.current;
-    }
-
-    setBusy(true);
-    setError(null);
-
-    sessionStartPromiseRef.current = (async () => {
-      try {
-        const currentTerminal = await ensureTerminal();
-
-        if (currentTerminal?.offlineEnabled) {
-          await prepareOfflineSnapshot(currentTerminal, navigator.onLine).catch(
-            () => null,
-          );
-          const createdAt = new Date().toISOString();
-          const created = createLocalPosSession({
-            id: `offline-session-${createUuid()}`,
-            terminalId: currentTerminal.id,
-            terminalDisplayToken: currentTerminal.displayToken,
-            createdAt,
-          });
-
-          await saveActiveOfflineSession(currentTerminal.id, created);
-          clearCartSyncs();
-          applySession(created);
-          return created;
-        }
-
-        const created = await apiJson<PosSession>("/sessions", {
-          method: "POST",
-          body: JSON.stringify({ terminalId: currentTerminal?.id }),
-        });
-
-        window.localStorage.setItem("muisbakery.posSessionId", created.id);
-        if (currentTerminal) {
-          applyTerminal({ ...currentTerminal, currentSession: created });
-        }
-        clearCartSyncs();
-        applySession(created);
-        return created;
-      } catch (caught) {
-        setError(
-          caught instanceof Error ? caught.message : "Unable to start sale.",
-        );
-        return null;
-      } finally {
-        sessionStartPromiseRef.current = null;
-        setBusy(false);
-      }
-    })();
-
-    return sessionStartPromiseRef.current;
-  }
-
-  async function patchSession(patch: PosSessionPatch) {
-    const currentTerminal = terminalRef.current;
-
-    if (currentTerminal?.offlineEnabled) {
-      sessionPatchCountRef.current += 1;
-      setSessionPatchBusy(true);
-
-      const operation = sessionPatchQueueRef.current.then(async () => {
-        const currentSession = sessionRef.current;
-
-        if (!currentSession || currentSession.status !== "ACTIVE") {
           return;
         }
+      }
 
-        const nextCustomerType =
-          patch.customerType ?? currentSession.customerType;
-        const currentPriceType =
-          currentSession.priceType ??
-          (currentSession.customerType === "RETAILER"
-            ? "RETAILER"
-            : "WALK_IN");
-        const nextPriceType =
-          nextCustomerType === "RETAILER"
-            ? "RETAILER"
-            : patch.priceType ??
-              (currentPriceType === "RETAILER"
-                ? "WALK_IN"
-                : currentPriceType);
-        const nextPaymentMethod =
-          patch.paymentMethod ?? currentSession.paymentMethod;
-        const nextAmountPaid =
-          patch.amountPaid !== undefined
-            ? patch.amountPaid ?? "0.00"
-            : patch.paymentMethod !== undefined &&
-                patch.paymentMethod !== currentSession.paymentMethod
-              ? nextPaymentMethod === "CREDIT"
-                ? "0.00"
-                : currentSession.totalAmount
-              : currentSession.amountPaid;
-        const nextRetailer =
-          nextCustomerType === "RETAILER"
-            ? availableRetailers.find(
-                (retailer) =>
-                  retailer.id ===
-                  (patch.retailerId === undefined
-                    ? currentSession.retailer?.id
-                    : patch.retailerId),
-              ) ?? currentSession.retailer
-            : null;
-        const patchedSession = {
-          ...currentSession,
-          customerType: nextCustomerType,
-          priceType: nextPriceType,
-          retailer: nextRetailer,
-          retailerApprovalId:
-            nextCustomerType === "RETAILER"
-              ? patch.retailerApprovalId === undefined
-                ? currentSession.retailerApprovalId
-                : patch.retailerApprovalId
-              : null,
-          customerName:
-            nextCustomerType === "RETAILER"
-              ? nextRetailer?.name ?? null
-              : patch.customerName === undefined
-                ? currentSession.customerName
-                : patch.customerName,
-          paymentMethod: nextPaymentMethod,
-          discount: patch.discount ?? currentSession.discount,
-          amountPaid: nextAmountPaid,
-          notes:
-            patch.notes === undefined ? currentSession.notes : patch.notes,
-          updatedAt: new Date().toISOString(),
-        };
-        const nextSession =
-          nextPriceType === currentPriceType
-            ? calculateSessionTotals(patchedSession)
-            : repriceSession(patchedSession, nextPriceType);
+      let latest: PosSession | null = null;
 
-        applySession(nextSession);
-        await saveActiveOfflineSession(currentTerminal.id, nextSession);
-      });
+      for (;;) {
+        const entry = nextPendingQuantity();
+        if (!entry) {
+          break;
+        }
 
-      sessionPatchQueueRef.current = operation.catch(() => undefined);
+        const [productId, next] = entry;
+        const sendingQuantity = next.quantity;
 
-      try {
-        await operation;
-      } catch (caught) {
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "Unable to save the offline sale details.",
-        );
-      } finally {
-        sessionPatchCountRef.current -= 1;
+        try {
+          latest = await apiJson<PosSession>(`/sessions/${sessionId}/items`, {
+            method: "PATCH",
+            body: JSON.stringify({ productId, quantity: sendingQuantity }),
+          });
+          lastSyncedRef.current = latest;
+          sessionIdRef.current = latest.id;
 
-        if (sessionPatchCountRef.current === 0) {
-          setSessionPatchBusy(false);
+          // Only clear once the cashier has not tapped this product again while
+          // the request was in flight; otherwise re-send the newer quantity.
+          if (
+            pendingRef.current.get(productId)?.quantity === sendingQuantity
+          ) {
+            pendingRef.current.delete(productId);
+          }
+        } catch (caught) {
+          pendingRef.current.clear();
+          if (lastSyncedRef.current) {
+            setSession(lastSyncedRef.current);
+          }
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : "Unable to update the sale.",
+          );
+          return;
         }
       }
-      return;
+
+      // Pending is drained, so this response reflects every product; apply it
+      // as the source of truth (prices, totals, item ids).
+      if (latest) {
+        setSession(latest);
+      }
+    } finally {
+      flushingRef.current = false;
+      if (pendingRef.current.size > 0) {
+        setCartSaving(true);
+        scheduleFlush();
+      } else {
+        setCartSaving(false);
+      }
     }
+  }
 
-    const currentSession = sessionRef.current;
-
-    if (!currentSession || currentSession.status !== "ACTIVE") {
+  async function handleCustomerType(customerType: CustomerType) {
+    if (busy || cartSaving || customerType === session?.customerType) {
       return;
     }
 
@@ -1043,1328 +805,836 @@ export function PosTerminal({ options }: { options: SalesOptions }) {
     setError(null);
 
     try {
-      const updated = await apiJson<PosSession>(
-        `/sessions/${currentSession.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify(patch),
-        },
-      );
+      if (!session) {
+        await createSession(customerType);
+        return;
+      }
 
-      applySession(updated);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to update sale.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function changeCustomerType(nextType: CustomerType) {
-    setCustomerType(nextType);
-    setApprovalRequestSent(false);
-
-    if (nextType === "INDIVIDUAL") {
-      setPriceType("WALK_IN");
-      setRetailerId("");
-      setRetailerApprovalId("");
-      setPaymentMethod("CASH");
-      await patchSession({
-        customerType: "INDIVIDUAL",
-        priceType: "WALK_IN",
-        retailerId: null,
-        retailerApprovalId: null,
-        paymentMethod: "CASH",
-      });
-      return;
-    }
-
-    const nextRetailer = selectedRetailer ?? availableRetailers[0] ?? null;
-    const nextApprovalId = nextRetailer?.requiresOrderApproval
-      ? nextRetailer.orderApprovals[0]?.id ?? ""
-      : "";
-
-    setRetailerId(nextRetailer?.id ?? "");
-    setPriceType("RETAILER");
-    setRetailerApprovalId(nextApprovalId);
-    setPaymentMethod("CREDIT");
-    await patchSession({
-      customerType: "RETAILER",
-      priceType: "RETAILER",
-      retailerId: nextRetailer?.id ?? null,
-      retailerApprovalId: nextApprovalId || null,
-      paymentMethod: "CREDIT",
-    });
-  }
-
-  async function changeRetailer(nextRetailerId: string) {
-    const nextRetailer =
-      availableRetailers.find(
-        (retailer) => retailer.id === nextRetailerId,
-      ) ??
-      null;
-    const nextApprovalId = nextRetailer?.requiresOrderApproval
-      ? nextRetailer.orderApprovals[0]?.id ?? ""
-      : "";
-
-    setCustomerType("RETAILER");
-    setPriceType("RETAILER");
-    setRetailerId(nextRetailerId);
-    setRetailerApprovalId(nextApprovalId);
-    setApprovalRequestSent(false);
-    setPaymentMethod("CREDIT");
-    await patchSession({
-      customerType: "RETAILER",
-      priceType: "RETAILER",
-      retailerId: nextRetailerId || null,
-      retailerApprovalId: nextApprovalId || null,
-      paymentMethod: "CREDIT",
-    });
-  }
-
-  async function changePriceType(nextPriceType: SalePriceType) {
-    if (customerType === "RETAILER") {
-      return;
-    }
-
-    setPriceType(nextPriceType);
-    await patchSession({ priceType: nextPriceType });
-  }
-
-  async function changeRetailerApproval(nextApprovalId: string) {
-    setRetailerApprovalId(nextApprovalId);
-    await patchSession({
-      customerType: "RETAILER",
-      retailerId: retailerId || null,
-      retailerApprovalId: nextApprovalId || null,
-      paymentMethod: "CREDIT",
-    });
-  }
-
-  async function refreshRetailers() {
-    const updatedRetailers = await apiJson<Retailer[]>("/retailers");
-
-    setRetailers(updatedRetailers);
-
-    return updatedRetailers;
-  }
-
-  async function requestAdminApproval() {
-    if (!selectedRetailer || !session) {
-      return;
-    }
-
-    setApprovalRequestBusy(true);
-    setApprovalRequestSent(false);
-    setError(null);
-
-    try {
-      await apiJson(`/retailers/${selectedRetailer.id}/order-approval-requests`, {
-        method: "POST",
-        body: JSON.stringify({
-          requestedAmount: session.totalAmount,
-          terminalId: terminal?.id,
-          reason: `POS request for retailer credit sale of ${formatMoney(
-            session.totalAmount,
-          )}.`,
-        }),
-      });
-      await refreshRetailers();
-      setApprovalRequestSent(true);
+      if (customerType === "RETAILER") {
+        const retailer = retailers.find((item) => item.isActive);
+        if (!retailer) {
+          throw new Error("No active retailer account is available.");
+        }
+        await updateSession({
+          customerType,
+          priceType: "RETAILER",
+          retailerId: retailer.id,
+          retailerApprovalId: null,
+          paymentMethod: "CREDIT",
+          amountPaid: "0",
+        });
+      } else {
+        await updateSession({
+          customerType,
+          priceType: "WALK_IN",
+          retailerId: null,
+          retailerApprovalId: null,
+          paymentMethod: "CASH",
+          amountPaid: null,
+          customerName: null,
+        });
+      }
     } catch (caught) {
       setError(
         caught instanceof Error
           ? caught.message
-          : "Unable to request Admin approval.",
+          : "Unable to change customer type.",
       );
     } finally {
-      setApprovalRequestBusy(false);
+      setBusy(false);
     }
   }
 
-  function queueCartSync(
-    current: PosSession,
-    item: SalesInventoryItem,
-    quantity: number,
-  ) {
-    const productId = item.product.id;
-    const existing = cartSyncsRef.current.get(productId);
-
-    if (existing) {
-      clearTimeout(existing.timeout);
-    }
-
-    const requestId = nextCartSyncIdRef.current;
-    nextCartSyncIdRef.current += 1;
-
-    const timeout = setTimeout(() => {
-      void syncCartItem(productId, requestId);
-    }, CART_SYNC_DELAY_MS);
-
-    cartSyncsRef.current.set(productId, {
-      item,
-      quantity,
-      requestId,
-      sessionId: current.id,
-      timeout,
-    });
-    refreshCartSyncCount();
-  }
-
-  async function syncCartItem(productId: string, requestId: number) {
-    const pending = cartSyncsRef.current.get(productId);
-
-    if (!pending || pending.requestId !== requestId) {
+  async function applyPatch(patch: PosSessionPatch) {
+    if (!session || busy || cartSaving) {
       return;
     }
 
-    try {
-      const updated = await apiJson<PosSession>(
-        `/sessions/${pending.sessionId}/items`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            productId,
-            quantity: pending.quantity,
-          }),
-        },
-      );
-      const latest = cartSyncsRef.current.get(productId);
-
-      if (!latest || latest.requestId !== requestId) {
-        return;
-      }
-
-      cartSyncsRef.current.delete(productId);
-      refreshCartSyncCount();
-
-      if (cartSyncsRef.current.size === 0) {
-        applySession(updated, false);
-        window.localStorage.setItem("muisbakery.posSessionId", updated.id);
-        return;
-      }
-
-      const current = sessionRef.current;
-
-      if (!current || current.id !== updated.id) {
-        applySession(updated, false);
-        window.localStorage.setItem("muisbakery.posSessionId", updated.id);
-        return;
-      }
-
-      const syncedItem = updated.items.find(
-        (entry) => entry.product.id === productId,
-      );
-      const nextItems = current.items.filter(
-        (entry) => entry.product.id !== productId,
-      );
-
-      if (syncedItem) {
-        nextItems.push(syncedItem);
-      }
-
-      applySession(calculateSessionTotals({ ...current, items: nextItems }), false);
-      window.localStorage.setItem("muisbakery.posSessionId", updated.id);
-    } catch (caught) {
-      const latest = cartSyncsRef.current.get(productId);
-
-      if (!latest || latest.requestId !== requestId) {
-        return;
-      }
-
-      cartSyncsRef.current.delete(productId);
-      refreshCartSyncCount();
-      setError(caught instanceof Error ? caught.message : "Unable to update cart.");
-
-      void apiJson<PosSession>(`/sessions/${pending.sessionId}`)
-        .then((loaded) => {
-          applySession(loaded, false);
-        })
-        .catch(() => undefined);
-    }
-  }
-
-  async function setProductQuantity(item: SalesInventoryItem, quantity: number) {
-    let current = sessionRef.current;
-
-    if (!current) {
-      current = await startSession();
-    }
-
-    if (!current || current.status !== "ACTIVE") {
-      return;
-    }
-
-    const available = productAvailability(item);
-    const nextQuantity = roundCount(Math.min(quantity, available));
-
-    if (quantity > available) {
-      setError(
-        `Only ${formatQuantity(
-          available,
-          item.product.unit.abbreviation,
-        )} of ${formatProductName(item.product)} is available.`,
-      );
-      return;
-    }
-
+    setBusy(true);
     setError(null);
-    const optimistic = updateSessionProductQuantity(current, item, nextQuantity);
-
-    applySession(optimistic, false);
-
-    if (terminalRef.current?.offlineEnabled) {
-      await saveActiveOfflineSession(terminalRef.current.id, optimistic);
-      return;
-    }
-
-    queueCartSync(optimistic, item, nextQuantity);
-  }
-
-  const syncPendingOfflineSales = useCallback(async () => {
-    const currentTerminal = terminalRef.current;
-
-    if (!currentTerminal?.offlineEnabled || syncBusy) {
-      return;
-    }
-
-    if (!navigator.onLine) {
-      setIsOnline(false);
-      setSyncMessage("Offline sales will sync when the network returns.");
-      return;
-    }
-
-    const pendingSales = await unresolvedOfflineSales(currentTerminal.id);
-
-    if (pendingSales.length === 0) {
-      const snapshot = await prepareOfflineSnapshot(currentTerminal, true).catch(
-        () => null,
-      );
-      const remaining = await unresolvedOfflineSales(currentTerminal.id);
-      await refreshQueuedSales(currentTerminal.id);
-      await confirmDayCloseReadiness(snapshot, remaining.length);
-      setSyncMessage(
-        snapshot?.dayCloseBarrier?.status === "CLOSING" &&
-          remaining.length === 0
-          ? "POS is synced and ready for day close."
-          : "POS is synced.",
-      );
-      return;
-    }
-
-    setSyncBusy(true);
-    setSyncMessage(`Syncing ${pendingSales.length} offline sale(s)...`);
-
-    for (const sale of pendingSales) {
-      await updateQueuedOfflineSale(sale.clientRequestId, {
-        status: "SYNCING",
-        errorMessage: null,
-      });
-    }
-    await refreshQueuedSales(currentTerminal.id);
+    setNotice(null);
 
     try {
-      const response = await apiJson<PosOfflineSyncResponse>("/sync", {
-        method: "POST",
-        body: JSON.stringify({
-          terminalId: currentTerminal.id,
-          sales: pendingSales.map((sale) => sale.payload),
-        }),
-      });
-      let conflictCount = 0;
-
-      for (const result of response.results) {
-        if (result.status === "CONFLICT" || result.status === "FAILED") {
-          conflictCount += 1;
-        }
-
-        await updateQueuedOfflineSale(result.clientRequestId, {
-          status: result.status,
-          errorMessage: result.errorMessage,
-          syncedSale: result.sale,
-        });
-      }
-
-      const snapshot = await prepareOfflineSnapshot(
-        currentTerminal,
-        true,
-      ).catch(() => null);
-      const remaining = await unresolvedOfflineSales(currentTerminal.id);
-      await refreshQueuedSales(currentTerminal.id);
-      await confirmDayCloseReadiness(snapshot, remaining.length);
-      setSyncMessage(
-        conflictCount > 0
-          ? `${conflictCount} offline sale(s) need review before they can sync.`
-          : "Offline sales synced.",
-      );
+      await updateSession(patch);
     } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message : "Unable to sync offline sales.";
-
-      for (const sale of pendingSales) {
-        await updateQueuedOfflineSale(sale.clientRequestId, {
-          status: "FAILED",
-          errorMessage: message,
-        });
-      }
-      await refreshQueuedSales(currentTerminal.id);
-      setSyncMessage(message);
+      setError(
+        caught instanceof Error ? caught.message : "Unable to update the sale.",
+      );
     } finally {
-      setSyncBusy(false);
+      setBusy(false);
     }
-  }, [
-    confirmDayCloseReadiness,
-    prepareOfflineSnapshot,
-    refreshQueuedSales,
-    syncBusy,
-  ]);
+  }
 
-  useEffect(() => {
-    function markOnline() {
-      setIsOnline(true);
-      const currentTerminal = terminalRef.current;
+  async function refreshRetailers() {
+    const updated = await apiJson<Retailer[]>("/retailers");
+    setRetailers(updated);
+    return updated;
+  }
 
-      if (currentTerminal?.offlineEnabled) {
-        void syncPendingOfflineSales();
-      }
-    }
-
-    function markOffline() {
-      setIsOnline(false);
-    }
-
-    window.addEventListener("online", markOnline);
-    window.addEventListener("offline", markOffline);
-
-    return () => {
-      window.removeEventListener("online", markOnline);
-      window.removeEventListener("offline", markOffline);
-    };
-  }, [syncPendingOfflineSales]);
-
-  useEffect(() => {
-    if (!terminal?.offlineEnabled || !isOnline) {
-      return;
-    }
-
-    let cancelled = false;
-    const publish = async () => {
-      if (cancelled) {
-        return;
-      }
-
-      await apiJson(`/terminals/${terminal.id}/display-preview`, {
-        method: "POST",
-        body: JSON.stringify(buildPosDisplayPreview(session)),
-      }).catch(() => undefined);
-    };
-    const timeout = window.setTimeout(() => void publish(), CART_SYNC_DELAY_MS);
-    const interval = session
-      ? window.setInterval(() => void publish(), 5000)
-      : null;
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-      if (interval !== null) {
-        window.clearInterval(interval);
-      }
-    };
-  }, [isOnline, session, terminal?.id, terminal?.offlineEnabled]);
-
-  async function checkout() {
-    await sessionPatchQueueRef.current;
-    const currentSession = sessionRef.current;
-
+  async function requestApproval() {
     if (
-      !currentSession ||
-      currentSession.status !== "ACTIVE" ||
-      cartIsSyncing ||
-      syncBusy ||
-      sessionPatchCountRef.current > 0
+      !session?.retailer ||
+      busy ||
+      cartSaving ||
+      Number(session.totalAmount) <= 0
     ) {
       return;
     }
 
-    // Reserve an invisible print target while handling the cashier's click.
-    // The print dialog is opened only after checkout has completed.
-    let receiptFrame: HTMLIFrameElement | null = reserveReceiptPrintFrame();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      await apiJson(`/retailers/${session.retailer.id}/order-approval-requests`, {
+        method: "POST",
+        body: JSON.stringify({
+          requestedAmount: session.totalAmount,
+          reason: `POS credit sale at ${selectedCounter?.name ?? "sales counter"}.`,
+        }),
+      });
+      await refreshRetailers();
+      setNotice("Approval request sent to Admin.");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to request approval.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshApprovalStatus() {
+    if (!session?.retailer || busy || cartSaving) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const updated = await refreshRetailers();
+      const retailer =
+        updated.find((item) => item.id === session.retailer?.id) ?? null;
+      const approvals = validApprovedOrders(retailer);
+
+      setNotice(
+        approvals.length > 0
+          ? "Admin approval received. Select it to continue."
+          : "Approval is still pending with Admin.",
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to refresh approval status.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelSale() {
+    if (!session || busy || cartSaving) {
+      return;
+    }
 
     setBusy(true);
     setError(null);
 
     try {
-      const currentTerminal = terminalRef.current;
+      await apiJson(`/sessions/${session.id}/cancel`, { method: "POST" });
+      pendingRef.current.clear();
+      sessionIdRef.current = null;
+      lastSyncedRef.current = null;
+      setSession(null);
+      setNotice("Sale cancelled.");
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Unable to cancel the sale.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      if (currentTerminal?.offlineEnabled) {
-        if (offlineSnapshot?.dayCloseBarrier?.checkoutBlocked) {
-          throw new Error(
-            "Checkout is paused while this business day is being closed. Sync this terminal and wait for Sales or Management to complete the close.",
-          );
-        }
-        if (currentSession.items.length === 0) {
-          throw new Error("Add at least one product before checkout.");
-        }
+  async function checkout() {
+    if (
+      !session ||
+      session.items.length === 0 ||
+      busy ||
+      cartSaving ||
+      !requireConnection()
+    ) {
+      return;
+    }
 
-        const currentRetailer =
-          currentSession.customerType === "RETAILER"
-            ? availableRetailers.find(
-                (retailer) => retailer.id === currentSession.retailer?.id,
-              ) ?? null
-            : null;
-        const currentRetailerSelectionMissing =
-          currentSession.customerType === "RETAILER" && !currentRetailer;
-        const currentRetailerApprovalMissing =
-          currentSession.customerType === "RETAILER" &&
-          currentSession.paymentMethod === "CREDIT" &&
-          Boolean(currentRetailer?.requiresOrderApproval) &&
-          !currentSession.retailerApprovalId;
+    const printFrame = reserveReceiptPrintFrame();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
 
-        if (currentRetailerSelectionMissing) {
-          throw new Error("Select a retailer before checkout.");
-        }
-
-        if (currentRetailerApprovalMissing) {
-          throw new Error(
-            "Admin approval is required before this retailer credit sale can be queued.",
-          );
-        }
-
-        const soldAt = new Date().toISOString();
-        const payload = buildOfflineSalePayload({
-          session: currentSession,
-          terminalId: currentTerminal.id,
-          clientRequestId: `offline:${currentTerminal.id}:${createUuid()}`,
-          soldAt,
-        });
-
-        await addQueuedOfflineSale(payload);
-        await clearActiveOfflineSession(currentTerminal.id);
-        await refreshQueuedSales(currentTerminal.id);
-        clearCartSyncs();
-
-        // When online, sync before printing so the receipt can carry the
-        // real sale number once the server records it.
-        let syncedSaleNumber: number | null = null;
-
-        if (navigator.onLine) {
-          setSyncMessage("Recording sale...");
-          await syncPendingOfflineSales();
-
-          const queued = await listQueuedOfflineSales(currentTerminal.id);
-          syncedSaleNumber =
-            queued.find(
-              (record) => record.clientRequestId === payload.clientRequestId,
-            )?.syncedSale?.saleNumber ?? null;
-        } else {
-          setSyncMessage(
-            "Sale queued offline. It will sync when the network returns.",
-          );
-        }
-
-        const completedSession: PosSession = {
-          ...currentSession,
-          status: "COMPLETED",
-          updatedAt: soldAt,
-          completedAt: soldAt,
-          completedSale: syncedSaleNumber
-            ? {
-                id: `synced-sale-${syncedSaleNumber}`,
-                saleNumber: syncedSaleNumber,
-                totalAmount: currentSession.totalAmount,
-                amountPaid: currentSession.amountPaid,
-                balanceDue: currentSession.balanceDue,
-                soldAt,
-              }
-            : null,
-        };
-        const receipt = buildReceiptDocument({
-          session: completedSession,
-          terminalName: currentTerminal.name,
-          saleNumber: syncedSaleNumber,
-        });
-
-        applySession(completedSession);
-        setLastReceipt(receipt);
-        printReceipt(receipt, receiptFrame);
-        receiptFrame = null;
-
-        return;
-      }
-
-      await apiJson<PosSession>(`/sessions/${currentSession.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          customerType,
-          priceType,
-          retailerId: customerType === "RETAILER" ? retailerId || null : null,
-          retailerApprovalId:
-            customerType === "RETAILER" && paymentMethod === "CREDIT"
-              ? retailerApprovalId || null
-              : null,
-          paymentMethod,
-        }),
-      });
+    try {
       const completed = await apiJson<PosSession>(
-        `/sessions/${currentSession.id}/checkout`,
-        { method: "POST", body: JSON.stringify({}) },
+        `/sessions/${session.id}/checkout`,
+        { method: "POST" },
       );
       const receipt = buildReceiptDocument({
         session: completed,
-        terminalName: currentTerminal?.name,
+        terminalName: selectedCounter?.name,
       });
-
-      window.localStorage.removeItem("muisbakery.posSessionId");
-      clearCartSyncs();
-      applySession(completed);
-      setLastReceipt(receipt);
-      printReceipt(receipt, receiptFrame);
-      receiptFrame = null;
+      setAvailability((current) => {
+        const next = { ...current };
+        for (const item of completed.items) {
+          next[item.product.id] = Math.max(
+            0,
+            (next[item.product.id] ?? 0) - Number(item.quantity),
+          );
+        }
+        return next;
+      });
+      setLastReceipt({ document: receipt, session: completed });
+      pendingRef.current.clear();
+      sessionIdRef.current = null;
+      lastSyncedRef.current = null;
+      setSession(null);
+      void refreshRetailers().catch(() => undefined);
+      setNotice(
+        completed.completedSale?.saleNumber
+          ? `Sale #${completed.completedSale.saleNumber} completed.`
+          : "Checkout completed.",
+      );
+      printReceipt(receipt, printFrame);
     } catch (caught) {
-      receiptFrame?.remove();
-      setError(caught instanceof Error ? caught.message : "Unable to checkout.");
+      printFrame.remove();
+      setError(
+        caught instanceof Error ? caught.message : "Unable to complete checkout.",
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  async function cancelSession() {
-    if (!session) {
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    clearCartSyncs();
-
-    try {
-      if (terminalRef.current?.offlineEnabled) {
-        await clearActiveOfflineSession(terminalRef.current.id);
-        applySession(null);
-        return;
-      }
-
-      await apiJson<PosSession>(`/sessions/${session.id}/cancel`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      window.localStorage.removeItem("muisbakery.posSessionId");
-      applySession(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to cancel sale.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function copyDisplayUrl() {
-    if (!displayUrl) {
-      return;
-    }
-
-    await navigator.clipboard?.writeText(displayUrl).catch(() => undefined);
-  }
-
-  function cartQuantity(productId: string) {
-    return Number(
-      session?.items.find((item) => item.product.id === productId)?.quantity ?? 0,
-    );
-  }
+  const selectedPriceType = session?.priceType ?? "WALK_IN";
+  const controlsBusy = busy || cartSaving;
+  const adminProductDiscount = session
+    ? configuredProductDiscountAmount(session)
+    : 0;
+  const paymentOptions: PaymentMethod[] =
+    session?.customerType === "RETAILER"
+      ? ["CASH", "TRANSFER", "POS", "CREDIT"]
+      : ["CASH", "TRANSFER", "POS"];
 
   return (
-    <div className="grid min-w-0 max-w-full gap-4 2xl:grid-cols-[minmax(0,1fr)_380px]">
-      <section className="min-w-0 rounded-md border border-stone-200 bg-white p-4 shadow-sm">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative max-w-md flex-1">
-            <Search
-              aria-hidden
-              className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400"
-            />
-            <input
-              className="h-10 w-full rounded-md border border-stone-300 bg-white pl-9 pr-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search products"
-              type="search"
-              value={query}
-            />
+    <div className="grid gap-4">
+      <section className="rounded-lg border border-[color:var(--border-muted)] bg-white p-4 shadow-[var(--shadow-whisper)]">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="grid min-w-56 gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            Sales counter
+            <select
+              className={fieldClass}
+              disabled={Boolean(session) || controlsBusy}
+              onChange={(event) => {
+                storeCounterId(event.target.value);
+              }}
+              value={selectedCounterId}
+            >
+              {selectableCounterCount === 0 ? (
+                <option value="">
+                  {options.counters.length === 0
+                    ? "No active counter"
+                    : "No available counter"}
+                </option>
+              ) : null}
+              {options.counters.map((counter) => {
+                const occupiedByAnother = !counterIsSelectable(counter);
+                const suffix = occupiedByAnother
+                  ? ` (In use by ${counter.occupiedByName ?? "another cashier"})`
+                  : counter.currentSessionId
+                    ? " (Your active sale)"
+                    : "";
+
+                return (
+                  <option
+                    disabled={occupiedByAnother}
+                    key={counter.id}
+                    value={counter.id}
+                  >
+                    {counter.name || "Unnamed counter"}
+                    {suffix}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+
+          <label className="grid min-w-64 flex-1 gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            Search products
+            <span className="relative">
+              <Search
+                aria-hidden
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]"
+              />
+              <input
+                className={`${fieldClass} w-full pl-9`}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search products"
+                type="search"
+                value={query}
+              />
+            </span>
+          </label>
+
+          <div
+            className={`inline-flex h-10 items-center gap-2 rounded-[5px] border px-3 text-sm font-medium ${
+              isOnline
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-red-200 bg-red-50 text-red-800"
+            }`}
+          >
+            {isOnline ? (
+              <Wifi aria-hidden className="size-4" />
+            ) : (
+              <WifiOff aria-hidden className="size-4" />
+            )}
+            {isOnline ? "Online" : "Connection required"}
           </div>
         </div>
 
-        {!terminal ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-amber-950">
-              {isOnline ? "Terminal setup required" : "Online setup required"}
-            </p>
-            <p className="mt-1 text-sm leading-6 text-amber-900">
-              {isOnline
-                ? "Enter the setup ID from Admin > POS terminals before using this sales point."
-                : "This browser has no paired POS terminal and cached offline snapshot. Connect once, pair the terminal, then refresh the offline stock snapshot before selling offline."}
-            </p>
-            {isOnline ? (
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-md border border-amber-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
-                  onChange={(event) => setTerminalSetupId(event.target.value)}
-                  placeholder="POS terminal setup ID"
-                  type="text"
-                  value={terminalSetupId}
-                />
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-md border border-amber-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-red-700 focus:ring-4 focus:ring-red-100"
-                  onChange={(event) =>
-                    setTerminalPairingCode(event.target.value)
-                  }
-                  placeholder="Pairing code"
-                  type="password"
-                  value={terminalPairingCode}
-                />
-                <button
-                  className="inline-flex h-10 items-center justify-center rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
-                  disabled={busy}
-                  onClick={claimTerminal}
-                  type="button"
-                >
-                  {busy ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Spinner />
-                      Pairing...
-                    </span>
-                  ) : (
-                    "Pair terminal"
-                  )}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : filteredProducts.length === 0 ? (
-          <p className="rounded-md border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">
-            No products available.
+        {!isOnline ? (
+          <p className="mt-3 rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            Sales are paused until this device can reach the bakery server.
           </p>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredProducts.map((item) => {
-              const quantity = cartQuantity(item.product.id);
-              const activePrice = productPriceForType(
-                item.product,
-                session?.priceType ?? priceType,
-              );
-
-              return (
-                <button
-                  className="min-h-28 rounded-md border border-stone-200 bg-stone-50 p-3 text-left transition hover:border-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!terminal || (busy && !session)}
-                  key={item.product.id}
-                  onClick={() => setProductQuantity(item, quantity + 1)}
-                  type="button"
-                >
-                  <span className="block font-semibold text-stone-950">
-                    {formatProductName(item.product)}
-                  </span>
-                  <span className="mt-1 block text-sm text-stone-500">
-                    {formatQuantity(
-                      productAvailability(item),
-                      item.product.unit.abbreviation,
-                    )}
-                  </span>
-                  <span className="mt-3 block text-sm font-semibold text-red-800">
-                    {formatMoney(activePrice ?? 0)}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        ) : null}
+        {options.counters.length === 0 ? (
+          <p className="mt-3 rounded-[5px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Ask Admin to create and activate a sales counter before using POS.
+          </p>
+        ) : selectableCounterCount === 0 ? (
+          <p className="mt-3 rounded-[5px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            All sales counters are currently in use. Ask a cashier to complete
+            or cancel their sale, or ask Admin to create another counter.
+          </p>
+        ) : null}
       </section>
 
-      <aside className="min-w-0 rounded-md border border-stone-200 bg-white p-4 shadow-sm">
-        <div className="mb-4 flex items-start justify-between gap-3">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {filteredProducts.map((item) => {
+          const available = availability[item.product.id] ?? 0;
+          const price =
+            productPriceForType(item.product, selectedPriceType) ?? "0";
+          const walkInPrice =
+            productPriceForType(item.product, "WALK_IN") ?? "0";
+          const discountedPrice =
+            productPriceForType(item.product, "DISCOUNTED") ?? "0";
+          const discountPercent = Number(item.product.discountPercent ?? 0);
+          // The discounted tier is only meaningful for individual (walk-in)
+          // sales; retailer sales price off the retailer tier instead.
+          const hasDiscount =
+            selectedPriceType !== "RETAILER" &&
+            discountPercent > 0 &&
+            Number(discountedPrice) > 0 &&
+            Number(discountedPrice) < Number(walkInPrice);
+          const discountedActive = selectedPriceType === "DISCOUNTED";
+          const unavailable =
+            available <= 0 ||
+            Number(price) <= 0 ||
+            !selectedCounter ||
+            !isOnline;
+
+          return (
+            <button
+              className="min-h-32 rounded-lg border border-[color:var(--border-muted)] bg-white p-4 text-left shadow-[var(--shadow-whisper)] transition hover:border-[var(--brand-burgundy)] hover:bg-[var(--surface-warm)] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={unavailable || busy}
+              key={item.product.id}
+              onClick={() => enqueueQuantity(item, (current) => current + 1)}
+              type="button"
+            >
+              <p className="font-semibold text-[var(--text-primary)]">
+                {formatProductName(item.product)}
+              </p>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
+                {formatQuantity(available, item.product.unit.abbreviation)} available
+              </p>
+              {hasDiscount ? (
+                <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span
+                    className={
+                      discountedActive
+                        ? "text-sm text-[var(--text-muted)] line-through"
+                        : "font-semibold text-[var(--brand-burgundy)]"
+                    }
+                  >
+                    {formatMoney(walkInPrice)}
+                  </span>
+                  <span
+                    className={
+                      discountedActive
+                        ? "font-semibold text-[var(--brand-burgundy)]"
+                        : "text-sm font-semibold text-emerald-700"
+                    }
+                  >
+                    {formatMoney(discountedPrice)}
+                  </span>
+                  <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-emerald-700">
+                    -{discountPercent}% {discountedActive ? "applied" : "discount"}
+                  </span>
+                </div>
+              ) : (
+                <p className="mt-3 font-semibold text-[var(--brand-burgundy)]">
+                  {formatMoney(price)}
+                </p>
+              )}
+            </button>
+          );
+        })}
+      </section>
+
+      <section className="rounded-lg border border-[color:var(--border-muted)] bg-white p-4 shadow-[var(--shadow-whisper)]">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-stone-950">Current sale</h2>
-            <p className="text-sm text-stone-500">
-              {session
-                ? session.status === "ACTIVE"
-                  ? cartIsSyncing
-                    ? "Saving cart"
-                    : "Active"
-                  : session.status.toLowerCase()
-                : "No active sale"}
+            <h2 className="text-base font-semibold text-[var(--text-primary)]">
+              Current sale
+            </h2>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              {session ? "Active" : "Select a product to begin"}
             </p>
           </div>
           {session ? (
             <button
+              aria-label="Cancel current sale"
               className={iconButtonClass}
-              disabled={busy}
-              onClick={cancelSession}
+              disabled={controlsBusy}
+              onClick={() => void cancelSale()}
               title="Cancel sale"
               type="button"
             >
-              <X className="h-4 w-4" />
+              <X aria-hidden className="size-4" />
             </button>
           ) : null}
         </div>
 
-        {displayUrl ? (
-          <div className="mb-4 rounded-md border border-stone-200 bg-stone-50 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-medium text-stone-900">
-                Customer display
-              </p>
-              <div className="flex gap-2">
-                <a
-                  className={iconButtonClass}
-                  href={displayUrl}
-                  target="_blank"
-                  title="Open customer display"
-                >
-                  <MonitorUp className="h-4 w-4" />
-                </a>
-                <button
-                  className={iconButtonClass}
-                  onClick={copyDisplayUrl}
-                  title="Copy customer display link"
-                  type="button"
-                >
-                  <Copy className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <p className="mt-2 break-all text-xs text-stone-500">{displayUrl}</p>
-          </div>
-        ) : null}
-
         {error ? (
-          <p className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <p className="mt-4 rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
             {error}
           </p>
         ) : null}
+        {notice ? (
+          <p className="mt-4 rounded-[5px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {notice}
+          </p>
+        ) : null}
 
-        {offlineEnabled ? (
-          <div className="mb-4 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold text-stone-950">
-                  {isOnline ? "Online" : "Offline"} POS
-                </p>
-                <p className="mt-1 text-xs text-stone-500">
-                  {unresolvedQueuedSales.length} pending, {failedOfflineCount}{" "}
-                  need review, {syncedOfflineCount} synced.
-                </p>
-                <p
-                  className={`mt-1 text-xs font-medium ${
-                    posShellStatus?.ready
-                      ? "text-emerald-700"
-                      : posShellStatus?.message
-                        ? "text-red-700"
-                        : "text-amber-700"
-                  }`}
-                  title={posShellStatus?.message}
-                >
-                  {posShellStatus?.ready
-                    ? "Offline reload ready"
-                    : posShellStatus?.message
-                      ? "Offline reload not ready"
-                      : "Preparing offline reload..."}
-                </p>
-              </div>
+        {selectedCounter ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-warm)] p-3">
+            <div>
+              <p className="text-sm font-semibold text-[var(--text-primary)]">
+                Customer display
+              </p>
+              <p className="mt-0.5 max-w-3xl truncate text-xs text-[var(--text-muted)]">
+                {displayUrl}
+              </p>
+            </div>
+            <div className="flex gap-2">
               <button
-                className="inline-flex h-8 items-center justify-center rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 text-xs font-semibold text-stone-700 shadow-[var(--shadow-whisper)] transition hover:border-red-800 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={syncBusy || !isOnline}
-                onClick={() => void syncPendingOfflineSales()}
+                aria-label="Copy customer display link"
+                className={iconButtonClass}
+                onClick={() => void copyText(displayUrl)}
+                title="Copy display link"
                 type="button"
               >
-                {syncBusy ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Spinner className="size-3" />
-                    Syncing...
-                  </span>
-                ) : (
-                  "Sync now"
-                )}
+                <Copy aria-hidden className="size-4" />
               </button>
-            </div>
-            {syncMessage ? (
-              <p
-                className={`mt-2 rounded-[5px] px-2 py-1 text-xs ${
-                  failedOfflineCount > 0
-                    ? "bg-red-50 text-red-800"
-                    : "bg-emerald-50 text-emerald-800"
-                }`}
+              <a
+                aria-label="Open customer display"
+                className={iconButtonClass}
+                href={displayUrl}
+                rel="noreferrer"
+                target="_blank"
+                title="Open customer display"
               >
-                {syncMessage}
-              </p>
-            ) : null}
-            {offlineSnapshot?.dayCloseBarrier?.checkoutBlocked ? (
-              <p className="mt-2 rounded-[5px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
-                Checkout paused for day close. Sync this terminal until its
-                queue is confirmed empty.
-              </p>
-            ) : null}
-            {failedOfflineCount > 0 ? (
-              <div className="mt-2 grid gap-1 text-xs text-red-800">
-                {unresolvedQueuedSales
-                  .filter(
-                    (sale) =>
-                      sale.status === "FAILED" || sale.status === "CONFLICT",
-                  )
-                  .slice(0, 3)
-                  .map((sale) => (
-                    <p key={sale.clientRequestId}>
-                      {sale.errorMessage ?? "Offline sale needs review."}
-                    </p>
-                  ))}
-              </div>
-            ) : null}
+                <ExternalLink aria-hidden className="size-4" />
+              </a>
+            </div>
           </div>
         ) : null}
 
         {!session ? (
-          <div className="grid gap-3">
-            {lastReceipt ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-                <p className="font-semibold">Last receipt is ready.</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    className="inline-flex h-8 items-center justify-center gap-2 rounded-[5px] bg-emerald-700 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
-                    onClick={() => printReceipt(lastReceipt)}
-                    type="button"
-                  >
-                    <Printer className="h-4 w-4" />
-                    Print
-                  </button>
-                  <button
-                    className="inline-flex h-8 items-center justify-center gap-2 rounded-[5px] border border-emerald-300 bg-white px-3 text-xs font-semibold text-emerald-800 transition hover:border-emerald-700"
-                    onClick={() => downloadReceipt(lastReceipt)}
-                    type="button"
-                  >
-                    <Download className="h-4 w-4" />
-                    Download
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            <button
-              className="flex h-28 w-full items-center justify-center gap-2 rounded-md border border-dashed border-stone-300 text-sm font-medium text-stone-600 transition hover:border-red-800 hover:text-red-800"
-              disabled={busy || !terminal}
-              onClick={startSession}
-              type="button"
-            >
-              {busy ? <Spinner /> : <Plus className="h-4 w-4" />}
-              {busy ? "Starting..." : "Start sale"}
-            </button>
-          </div>
-        ) : session.status === "COMPLETED" ? (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-            <p className="font-semibold">
-              {session.completedSale?.saleNumber
-                ? `Sale #${session.completedSale.saleNumber} completed.`
-                : "Checkout successful. Sale queued for synchronization."}
-            </p>
-            <p className="mt-1">
-              Total {formatMoney(session.totalAmount)}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {lastReceipt ? (
-                <>
-                  <button
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-800 transition hover:border-emerald-700"
-                    onClick={() => printReceipt(lastReceipt)}
-                    type="button"
-                  >
-                    <Printer className="h-4 w-4" />
-                    Print receipt
-                  </button>
-                  <button
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-800 transition hover:border-emerald-700"
-                    onClick={() => downloadReceipt(lastReceipt)}
-                    type="button"
-                  >
-                    <Download className="h-4 w-4" />
-                    Download
-                  </button>
-                </>
-              ) : null}
-              <button
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white"
-                onClick={startSession}
-                type="button"
-              >
-                <RotateCcw className="h-4 w-4" />
-                New sale
-              </button>
-            </div>
+          <div className="mt-4 grid min-h-32 place-items-center rounded-[5px] border border-dashed border-[color:var(--border-muted)] text-sm text-[var(--text-muted)]">
+            Select a product to start the sale.
           </div>
         ) : (
-          <div className="grid gap-4">
-            <div className="grid gap-3">
-              {session.items.length === 0 ? (
-                <p className="rounded-md border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">
-                  Cart is empty.
-                </p>
-              ) : (
-                session.items.map((item) => {
-                  const inventoryItem = productSource.find(
-                    (entry) => entry.product.id === item.product.id,
-                  );
-
-                  return (
-                    <div
-                      className="rounded-md border border-stone-200 p-3"
-                      key={item.id}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-medium text-stone-950">
-                            {formatProductName(item.product)}
-                          </p>
-                          <p className="text-sm text-stone-500">
-                            {formatMoney(item.unitPrice)} each
-                          </p>
-                        </div>
-                        <p className="font-semibold text-stone-950">
-                          {formatMoney(item.lineTotal)}
-                        </p>
-                      </div>
-                      <div className="mt-3 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            className={iconButtonClass}
-                            disabled={!inventoryItem}
-                            onClick={() =>
-                              inventoryItem
-                                ? setProductQuantity(
-                                  inventoryItem,
-                                  Number(item.quantity) - 1,
-                                )
-                                : undefined
-                            }
-                            title="Reduce quantity"
-                            type="button"
-                          >
-                            <Minus className="h-4 w-4" />
-                          </button>
-                          <div className="flex items-center gap-1">
-                            <input
-                              aria-label={`Quantity for ${formatProductName(
-                                item.product,
-                              )}`}
-                              className="h-9 w-20 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-2 text-center text-sm font-semibold text-stone-900 shadow-[var(--shadow-whisper)] outline-none transition focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]"
-                              disabled={!inventoryItem}
-                              inputMode="numeric"
-                              max={
-                                inventoryItem
-                                  ? productAvailability(inventoryItem)
-                                  : undefined
-                              }
-                              min="0"
-                              onChange={(event) =>
-                                inventoryItem
-                                  ? setProductQuantity(
-                                      inventoryItem,
-                                      Number.parseInt(
-                                        event.target.value || "0",
-                                        10,
-                                      ),
-                                    )
-                                  : undefined
-                              }
-                              step="1"
-                              type="number"
-                              value={item.quantity}
-                            />
-                            <span className="text-xs text-stone-500">
-                              {item.product.unit.abbreviation}
-                            </span>
-                          </div>
-                          <button
-                            className={iconButtonClass}
-                            disabled={!inventoryItem}
-                            onClick={() =>
-                              inventoryItem
-                                ? setProductQuantity(
-                                  inventoryItem,
-                                  Number(item.quantity) + 1,
-                                )
-                                : undefined
-                            }
-                            title="Increase quantity"
-                            type="button"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <button
-                          className={iconButtonClass}
-                          disabled={!inventoryItem}
-                          onClick={() =>
-                            inventoryItem
-                              ? setProductQuantity(inventoryItem, 0)
-                              : undefined
-                          }
-                          title="Remove item"
-                          type="button"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="grid gap-3 border-t border-stone-200 pt-4">
-              <div className="grid gap-1.5">
-                <label
-                  className="text-sm font-medium text-stone-700"
-                  htmlFor="customerType"
-                >
-                  Customer type
-                </label>
+          <>
+            <div className="mt-4 grid gap-3 lg:grid-cols-4">
+              <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                Customer type
                 <select
                   className={fieldClass}
-                  id="customerType"
+                  disabled={controlsBusy}
                   onChange={(event) =>
-                    void changeCustomerType(event.target.value as CustomerType)
+                    void handleCustomerType(event.target.value as CustomerType)
                   }
-                  value={customerType}
+                  value={session.customerType}
                 >
                   <option value="INDIVIDUAL">Individual</option>
                   <option value="RETAILER">Retailer</option>
                 </select>
-              </div>
+              </label>
 
-              <div className="grid gap-1.5">
-                <label
-                  className="text-sm font-medium text-stone-700"
-                  htmlFor="priceType"
-                >
-                  Price type
-                </label>
-                <select
-                  className={fieldClass}
-                  disabled={customerType === "RETAILER"}
-                  id="priceType"
-                  onChange={(event) =>
-                    void changePriceType(event.target.value as SalePriceType)
-                  }
-                  value={priceType}
-                >
-                  {customerType === "RETAILER" ? (
-                    <option value="RETAILER">Retailer price</option>
-                  ) : (
-                    <>
-                      <option value="WALK_IN">Walk-in price</option>
-                      <option value="DISCOUNTED">Apply product discount</option>
-                    </>
-                  )}
-                </select>
-              </div>
-
-              {customerType === "RETAILER" ? (
-                <div className="grid gap-2">
-                  <div className="grid gap-1.5">
-                    <label
-                      className="text-sm font-medium text-stone-700"
-                      htmlFor="retailerId"
-                    >
-                      Retailer account
-                    </label>
-                    <select
-                      className={fieldClass}
-                      id="retailerId"
-                      onChange={(event) => void changeRetailer(event.target.value)}
-                      value={retailerId}
-                    >
-                      <option value="">Select retailer</option>
-                      {availableRetailers.map((retailer) => (
+              {session.customerType === "RETAILER" ? (
+                <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Retailer
+                  <select
+                    className={fieldClass}
+                    disabled={controlsBusy}
+                    onChange={(event) =>
+                      void applyPatch({
+                        retailerId: event.target.value,
+                        retailerApprovalId: null,
+                      })
+                    }
+                    value={session.retailer?.id ?? ""}
+                  >
+                    {retailers
+                      .filter((retailer) => retailer.isActive)
+                      .map((retailer) => (
                         <option key={retailer.id} value={retailer.id}>
                           {retailer.name}
                         </option>
                       ))}
-                    </select>
+                  </select>
+                </label>
+              ) : (
+                <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Customer name
+                  <input
+                    className={fieldClass}
+                    defaultValue={session.customerName ?? ""}
+                    disabled={controlsBusy}
+                    key={`customer-${session.id}-${session.customerName ?? ""}`}
+                    onBlur={(event) =>
+                      void applyPatch({
+                        customerName: event.target.value.trim() || null,
+                      })
+                    }
+                    placeholder="Optional"
+                  />
+                </label>
+              )}
+
+              {session.customerType === "INDIVIDUAL" ? (
+                <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Price
+                  <select
+                    className={fieldClass}
+                    disabled={controlsBusy}
+                    onChange={(event) =>
+                      void applyPatch({
+                        priceType: event.target.value as SalePriceType,
+                      })
+                    }
+                    value={session.priceType}
+                  >
+                    <option value="WALK_IN">Walk-in</option>
+                    <option value="DISCOUNTED">
+                      Discounted (Admin rates)
+                    </option>
+                  </select>
+                </label>
+              ) : (
+                <div className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Price
+                  <div className={`${fieldClass} flex items-center`}>
+                    {salePriceLabel(session.priceType)}
                   </div>
-                  {selectedRetailer ? (
-                    <div className="rounded-[5px] border border-[color:var(--border-muted)] bg-[var(--surface-warm)] px-3 py-2 text-xs text-[var(--text-secondary)]">
-                      <p>
-                        Outstanding balance:{" "}
-                        <span className="font-semibold text-[var(--text-primary)]">
-                          {formatMoney(selectedRetailer.outstandingBalance)}
-                        </span>
-                      </p>
-                      {selectedRetailer.requiresOrderApproval ? (
-                        paymentMethod === "CREDIT" ? (
-                          <p className="mt-1 font-semibold text-red-800">
-                            Admin approval required for another credit sale.
-                          </p>
-                        ) : (
-                          <p className="mt-1 font-semibold text-emerald-700">
-                            Paid-now sale. Existing credit remains for follow-up.
-                          </p>
-                        )
-                      ) : (
-                        <p className="mt-1 font-semibold text-emerald-700">
-                          No uncleared credit.
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-                      Create or select a retailer account before checkout.
-                    </p>
-                  )}
-                  {selectedRetailer?.requiresOrderApproval &&
-                  paymentMethod === "CREDIT" ? (
-                    selectedRetailer.orderApprovals.length > 0 ? (
-                      <div className="grid gap-1.5">
-                        <label
-                          className="text-sm font-medium text-stone-700"
-                          htmlFor="retailerApprovalId"
-                        >
-                          Admin approval
-                        </label>
-                        <select
-                          className={fieldClass}
-                          id="retailerApprovalId"
-                          onChange={(event) =>
-                            void changeRetailerApproval(event.target.value)
-                          }
-                          value={retailerApprovalId}
-                        >
-                          <option value="">Select approval</option>
-                          {selectedRetailer.orderApprovals.map((approval) => (
-                            <option key={approval.id} value={approval.id}>
-                              {formatMoney(approval.approvedAmount)}
-                              {approval.expiresAt
-                                ? ` expires ${new Intl.DateTimeFormat("en", {
-                                    dateStyle: "medium",
-                                  }).format(new Date(approval.expiresAt))}`
-                                : ""}
-                            </option>
-                          ))}
-                        </select>
-                        {selectedApproval ? (
-                          <p className="text-xs text-stone-500">
-                            Covers up to{" "}
-                            {formatMoney(selectedApproval.approvedAmount)}.
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="grid gap-2 rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-                        <p>
-                          Ask Admin to approve this retailer before credit
-                          checkout.
-                        </p>
-                        {pendingApprovalRequest ? (
-                          <p className="font-semibold text-amber-800">
-                            Pending request:{" "}
-                            {formatMoney(pendingApprovalRequest.approvedAmount)}
-                          </p>
-                        ) : (
-                          <button
-                            className="inline-flex h-8 w-fit items-center justify-center rounded-[5px] bg-red-800 px-3 text-xs font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
-                            disabled={
-                              approvalRequestBusy ||
-                              !isOnline ||
-                              Number(session.totalAmount) <= 0
-                            }
-                            onClick={requestAdminApproval}
-                            type="button"
-                          >
-                            {approvalRequestBusy
-                              ? "Requesting..."
-                              : "Request Admin approval"}
-                          </button>
-                        )}
-                        {approvalRequestSent ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-semibold text-emerald-700">
-                              Request sent. Refresh after Admin approves it.
-                            </p>
-                            <button
-                              className="inline-flex h-7 items-center justify-center rounded-[5px] border border-emerald-300 bg-white px-2 text-xs font-semibold text-emerald-800"
-                              onClick={() => void refreshRetailers()}
-                              type="button"
-                            >
-                              Refresh approvals
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    )
-                  ) : null}
                 </div>
-              ) : null}
+              )}
 
-              <select
-                className={fieldClass}
-                onChange={(event) => {
-                  const method = event.target.value as PaymentMethod;
-                  setPaymentMethod(method);
-                  setApprovalRequestSent(false);
-                  if (method !== "CREDIT") {
-                    setRetailerApprovalId("");
+              <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                Payment
+                <select
+                  className={fieldClass}
+                  disabled={controlsBusy}
+                  onChange={(event) => {
+                    const method = event.target.value as PaymentMethod;
+                    void applyPatch({
+                      paymentMethod: method,
+                      amountPaid: method === "CREDIT" ? "0" : null,
+                      retailerApprovalId:
+                        method === "CREDIT"
+                          ? session.retailerApprovalId
+                          : null,
+                    });
+                  }}
+                  value={session.paymentMethod}
+                >
+                  {paymentOptions.map((method) => (
+                    <option key={method} value={method}>
+                      {paymentLabels[method]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {session.customerType === "RETAILER" &&
+            session.paymentMethod === "CREDIT" &&
+            activeRetailer?.requiresOrderApproval ? (
+              <div className="mt-3 rounded-[5px] border border-amber-200 bg-amber-50 p-3">
+                <p className="text-sm font-semibold text-amber-950">
+                  Admin approval required
+                </p>
+                <p className="mt-1 text-xs leading-5 text-amber-900">
+                  This retailer has {formatMoney(activeRetailer.outstandingBalance)}{" "}
+                  in uncleared credit.
+                </p>
+                <div className="mt-3 flex flex-wrap items-end gap-3">
+                  {approvedOrders.length > 0 ? (
+                    <label className="grid min-w-64 gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-amber-900">
+                      Approved order
+                      <select
+                        className={fieldClass}
+                        disabled={controlsBusy}
+                        onChange={(event) =>
+                          void applyPatch({
+                            retailerApprovalId: event.target.value || null,
+                          })
+                        }
+                        value={session.retailerApprovalId ?? ""}
+                      >
+                        <option value="">Select approval</option>
+                        {approvedOrders.map((approval) => (
+                          <option key={approval.id} value={approval.id}>
+                            {formatMoney(approval.approvedAmount)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <button
+                      className="inline-flex h-10 items-center justify-center rounded-[5px] bg-[var(--brand-burgundy)] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                      disabled={
+                        controlsBusy || Number(session.totalAmount) <= 0
+                      }
+                      onClick={() =>
+                        void (hasPendingApprovalRequest
+                          ? refreshApprovalStatus()
+                          : requestApproval())
+                      }
+                      type="button"
+                    >
+                      {hasPendingApprovalRequest
+                        ? "Refresh approval status"
+                        : "Request Admin approval"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-4 divide-y divide-[color:var(--border-muted)] rounded-lg border border-[color:var(--border-muted)]">
+              {session.items.map((entry) => {
+                const inventory = options.products.find(
+                  (item) => item.product.id === entry.product.id,
+                );
+                const maximum = availability[entry.product.id] ?? 0;
+
+                return (
+                  <div
+                    className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
+                    key={entry.id}
+                  >
+                    <div>
+                      <p className="font-semibold text-[var(--text-primary)]">
+                        {formatProductName(entry.product)}
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--text-muted)]">
+                        {formatMoney(entry.unitPrice)} each
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        aria-label={`Reduce ${formatProductName(entry.product)}`}
+                        className={iconButtonClass}
+                        disabled={busy}
+                        onClick={() =>
+                          inventory &&
+                          enqueueQuantity(inventory, (current) => current - 1)
+                        }
+                        type="button"
+                      >
+                        <Minus aria-hidden className="size-4" />
+                      </button>
+                      <QuantityInput
+                        key={`${entry.id}-${entry.quantity}`}
+                        busy={busy}
+                        entry={entry}
+                        maximum={maximum}
+                        onCommit={(quantity) => {
+                          if (inventory) {
+                            enqueueQuantity(inventory, () => quantity);
+                          }
+                        }}
+                      />
+                      <button
+                        aria-label={`Increase ${formatProductName(entry.product)}`}
+                        className={iconButtonClass}
+                        disabled={busy || Number(entry.quantity) >= maximum}
+                        onClick={() =>
+                          inventory &&
+                          enqueueQuantity(inventory, (current) => current + 1)
+                        }
+                        type="button"
+                      >
+                        <Plus aria-hidden className="size-4" />
+                      </button>
+                      <button
+                        aria-label={`Remove ${formatProductName(entry.product)}`}
+                        className={iconButtonClass}
+                        disabled={busy}
+                        onClick={() =>
+                          inventory && enqueueQuantity(inventory, () => 0)
+                        }
+                        title="Remove"
+                        type="button"
+                      >
+                        <Trash2 aria-hidden className="size-4" />
+                      </button>
+                    </div>
+                    <p className="text-right font-semibold text-[var(--text-primary)]">
+                      {formatMoney(entry.lineTotal)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Amount paid
+                  <input
+                    className={fieldClass}
+                    defaultValue={session.amountPaid}
+                    disabled={controlsBusy}
+                    key={`paid-${session.id}-${session.amountPaid}`}
+                    min="0"
+                    onBlur={(event) =>
+                      void applyPatch({ amountPaid: event.target.value || "0" })
+                    }
+                    step="0.01"
+                    type="number"
+                  />
+                </label>
+                <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Notes
+                  <textarea
+                    className="min-h-20 rounded-[5px] border border-[color:var(--border-muted)] bg-white px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--brand-burgundy)] focus:ring-4 focus:ring-[var(--focus-ring)]"
+                    defaultValue={session.notes ?? ""}
+                    disabled={controlsBusy}
+                    key={`notes-${session.id}-${session.notes ?? ""}`}
+                    onBlur={(event) =>
+                      void applyPatch({
+                        notes: event.target.value.trim() || null,
+                      })
+                    }
+                    placeholder="Optional"
+                  />
+                </label>
+              </div>
+
+              <div className="rounded-lg border border-[color:var(--border-muted)] bg-[var(--surface-warm)] p-4">
+                <div className="grid gap-2 text-sm">
+                  <div className="flex justify-between text-[var(--text-secondary)]">
+                    <span>Subtotal</span>
+                    <span>{formatMoney(session.subtotal)}</span>
+                  </div>
+                  {adminProductDiscount > 0 ? (
+                    <div className="flex justify-between text-[var(--text-secondary)]">
+                      <span>Admin product discount</span>
+                      <span>{formatMoney(adminProductDiscount)}</span>
+                    </div>
+                  ) : null}
+                  <div className="flex justify-between border-t border-[color:var(--border-muted)] pt-3 text-lg font-semibold text-[var(--text-primary)]">
+                    <span>Total</span>
+                    <span>{formatMoney(session.totalAmount)}</span>
+                  </div>
+                  <div className="flex justify-between text-[var(--text-secondary)]">
+                    <span>Paid</span>
+                    <span>{formatMoney(session.amountPaid)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-[var(--brand-burgundy)]">
+                    <span>Balance</span>
+                    <span>{formatMoney(session.balanceDue)}</span>
+                  </div>
+                </div>
+                <button
+                  className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[5px] bg-[var(--brand-burgundy)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--brand-burgundy-dark)] disabled:cursor-not-allowed disabled:bg-stone-300"
+                  disabled={
+                    busy ||
+                    cartSaving ||
+                    !isOnline ||
+                    session.items.length === 0 ||
+                    (session.customerType === "RETAILER" &&
+                      session.paymentMethod === "CREDIT" &&
+                      Boolean(activeRetailer?.requiresOrderApproval) &&
+                      !session.retailerApprovalId)
                   }
-                  void patchSession({
-                    paymentMethod: method,
-                    retailerApprovalId: method === "CREDIT"
-                      ? retailerApprovalId || null
-                      : null,
-                  });
-                }}
-                value={paymentMethod}
-              >
-                {options.paymentMethods.map((method) => (
-                  <option key={method} value={method}>
-                    {paymentLabels[method]}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid gap-2 border-t border-stone-200 pt-4 text-sm">
-              <div className="flex justify-between text-stone-600">
-                <span>Subtotal</span>
-                <span>{formatMoney(session.subtotal)}</span>
-              </div>
-              <div className="flex justify-between text-lg font-semibold text-stone-950">
-                <span>Total</span>
-                <span>{formatMoney(session.totalAmount)}</span>
+                  onClick={() => void checkout()}
+                  type="button"
+                >
+                  {busy ? (
+                    <>
+                      <Spinner />
+                      Processing
+                    </>
+                  ) : (
+                    <>
+                      <Printer aria-hidden className="size-4" />
+                      Checkout and print
+                    </>
+                  )}
+                </button>
               </div>
             </div>
+          </>
+        )}
+      </section>
 
+      {lastReceipt ? (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+          <div>
+            <p className="font-semibold text-emerald-950">
+              Sale #{lastReceipt.session.completedSale?.saleNumber} completed
+            </p>
+            <p className="mt-1 text-sm text-emerald-800">
+              {formatMoney(lastReceipt.session.totalAmount)} ·{" "}
+              {paymentLabels[lastReceipt.session.paymentMethod]}
+            </p>
+          </div>
+          <div className="flex gap-2">
             <button
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-red-800 px-4 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:bg-stone-400"
-              disabled={
-                busy ||
-                syncBusy ||
-                cartIsSyncing ||
-                sessionPatchBusy ||
-                session.items.length === 0 ||
-                retailerSelectionMissing ||
-                retailerApprovalMissing ||
-                Boolean(offlineSnapshot?.dayCloseBarrier?.checkoutBlocked)
-              }
-              onClick={checkout}
+              className={iconButtonClass}
+              onClick={() => printReceipt(lastReceipt.document)}
+              title="Print receipt again"
               type="button"
             >
-              {busy || cartIsSyncing || sessionPatchBusy ? (
-                <Spinner />
-              ) : (
-                <Check className="h-4 w-4" />
-              )}
-              {busy
-                ? "Processing..."
-                : cartIsSyncing
-                  ? "Saving cart..."
-                  : sessionPatchBusy
-                    ? "Saving sale..."
-                    : offlineEnabled && !isOnline
-                      ? "Queue sale"
-                      : "Checkout"}
+              <Printer aria-hidden className="size-4" />
+            </button>
+            <button
+              className={iconButtonClass}
+              onClick={() => downloadReceipt(lastReceipt.document)}
+              title="Download receipt"
+              type="button"
+            >
+              <Download aria-hidden className="size-4" />
             </button>
           </div>
-        )}
-      </aside>
+        </section>
+      ) : null}
     </div>
   );
 }
